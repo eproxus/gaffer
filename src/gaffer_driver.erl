@@ -36,9 +36,5 @@
     {ok, gaffer:job()}.
 -callback job_cancel(gaffer:job_id(), driver_state()) ->
     {ok, gaffer:job()}.
--callback job_snooze(
-    gaffer:job_id(), pos_integer(), driver_state()
-) ->
-    {ok, gaffer:job()}.
 -callback job_prune(gaffer:prune_opts(), driver_state()) ->
     {ok, non_neg_integer()}.

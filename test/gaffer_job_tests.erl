@@ -101,12 +101,6 @@ transition_invalid_test() ->
         gaffer_job:transition(Job, completed)
     ).
 
-transition_snooze_test() ->
-    Job0 = gaffer_job:new(q, #{}, #{}),
-    {ok, Job1} = gaffer_job:transition(Job0, executing),
-    {ok, Job2} = gaffer_job:transition(Job1, scheduled),
-    ?assertEqual(scheduled, maps:get(state, Job2)).
-
 %--- Error list tests ---------------------------------------------------------
 
 add_error_test() ->

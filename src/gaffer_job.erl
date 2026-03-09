@@ -87,7 +87,6 @@ valid_transition(scheduled, cancelled) -> true;
 valid_transition(executing, completed) -> true;
 valid_transition(executing, failed) -> true;
 valid_transition(executing, cancelled) -> true;
-valid_transition(executing, scheduled) -> true;
 valid_transition(failed, discarded) -> true;
 valid_transition(failed, scheduled) -> true;
 valid_transition(_, _) -> false.

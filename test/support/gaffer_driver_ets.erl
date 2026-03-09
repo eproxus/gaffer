@@ -14,7 +14,6 @@
 -export([job_complete/2]).
 -export([job_fail/3]).
 -export([job_cancel/2]).
--export([job_snooze/3]).
 -export([job_prune/2]).
 
 -export_type([state/0]).
@@ -155,25 +154,6 @@ job_cancel(Id, #{queued := Queued, locked := Locked}) ->
     {ok, Job} = gaffer_job:transition(Job0, cancelled),
     true = ets:insert(Source, {Id, Job}),
     {ok, Job}.
-
--spec job_snooze(gaffer:job_id(), pos_integer(), state()) ->
-    {ok, gaffer:job()}.
-job_snooze(Id, Seconds, #{locked := Locked, queued := Queued}) ->
-    case ets:lookup(Locked, Id) of
-        [{_, Job0}] ->
-            {ok, Job1} = gaffer_job:transition(
-                Job0, scheduled
-            ),
-            ScheduledAt =
-                erlang:system_time(microsecond) +
-                    (Seconds * 1_000_000),
-            Job2 = Job1#{scheduled_at => ScheduledAt},
-            true = ets:delete(Locked, Id),
-            true = ets:insert(Queued, {Id, Job2}),
-            {ok, Job2};
-        [] ->
-            error({not_executing, Id})
-    end.
 
 -spec job_prune(gaffer:prune_opts(), state()) ->
     {ok, non_neg_integer()}.

@@ -10,5 +10,4 @@
     ok
     | {ok, term()}
     | {error, term()}
-    | {cancel, binary()}
-    | {snooze, pos_integer()}.
+    | {cancel, binary()}.
