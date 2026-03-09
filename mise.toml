@@ -1,3 +1,23 @@
 [tools]
 erlang = "28.4"
 rebar = "3.27.0"
+
+[tasks.verify]
+description = "Run all verification checks"
+run = """
+rebar3 compile
+rebar3 fmt --check
+rebar3 lint
+rebar3 hank
+rebar3 dialyzer
+rebar3 as test xref
+elp lint
+elp eqwalize-all
+"""
+
+[tasks.test]
+description = "Run all tests"
+run = """
+rebar3 eunit
+rebar3 ct
+"""
