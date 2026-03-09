@@ -21,10 +21,10 @@ new_default_test() ->
         Job
     ),
     ?assert(is_binary(maps:get(id, Job))),
-    ?assertMatch({_, _}, maps:get(inserted_at, Job)).
+    ?assert(is_integer(maps:get(inserted_at, Job))).
 
 new_scheduled_test() ->
-    At = {{2026, 1, 1}, {12, 0, 0}},
+    At = 1767261600000000,
     Job = gaffer_job:new(q, #{}, #{scheduled_at => At}),
     ?assertEqual(scheduled, maps:get(state, Job)),
     ?assertEqual(At, maps:get(scheduled_at, Job)).
@@ -114,7 +114,7 @@ add_error_test() ->
     E = #{
         attempt => 1,
         error => timeout,
-        at => calendar:universal_time()
+        at => erlang:system_time(microsecond)
     },
     Job1 = gaffer_job:add_error(Job0, E),
     ?assertEqual([E], maps:get(errors, Job1)).

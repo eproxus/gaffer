@@ -37,6 +37,10 @@
     | discarded.
 -type queue_name() :: atom().
 
+-type timestamp() :: integer().
+%% Microseconds since Unix epoch (1970-01-01T00:00:00Z).
+%% Maps directly to Postgres timestamptz.
+
 -type job() :: #{
     id := job_id(),
     queue := queue_name(),
@@ -45,12 +49,12 @@
     attempt := non_neg_integer(),
     max_attempts := pos_integer(),
     priority := non_neg_integer(),
-    scheduled_at => calendar:datetime(),
-    inserted_at := calendar:datetime(),
-    attempted_at => calendar:datetime(),
-    completed_at => calendar:datetime(),
-    cancelled_at => calendar:datetime(),
-    discarded_at => calendar:datetime(),
+    scheduled_at => timestamp(),
+    inserted_at := timestamp(),
+    attempted_at => timestamp(),
+    completed_at => timestamp(),
+    cancelled_at => timestamp(),
+    discarded_at => timestamp(),
     errors := [job_error()],
     tags := [binary()],
     meta := map()
@@ -60,7 +64,7 @@
     queue => queue_name(),
     max_attempts => pos_integer(),
     priority => non_neg_integer(),
-    scheduled_at => calendar:datetime(),
+    scheduled_at => timestamp(),
     tags => [binary()],
     meta => map()
 }.
@@ -68,7 +72,7 @@
 -type job_error() :: #{
     attempt := non_neg_integer(),
     error := term(),
-    at := calendar:datetime()
+    at := timestamp()
 }.
 
 -type queue_conf() :: #{
@@ -101,6 +105,7 @@
     job_id/0,
     job_state/0,
     queue_name/0,
+    timestamp/0,
     job/0,
     job_opts/0,
     job_error/0,

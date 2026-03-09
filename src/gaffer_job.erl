@@ -10,7 +10,7 @@
 -spec new(gaffer:queue_name(), map(), gaffer:job_opts()) ->
     gaffer:job().
 new(Queue, Args, Opts) ->
-    Now = calendar:universal_time(),
+    Now = erlang:system_time(microsecond),
     ScheduledAt = maps:get(scheduled_at, Opts, undefined),
     State =
         case ScheduledAt of
@@ -65,7 +65,7 @@ validate(_) ->
 transition(#{state := From} = Job, To) ->
     case valid_transition(From, To) of
         true ->
-            Now = calendar:universal_time(),
+            Now = erlang:system_time(microsecond),
             {ok, set_timestamp(To, Now, Job#{state := To})};
         false ->
             {error, {invalid_transition, {From, To}}}

@@ -83,18 +83,18 @@ job_get(Id, #{queued := Queued, locked := Locked}) ->
 -spec job_list(gaffer:list_opts(), state()) ->
     {ok, [gaffer:job()]}.
 job_list(Opts, #{queued := Queued, locked := Locked}) ->
-    All =
-        [Job || {_, Job} <:- ets:tab2list(Queued)] ++
-            [Job || {_, Job} <:- ets:tab2list(Locked)],
-    Filtered = filter_jobs(Opts, All),
-    {ok, Filtered}.
+    Pattern = {'_', Opts},
+    Jobs =
+        [Job || {_, Job} <:- ets:match_object(Queued, Pattern)] ++
+            [Job || {_, Job} <:- ets:match_object(Locked, Pattern)],
+    {ok, Jobs}.
 
 -spec job_fetch(gaffer:fetch_opts(), state()) ->
     {ok, [gaffer:job()]}.
 job_fetch(Opts, #{queued := Queued, locked := Locked}) ->
     Queue = maps:get(queue, Opts, undefined),
     Limit = maps:get(limit, Opts, 1),
-    Now = calendar:universal_time(),
+    Now = erlang:system_time(microsecond),
     All = [Job || {_, Job} <:- ets:tab2list(Queued)],
     Available = [
         Job
@@ -164,9 +164,9 @@ job_snooze(Id, Seconds, #{locked := Locked, queued := Queued}) ->
             {ok, Job1} = gaffer_job:transition(
                 Job0, scheduled
             ),
-            ScheduledAt = add_seconds(
-                calendar:universal_time(), Seconds
-            ),
+            ScheduledAt =
+                erlang:system_time(microsecond) +
+                    (Seconds * 1_000_000),
             Job2 = Job1#{scheduled_at => ScheduledAt},
             true = ets:delete(Locked, Id),
             true = ets:insert(Queued, {Id, Job2}),
@@ -196,23 +196,9 @@ job_prune(Opts, #{queued := Queued, locked := Locked}) ->
 
 %--- Internal -----------------------------------------------------------------
 
-filter_jobs(Opts, Jobs) ->
-    Queue = maps:get(queue, Opts, undefined),
-    State = maps:get(state, Opts, undefined),
-    [
-        Job
-     || Job <:- Jobs,
-        matches_queue(Queue, Job),
-        matches_state(State, Job)
-    ].
-
 matches_queue(undefined, _Job) -> true;
 matches_queue(Q, #{queue := Q}) -> true;
 matches_queue(_, _) -> false.
-
-matches_state(undefined, _Job) -> true;
-matches_state(St, #{state := St}) -> true;
-matches_state(_, _) -> false.
 
 is_scheduled_future(#{scheduled_at := At}, Now) -> At > Now;
 is_scheduled_future(_, _Now) -> false.
@@ -249,7 +235,3 @@ lookup_any(Id, Queued, Locked) ->
                 [] -> error({not_found, Id})
             end
     end.
-
-add_seconds(DateTime, Seconds) ->
-    GregSec = calendar:datetime_to_gregorian_seconds(DateTime),
-    calendar:gregorian_seconds_to_datetime(GregSec + Seconds).
