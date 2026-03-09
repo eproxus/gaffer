@@ -108,9 +108,14 @@
     state => job_state()
 }.
 
--type fetch_opts() :: #{
+-type claim_opts() :: #{
     queue => queue_name(),
     limit => pos_integer()
+}.
+
+-type job_changes() :: #{
+    state => job_state(),
+    atom() => term()
 }.
 
 -type prune_opts() :: #{
@@ -127,7 +132,8 @@
     job_error/0,
     queue_conf/0,
     list_opts/0,
-    fetch_opts/0,
+    claim_opts/0,
+    job_changes/0,
     prune_opts/0
 ]).
 
@@ -146,10 +152,12 @@ stop(_State) ->
 %--- Queue management ---------------------------------------------------------
 
 -spec create_queue(queue_conf()) -> ok | {error, already_exists}.
-create_queue(#{name := Name, driver := {Mod, DS}} = Conf) ->
-    case ets:insert_new(gaffer_queues, {Name, {Mod, DS}}) of
+create_queue(#{name := Name, driver := Driver} = Conf) ->
+    case ets:insert_new(gaffer_queues, {Name, Driver}) of
         true ->
-            ok = Mod:queue_put(Conf, DS),
+            {ok, Driver1} = gaffer_queue:put_conf(Conf, Driver),
+            true = ets:insert(gaffer_queues, {Name, Driver1}),
+            {ok, _Pid} = gaffer_sup:start_queue(Name, Driver1),
             ok;
         false ->
             {error, already_exists}
@@ -157,21 +165,24 @@ create_queue(#{name := Name, driver := {Mod, DS}} = Conf) ->
 
 -spec get_queue(queue_name()) -> {ok, queue_conf()}.
 get_queue(Name) ->
-    {Mod, DS} = lookup(Name),
-    Mod:queue_get(Name, DS).
+    Driver = lookup(Name),
+    gaffer_queue:get_conf(Name, Driver).
 
 -spec update_queue(queue_name(), map()) -> ok.
 update_queue(Name, Updates) ->
-    {Mod, DS} = lookup(Name),
-    {ok, Conf} = Mod:queue_get(Name, DS),
+    Driver = lookup(Name),
+    {ok, Conf} = gaffer_queue:get_conf(Name, Driver),
     Merged = maps:merge(Conf, maps:remove(name, Updates)),
-    ok = Mod:queue_put(Merged, DS).
+    {ok, Driver1} = gaffer_queue:put_conf(Merged, Driver),
+    true = ets:insert(gaffer_queues, {Name, Driver1}),
+    ok.
 
 -spec delete_queue(queue_name()) -> ok.
 delete_queue(Name) ->
-    {Mod, DS} = lookup(Name),
-    ok = Mod:queue_delete(Name, DS),
+    Driver = lookup(Name),
     true = ets:delete(gaffer_queues, Name),
+    ok = gaffer_sup:stop_queue(Name),
+    {ok, _Driver1} = gaffer_queue:delete_conf(Name, Driver),
     ok.
 
 -spec list_queues() -> {ok, [queue_conf()]}.
@@ -179,8 +190,8 @@ list_queues() ->
     Entries = ets:tab2list(gaffer_queues),
     {ok, [queue_from_entry(E) || E <:- Entries]}.
 
-queue_from_entry({Name, {Mod, DS}}) ->
-    {ok, Conf} = Mod:queue_get(Name, DS),
+queue_from_entry({Name, Driver}) ->
+    {ok, Conf} = gaffer_queue:get_conf(Name, Driver),
     Conf.
 
 %--- Enqueueing ---------------------------------------------------------------
@@ -192,35 +203,31 @@ insert(Queue, Args) -> insert(Queue, Args, #{}).
 -spec insert(queue_name(), map(), job_opts()) ->
     {ok, job()} | {error, term()}.
 insert(Queue, Args, Opts) ->
-    {Mod, DS} = lookup(Queue),
-    Job = gaffer_job:new(Queue, Args, Opts),
-    Mod:job_insert(Job, DS).
+    gaffer_queue_proc:insert(Queue, Args, Opts).
 
 %--- Lifecycle ----------------------------------------------------------------
 
--spec cancel(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
+-spec cancel(queue_name(), job_id()) ->
+    {ok, job()} | {error, term()}.
 cancel(Queue, JobId) ->
-    {Mod, DS} = lookup(Queue),
-    Mod:job_cancel(JobId, DS).
+    gaffer_queue_proc:cancel(Queue, JobId).
 
 %--- Querying -----------------------------------------------------------------
 
--spec get(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
+-spec get(queue_name(), job_id()) ->
+    {ok, job()} | {error, term()}.
 get(Queue, JobId) ->
-    {Mod, DS} = lookup(Queue),
-    Mod:job_get(JobId, DS).
+    gaffer_queue_proc:get(Queue, JobId).
 
 -spec list(list_opts()) -> {ok, [job()]} | {error, term()}.
 list(#{queue := Queue} = Opts) ->
-    {Mod, DS} = lookup(Queue),
-    Mod:job_list(Opts, DS).
+    gaffer_queue_proc:list(Queue, Opts).
 
 %--- Internal -----------------------------------------------------------------
 
--spec lookup(queue_name()) ->
-    {module(), gaffer_driver:driver_state()}.
+-spec lookup(queue_name()) -> gaffer_queue:driver().
 lookup(Name) ->
     case ets:lookup(gaffer_queues, Name) of
-        [{_, Entry}] -> Entry;
+        [{_, Driver}] -> Driver;
         [] -> error({unknown_queue, Name})
     end.

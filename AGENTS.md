@@ -15,22 +15,12 @@ rebar3 fmt                  # Format code
 elp lint --diagnostic-filter <code> --apply-fix # Apply specific fixes
 ```
 
-## Architecture
+## Coding Conventions
 
-Standard OTP application structure.
+* Prefer exceptions over tagged return values. If the caller cannot meaningfully
+  act on the return value at the call site, an exception should be used.
 
-Tests use both EUnit (`test/gaffer_tests.erl`) and Common Test (`test/gaffer_SUITE.erl`).
+## Changes
 
-## Code Style & Conventions
-
-- All modules must be prefixed with `gaffer` (verify with Elvis: `rebar3 lint`)
-- Formatter: erlfmt with 80-char print width (run `rebar fmt` on any changes)
-- Indentation: 4 spaces, no tabs
-- Line length: try not to exceed 100 characters
-- Compiler flags: `warnings_as_errors` is enabled — all warnings must be resolved
-- Dialyzer warns on `unmatched_returns`
-
-## Tooling
-
-- Erlang 28.4 / Rebar3 3.27.0 (managed via `.tool-versions`)
-- Plugins: erlfmt, rebar3_lint (elvis), rebar3_hank, rebar3_ex_doc, rebar3_hex
+After every change, verify and test the codebase. List the number of added or
+removed lines for all files with nice graphics.

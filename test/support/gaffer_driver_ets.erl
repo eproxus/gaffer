@@ -10,11 +10,9 @@
 -export([job_insert/2]).
 -export([job_get/2]).
 -export([job_list/2]).
--export([job_fetch/2]).
--export([job_complete/2]).
--export([job_fail/3]).
--export([job_cancel/2]).
--export([job_schedule/3]).
+-export([job_delete/2]).
+-export([job_claim/3]).
+-export([job_update/2]).
 -export([job_prune/2]).
 
 -export_type([state/0]).
@@ -43,10 +41,11 @@ stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
 
 %--- Queue config -------------------------------------------------------------
 
--spec queue_put(gaffer:queue_conf(), state()) -> ok.
-queue_put(#{name := Name} = Conf, #{queues := Tab}) ->
+-spec queue_put(gaffer:queue_conf(), state()) ->
+    {ok, state()}.
+queue_put(#{name := Name} = Conf, #{queues := Tab} = State) ->
     true = ets:insert(Tab, {Name, Conf}),
-    ok.
+    {ok, State}.
 
 -spec queue_get(gaffer:queue_name(), state()) ->
     {ok, gaffer:queue_conf()}.
@@ -54,18 +53,19 @@ queue_get(Name, #{queues := Tab}) ->
     [{_, Conf}] = ets:lookup(Tab, Name),
     {ok, Conf}.
 
--spec queue_delete(gaffer:queue_name(), state()) -> ok.
-queue_delete(Name, #{queues := Tab}) ->
+-spec queue_delete(gaffer:queue_name(), state()) ->
+    {ok, state()}.
+queue_delete(Name, #{queues := Tab} = State) ->
     true = ets:delete(Tab, Name),
-    ok.
+    {ok, State}.
 
 %--- Jobs ---------------------------------------------------------------------
 
 -spec job_insert(gaffer:job(), state()) ->
-    {ok, gaffer:job()}.
-job_insert(#{id := Id} = Job, #{queued := Tab}) ->
+    {ok, gaffer:job(), state()}.
+job_insert(#{id := Id} = Job, #{queued := Tab} = State) ->
     true = ets:insert(Tab, {Id, Job}),
-    {ok, Job}.
+    {ok, Job, State}.
 
 -spec job_get(gaffer:job_id(), state()) ->
     {ok, gaffer:job()} | {error, not_found}.
@@ -86,12 +86,28 @@ job_list(Opts, #{queued := Queued, locked := Locked}) ->
     Pattern = {'_', Opts},
     Jobs =
         [Job || {_, Job} <:- ets:match_object(Queued, Pattern)] ++
-            [Job || {_, Job} <:- ets:match_object(Locked, Pattern)],
+            [
+                Job
+             || {_, Job} <:- ets:match_object(Locked, Pattern)
+            ],
     {ok, Jobs}.
 
--spec job_fetch(gaffer:fetch_opts(), state()) ->
-    {ok, [gaffer:job()]}.
-job_fetch(Opts, #{queued := Queued, locked := Locked, queues := Queues}) ->
+-spec job_delete(gaffer:job_id(), state()) ->
+    {ok, state()}.
+job_delete(Id, #{queued := Queued, locked := Locked} = State) ->
+    ets:delete(Queued, Id),
+    ets:delete(Locked, Id),
+    {ok, State}.
+
+-spec job_claim(
+    gaffer:claim_opts(), gaffer:job_changes(), state()
+) ->
+    {ok, [gaffer:job()], state()}.
+job_claim(
+    Opts,
+    Changes,
+    #{queued := Queued, locked := Locked, queues := Queues} = State
+) ->
     Queue = maps:get(queue, Opts, undefined),
     Limit0 = maps:get(limit, Opts, 1),
     Limit = apply_global_max(Queue, Limit0, Locked, Queues),
@@ -106,70 +122,29 @@ job_fetch(Opts, #{queued := Queued, locked := Locked, queues := Queues}) ->
     ],
     Sorted = lists:sort(fun compare_priority/2, Available),
     ToFetch = lists:sublist(Sorted, max(0, Limit)),
-    Claimed = claim_jobs(ToFetch, Queued, Locked, []),
-    {ok, Claimed}.
+    Claimed = claim_jobs(ToFetch, Changes, Queued, Locked, []),
+    {ok, Claimed, State}.
 
--spec job_complete(gaffer:job_id(), state()) ->
-    {ok, gaffer:job()}.
-job_complete(Id, #{locked := Locked}) ->
-    case ets:lookup(Locked, Id) of
-        [{_, Job0}] ->
-            {ok, Job} = gaffer_job:transition(Job0, completed),
-            Job1 = Job#{attempt := maps:get(attempt, Job) + 1},
-            true = ets:insert(Locked, {Id, Job1}),
-            {ok, Job1};
-        [] ->
-            error({not_executing, Id})
-    end.
-
--spec job_fail(gaffer:job_id(), gaffer:job_error(), state()) ->
-    {ok, gaffer:job()}.
-job_fail(Id, JobError, #{locked := Locked, queued := Queued}) ->
-    case ets:lookup(Locked, Id) of
-        [{_, Job0}] ->
-            Attempt = maps:get(attempt, Job0) + 1,
-            MaxAttempts = maps:get(max_attempts, Job0, 3),
-            Job1 = Job0#{attempt := Attempt},
-            Job2 = gaffer_job:add_error(Job1, JobError),
-            {ok, Job3} = gaffer_job:transition(Job2, failed),
-            Job4 =
-                case Attempt >= MaxAttempts of
-                    true ->
-                        {ok, J} = gaffer_job:transition(
-                            Job3, discarded
-                        ),
-                        J;
-                    false ->
-                        Job3
-                end,
-            true = ets:delete(Locked, Id),
-            true = ets:insert(Queued, {Id, Job4}),
-            {ok, Job4};
-        [] ->
-            error({not_executing, Id})
-    end.
-
--spec job_schedule(gaffer:job_id(), gaffer:timestamp(), state()) ->
-    {ok, gaffer:job()}.
-job_schedule(Id, At, #{locked := Locked, queued := Queued}) ->
-    [{_, Job0}] = ets:lookup(Locked, Id),
-    {ok, Job} = gaffer_job:transition(Job0, scheduled),
-    Job1 = Job#{scheduled_at => At},
-    true = ets:delete(Locked, Id),
-    true = ets:insert(Queued, {Id, Job1}),
-    {ok, Job1}.
-
--spec job_cancel(gaffer:job_id(), state()) ->
-    {ok, gaffer:job()}.
-job_cancel(Id, #{queued := Queued, locked := Locked}) ->
-    {Job0, Source} = lookup_any(Id, Queued, Locked),
-    {ok, Job} = gaffer_job:transition(Job0, cancelled),
-    true = ets:insert(Source, {Id, Job}),
-    {ok, Job}.
+-spec job_update(gaffer:job(), state()) ->
+    {ok, gaffer:job(), state()}.
+job_update(
+    #{id := Id, state := JobState} = Job,
+    #{queued := Queued, locked := Locked} = State
+) ->
+    %% Move job to appropriate table based on state
+    case JobState of
+        executing ->
+            ets:delete(Queued, Id),
+            true = ets:insert(Locked, {Id, Job});
+        _ ->
+            ets:delete(Locked, Id),
+            true = ets:insert(Queued, {Id, Job})
+    end,
+    {ok, Job, State}.
 
 -spec job_prune(gaffer:prune_opts(), state()) ->
-    {ok, non_neg_integer()}.
-job_prune(Opts, #{queued := Queued, locked := Locked}) ->
+    {ok, non_neg_integer(), state()}.
+job_prune(Opts, #{queued := Queued, locked := Locked} = State) ->
     States = maps:get(states, Opts, [completed, discarded]),
     AllQ = [
         {Id, Job}
@@ -184,7 +159,7 @@ job_prune(Opts, #{queued := Queued, locked := Locked}) ->
     Count = length(AllQ) + length(AllL),
     _ = [ets:delete(Queued, Id) || {Id, _} <:- AllQ],
     _ = [ets:delete(Locked, Id) || {Id, _} <:- AllL],
-    {ok, Count}.
+    {ok, Count, State}.
 
 %--- Internal -----------------------------------------------------------------
 
@@ -195,7 +170,8 @@ apply_global_max(Queue, Limit, Locked, Queues) ->
         [{_, #{global_max_workers := Max}}] ->
             Executing = length([
                 J
-             || {_, #{queue := Q} = J} <:- ets:tab2list(Locked),
+             || {_, #{queue := Q} = J} <:-
+                    ets:tab2list(Locked),
                 Q =:= Queue
             ]),
             min(Limit, Max - Executing);
@@ -218,27 +194,18 @@ compare_priority(A, B) ->
     maps:get(inserted_at, A, undefined) =<
         maps:get(inserted_at, B, undefined).
 
-claim_jobs([], _Queued, _Locked, Acc) ->
+claim_jobs([], _Changes, _Queued, _Locked, Acc) ->
     lists:reverse(Acc);
-claim_jobs([#{id := Id} | Rest], Queued, Locked, Acc) ->
+claim_jobs(
+    [#{id := Id} | Rest], Changes, Queued, Locked, Acc
+) ->
     case ets:take(Queued, Id) of
         [{Id, Job}] ->
-            {ok, Executing} = gaffer_job:transition(
-                Job, executing
-            ),
-            true = ets:insert(Locked, {Id, Executing}),
-            claim_jobs(Rest, Queued, Locked, [Executing | Acc]);
+            Updated = maps:merge(Job, Changes),
+            true = ets:insert(Locked, {Id, Updated}),
+            claim_jobs(
+                Rest, Changes, Queued, Locked, [Updated | Acc]
+            );
         [] ->
-            claim_jobs(Rest, Queued, Locked, Acc)
-    end.
-
-lookup_any(Id, Queued, Locked) ->
-    case ets:lookup(Queued, Id) of
-        [{_, Job}] ->
-            {Job, Queued};
-        [] ->
-            case ets:lookup(Locked, Id) of
-                [{_, Job}] -> {Job, Locked};
-                [] -> error({not_found, Id})
-            end
+            claim_jobs(Rest, Changes, Queued, Locked, Acc)
     end.
