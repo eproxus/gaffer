@@ -177,7 +177,7 @@ delete_queue(Name) ->
 -spec list_queues() -> {ok, [queue_conf()]}.
 list_queues() ->
     Entries = ets:tab2list(gaffer_queues),
-    {ok, [queue_from_entry(E) || E <- Entries]}.
+    {ok, [queue_from_entry(E) || E <:- Entries]}.
 
 queue_from_entry({Name, {Mod, DS}}) ->
     {ok, Conf} = Mod:queue_get(Name, DS),
