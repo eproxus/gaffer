@@ -101,21 +101,6 @@ transition_invalid_test() ->
         gaffer_job:transition(Job, completed)
     ).
 
-transition_retry_from_discarded_test() ->
-    Job0 = gaffer_job:new(q, #{}, #{}),
-    {ok, Job1} = gaffer_job:transition(Job0, executing),
-    {ok, Job2} = gaffer_job:transition(Job1, failed),
-    {ok, Job3} = gaffer_job:transition(Job2, discarded),
-    {ok, Job4} = gaffer_job:transition(Job3, scheduled),
-    ?assertEqual(scheduled, maps:get(state, Job4)).
-
-transition_retry_from_cancelled_test() ->
-    Job0 = gaffer_job:new(q, #{}, #{}),
-    {ok, Job1} = gaffer_job:transition(Job0, executing),
-    {ok, Job2} = gaffer_job:transition(Job1, cancelled),
-    {ok, Job3} = gaffer_job:transition(Job2, scheduled),
-    ?assertEqual(scheduled, maps:get(state, Job3)).
-
 transition_snooze_test() ->
     Job0 = gaffer_job:new(q, #{}, #{}),
     {ok, Job1} = gaffer_job:transition(Job0, executing),

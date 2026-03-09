@@ -36,10 +36,6 @@
     {ok, gaffer:job()}.
 -callback job_cancel(gaffer:job_id(), driver_state()) ->
     {ok, gaffer:job()}.
--callback job_retry(
-    gaffer:job_id(), calendar:datetime(), driver_state()
-) ->
-    {ok, gaffer:job()}.
 -callback job_snooze(
     gaffer:job_id(), pos_integer(), driver_state()
 ) ->

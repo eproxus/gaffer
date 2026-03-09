@@ -17,7 +17,6 @@ gaffer_test_() ->
                 fun list_queues/1,
                 fun insert/1,
                 fun insert_with_opts/1,
-                fun retry/1,
                 fun cancel/1,
                 fun drain/1,
                 fun get_job/1,
@@ -126,9 +125,6 @@ insert_with_opts(Driver) ->
     ).
 
 %--- Lifecycle tests ----------------------------------------------------------
-
-retry(_Driver) ->
-    ?assertError(not_found, gaffer:retry(<<"no-such-job">>)).
 
 cancel(Driver) ->
     ok = gaffer:create_queue(

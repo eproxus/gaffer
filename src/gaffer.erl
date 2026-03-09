@@ -19,7 +19,6 @@
 
 %% Lifecycle
 -export([cancel/1]).
--export([retry/1]).
 -export([drain/1]).
 
 %% Querying
@@ -188,11 +187,6 @@ insert(Queue, Args, Opts) ->
 cancel(JobId) ->
     {Mod, DS} = find_driver(JobId),
     Mod:job_cancel(JobId, DS).
-
--spec retry(job_id()) -> {ok, job()} | {error, term()}.
-retry(JobId) ->
-    {Mod, DS} = find_driver(JobId),
-    Mod:job_retry(JobId, calendar:universal_time(), DS).
 
 -spec drain(drain_opts()) ->
     #{completed := integer(), failed := integer()}.

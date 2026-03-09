@@ -14,7 +14,6 @@
 -export([job_complete/2]).
 -export([job_fail/3]).
 -export([job_cancel/2]).
--export([job_retry/3]).
 -export([job_snooze/3]).
 -export([job_prune/2]).
 
@@ -157,17 +156,6 @@ job_cancel(Id, #{queued := Queued, locked := Locked}) ->
     true = ets:insert(Source, {Id, Job}),
     {ok, Job}.
 
--spec job_retry(
-    gaffer:job_id(), calendar:datetime(), state()
-) ->
-    {ok, gaffer:job()}.
-job_retry(Id, ScheduledAt, #{queued := Queued, locked := Locked}) ->
-    {Job0, Source} = lookup_any(Id, Queued, Locked),
-    {ok, Job1} = gaffer_job:transition(Job0, scheduled),
-    Job2 = Job1#{scheduled_at => ScheduledAt},
-    move_job(Id, Job2, Source, Queued),
-    {ok, Job2}.
-
 -spec job_snooze(gaffer:job_id(), pos_integer(), state()) ->
     {ok, gaffer:job()}.
 job_snooze(Id, Seconds, #{locked := Locked, queued := Queued}) ->
@@ -261,14 +249,6 @@ lookup_any(Id, Queued, Locked) ->
                 [] -> error({not_found, Id})
             end
     end.
-
-move_job(Id, Job, Source, Dest) when Source =:= Dest ->
-    true = ets:insert(Source, {Id, Job}),
-    ok;
-move_job(Id, Job, Source, Dest) ->
-    true = ets:delete(Source, Id),
-    true = ets:insert(Dest, {Id, Job}),
-    ok.
 
 add_seconds(DateTime, Seconds) ->
     GregSec = calendar:datetime_to_gregorian_seconds(DateTime),

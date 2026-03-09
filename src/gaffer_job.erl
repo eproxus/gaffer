@@ -90,8 +90,6 @@ valid_transition(executing, cancelled) -> true;
 valid_transition(executing, scheduled) -> true;
 valid_transition(failed, discarded) -> true;
 valid_transition(failed, scheduled) -> true;
-valid_transition(discarded, scheduled) -> true;
-valid_transition(cancelled, scheduled) -> true;
 valid_transition(_, _) -> false.
 
 set_timestamp(executing, Now, Job) ->
