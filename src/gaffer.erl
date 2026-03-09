@@ -19,7 +19,6 @@
 
 %% Lifecycle
 -export([cancel/1]).
--export([drain/1]).
 
 %% Querying
 -export([get/1]).
@@ -98,10 +97,6 @@
     states => [job_state()]
 }.
 
--type drain_opts() :: #{
-    queue => queue_name()
-}.
-
 -export_type([
     job_id/0,
     job_state/0,
@@ -112,8 +107,7 @@
     queue_conf/0,
     list_opts/0,
     fetch_opts/0,
-    prune_opts/0,
-    drain_opts/0
+    prune_opts/0
 ]).
 
 %--- Application callbacks ----------------------------------------------------
@@ -187,10 +181,6 @@ insert(Queue, Args, Opts) ->
 cancel(JobId) ->
     {Mod, DS} = find_driver(JobId),
     Mod:job_cancel(JobId, DS).
-
--spec drain(drain_opts()) ->
-    #{completed := integer(), failed := integer()}.
-drain(_Opts) -> #{completed => 0, failed => 0}.
 
 %--- Querying -----------------------------------------------------------------
 

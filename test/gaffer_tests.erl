@@ -18,7 +18,6 @@ gaffer_test_() ->
                 fun insert/1,
                 fun insert_with_opts/1,
                 fun cancel/1,
-                fun drain/1,
                 fun get_job/1,
                 fun list_jobs/1
             ]
@@ -133,12 +132,6 @@ cancel(Driver) ->
     {ok, #{id := Id}} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
     {ok, Job} = gaffer:cancel(Id),
     ?assertMatch(#{state := cancelled, id := Id}, Job).
-
-drain(_Driver) ->
-    ?assertEqual(
-        #{completed => 0, failed => 0},
-        gaffer:drain(#{queue => test_q})
-    ).
 
 %--- Query tests --------------------------------------------------------------
 
