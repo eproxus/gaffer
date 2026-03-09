@@ -8,6 +8,9 @@ Gaffer is a persistent job queue implemented in Erlang/OTP.
 
 ## Build & Development Commands
 
+
+### Verification
+
 ```sh
 rebar3 compile              # Compile
 rebar3 fmt                  # Format code
@@ -15,10 +18,16 @@ rebar3 fmt --check          # Check formatting without modifying
 rebar3 lint                 # Run elvis linter
 rebar3 hank                 # Dead code detection
 rebar3 dialyzer             # Type checking (incremental)
-rebar3 xref                 # Cross-reference checking
+rebar3 as test xref         # Cross-reference checking (test profile uses the API)
+elp eqwalize <module>       # Type-check a single module
+elp eqwalize-all            # Type-check all src modules in the project
+```
+
+### Tests
+
+```sh
 rebar3 eunit                # Run unit tests (EUnit)
 rebar3 ct                   # Run integration tests (Common Test)
-rebar3 ci                   # Full CI pipeline (fmt, hank, lint, dialyzer, xref, eunit, ct, ex_doc, cover)
 ```
 
 ## Architecture
