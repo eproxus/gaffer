@@ -75,6 +75,7 @@
 
 -type queue_conf() :: #{
     name := queue_name(),
+    driver => {module(), gaffer_driver:driver_state()},
     worker => module(),
     concurrency => pos_integer(),
     max_attempts => pos_integer(),
@@ -118,28 +119,55 @@
 
 %--- Application callbacks ----------------------------------------------------
 
-start(_StartType, _StartArgs) -> gaffer_sup:start_link().
+start(_StartType, _StartArgs) ->
+    gaffer_queues = ets:new(gaffer_queues, [
+        named_table, public, set, {read_concurrency, true}
+    ]),
+    gaffer_sup:start_link().
 
-stop(_State) -> ok.
+stop(_State) ->
+    ets:delete(gaffer_queues),
+    ok.
 
 %--- Queue management ---------------------------------------------------------
 
--spec create_queue(queue_conf()) -> ok | {error, term()}.
-create_queue(_Conf) -> error(not_implemented).
+-spec create_queue(queue_conf()) -> ok | {error, already_exists}.
+create_queue(#{name := Name, driver := {Mod, DS}} = Conf) ->
+    case ets:insert_new(gaffer_queues, {Name, {Mod, DS}}) of
+        true ->
+            ok = Mod:queue_put(Conf, DS),
+            ok;
+        false ->
+            {error, already_exists}
+    end.
 
--spec get_queue(queue_name()) ->
-    {ok, queue_conf()} | {error, term()}.
-get_queue(_Name) -> error(not_implemented).
+-spec get_queue(queue_name()) -> {ok, queue_conf()}.
+get_queue(Name) ->
+    {Mod, DS} = lookup(Name),
+    Mod:queue_get(Name, DS).
 
--spec update_queue(queue_name(), map()) ->
-    ok | {error, term()}.
-update_queue(_Name, _Updates) -> error(not_implemented).
+-spec update_queue(queue_name(), map()) -> ok.
+update_queue(Name, Updates) ->
+    {Mod, DS} = lookup(Name),
+    {ok, Conf} = Mod:queue_get(Name, DS),
+    Merged = maps:merge(Conf, maps:remove(name, Updates)),
+    ok = Mod:queue_put(Merged, DS).
 
--spec delete_queue(queue_name()) -> ok | {error, term()}.
-delete_queue(_Name) -> error(not_implemented).
+-spec delete_queue(queue_name()) -> ok.
+delete_queue(Name) ->
+    {Mod, DS} = lookup(Name),
+    ok = Mod:queue_delete(Name, DS),
+    true = ets:delete(gaffer_queues, Name),
+    ok.
 
--spec list_queues() -> {ok, [queue_conf()]} | {error, term()}.
-list_queues() -> error(not_implemented).
+-spec list_queues() -> {ok, [queue_conf()]}.
+list_queues() ->
+    Entries = ets:tab2list(gaffer_queues),
+    {ok, lists:map(fun queue_from_entry/1, Entries)}.
+
+queue_from_entry({Name, {Mod, DS}}) ->
+    {ok, Conf} = Mod:queue_get(Name, DS),
+    Conf.
 
 %--- Enqueueing ---------------------------------------------------------------
 
@@ -170,3 +198,13 @@ get(_JobId) -> error(not_implemented).
 
 -spec list(list_opts()) -> {ok, [job()]} | {error, term()}.
 list(_Opts) -> error(not_implemented).
+
+%--- Internal -----------------------------------------------------------------
+
+-spec lookup(queue_name()) ->
+    {module(), gaffer_driver:driver_state()}.
+lookup(Name) ->
+    case ets:lookup(gaffer_queues, Name) of
+        [{_, Entry}] -> Entry;
+        [] -> error({unknown_queue, Name})
+    end.
