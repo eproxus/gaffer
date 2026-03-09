@@ -3,5 +3,3 @@
 /rebar3.crashdump
 _build/
 _checkouts/
-doc/
-test/logs/
