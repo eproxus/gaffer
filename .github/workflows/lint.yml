@@ -1,0 +1,50 @@
+---
+name: Project lint
+
+on:
+  - push
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  lint:
+    name: Project lint
+
+    runs-on: ubuntu-24.04
+
+    strategy:
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      # uses .markdownlint.yml for configuration
+      - name: markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@07035fd053f7be764496c0f8d8f9f41f98305101 # v22.0.0
+        with:
+          globs: |
+            .github/**/*.md
+            *.md
+
+      - name: yamllint
+        uses: ibiqlik/action-yamllint@2576378a8e339169678f9939646ee3ee325e845c # v3.1.1
+        with:
+          file_or_dir: |
+            .github/**/*.yml
+            .*.yml
+          strict: true
+          config_file: .yamllint.yml
+
+      - name: actionlint
+        uses: reviewdog/action-actionlint@0d952c597ef8459f634d7145b0b044a9699e5e43 # v1.71.0
+        env:
+          SHELLCHECK_OPTS: -o all
+
+      - name: action-sh-checker
+        uses: luizm/action-sh-checker@883217215b11c1fabbf00eb1a9a041f62d74c744 # v0.10.0
+        env:
+          SHELLCHECK_OPTS: -o all
+          SHFMT_OPTS: -i 4 -d

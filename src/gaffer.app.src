@@ -1,0 +1,15 @@
+{application, gaffer, [
+    {description, "A persistent job queue"},
+    {vsn, semver},
+    {mod, {gaffer, []}},
+    {applications, [
+        kernel,
+        stdlib
+    ]},
+    {licenses, ["MIT"]},
+    {links, [
+        {"Changelog",
+            "https://github.com/eproxus/gaffer/blob/main/CHANGELOG.md"},
+        {"GitHub", "https://github.com/eproxus/gaffer"}
+    ]}
+]}.
