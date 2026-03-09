@@ -17,8 +17,8 @@ gaffer_test_() ->
                 fun list_queues/1,
                 fun insert/1,
                 fun insert_with_opts/1,
-                fun cancel/1,
                 fun retry/1,
+                fun cancel/1,
                 fun drain/1,
                 fun get_job/1,
                 fun list_jobs/1
@@ -96,30 +96,42 @@ list_queues(Driver) ->
 
 %--- Enqueueing tests ---------------------------------------------------------
 
-insert(_Driver) ->
-    ?assertError(
-        not_implemented,
-        gaffer:insert(test_q, #{task => 1})
+insert(Driver) ->
+    ok = gaffer:create_queue(#{name => ?FUNCTION_NAME, driver => Driver}),
+    {ok, Job} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
+    ?assertMatch(
+        #{
+            queue := insert,
+            args := #{task := 1},
+            state := available,
+            priority := 0,
+            max_attempts := 3,
+            attempt := 0
+        },
+        Job
     ).
 
-insert_with_opts(_Driver) ->
+insert_with_opts(Driver) ->
+    ok = gaffer:create_queue(#{name => ?FUNCTION_NAME, driver => Driver}),
     Opts = #{priority => 5, max_attempts => 10},
-    ?assertError(
-        not_implemented,
-        gaffer:insert(test_q, #{task => 1}, Opts)
+    {ok, Job} = gaffer:insert(?FUNCTION_NAME, #{task => 1}, Opts),
+    ?assertMatch(
+        #{
+            queue := insert_with_opts,
+            args := #{task := 1},
+            priority := 5,
+            max_attempts := 10
+        },
+        Job
     ).
 
 %--- Lifecycle tests ----------------------------------------------------------
 
-cancel(_Driver) ->
-    ?assertError(
-        not_implemented, gaffer:cancel(<<"job-1">>)
-    ).
-
 retry(_Driver) ->
-    ?assertError(
-        not_implemented, gaffer:retry(<<"job-1">>)
-    ).
+    ?assertError(not_found, gaffer:retry(<<"no-such-job">>)).
+
+cancel(_Driver) ->
+    ?assertError(not_found, gaffer:cancel(<<"no-such-job">>)).
 
 drain(_Driver) ->
     ?assertEqual(
@@ -129,13 +141,21 @@ drain(_Driver) ->
 
 %--- Query tests --------------------------------------------------------------
 
-get_job(_Driver) ->
-    ?assertError(
-        not_implemented, gaffer:get(<<"job-1">>)
+get_job(Driver) ->
+    ok = gaffer:create_queue(
+        #{name => ?FUNCTION_NAME, driver => Driver}
+    ),
+    {ok, #{id := Id}} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
+    {ok, Job} = gaffer:get(Id),
+    ?assertMatch(
+        #{id := Id, queue := get_job, args := #{task := 1}}, Job
     ).
 
-list_jobs(_Driver) ->
-    ?assertError(
-        not_implemented,
-        gaffer:list(#{queue => test_q})
-    ).
+list_jobs(Driver) ->
+    ok = gaffer:create_queue(
+        #{name => ?FUNCTION_NAME, driver => Driver}
+    ),
+    {ok, _} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
+    {ok, _} = gaffer:insert(?FUNCTION_NAME, #{task => 2}),
+    {ok, Jobs} = gaffer:list(#{queue => ?FUNCTION_NAME}),
+    ?assertEqual(2, length(Jobs)).

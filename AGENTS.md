@@ -19,6 +19,8 @@ rebar3 lint                 # Run elvis linter
 rebar3 hank                 # Dead code detection
 rebar3 dialyzer             # Type checking (incremental)
 rebar3 as test xref         # Cross-reference checking (test profile uses the API)
+elp lint                    # Parse files in project and emit diagnostics
+elp lint --diagnostic-filter <code> --apply-fix # Apply specific fixes
 elp eqwalize <module>       # Type-check a single module
 elp eqwalize-all            # Type-check all src modules in the project
 ```

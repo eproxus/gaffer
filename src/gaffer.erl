@@ -177,15 +177,22 @@ insert(Queue, Args) -> insert(Queue, Args, #{}).
 
 -spec insert(queue_name(), map(), job_opts()) ->
     {ok, job()} | {error, term()}.
-insert(_Queue, _Args, _Opts) -> error(not_implemented).
+insert(Queue, Args, Opts) ->
+    {Mod, DS} = lookup(Queue),
+    Job = gaffer_job:new(Queue, Args, Opts),
+    Mod:job_insert(Job, DS).
 
 %--- Lifecycle ----------------------------------------------------------------
 
 -spec cancel(job_id()) -> {ok, job()} | {error, term()}.
-cancel(_JobId) -> error(not_implemented).
+cancel(JobId) ->
+    {Mod, DS} = find_driver(JobId),
+    Mod:job_cancel(JobId, DS).
 
 -spec retry(job_id()) -> {ok, job()} | {error, term()}.
-retry(_JobId) -> error(not_implemented).
+retry(JobId) ->
+    {Mod, DS} = find_driver(JobId),
+    Mod:job_retry(JobId, calendar:universal_time(), DS).
 
 -spec drain(drain_opts()) ->
     #{completed := integer(), failed := integer()}.
@@ -194,10 +201,14 @@ drain(_Opts) -> #{completed => 0, failed => 0}.
 %--- Querying -----------------------------------------------------------------
 
 -spec get(job_id()) -> {ok, job()} | {error, term()}.
-get(_JobId) -> error(not_implemented).
+get(JobId) ->
+    {Mod, DS} = find_driver(JobId),
+    Mod:job_get(JobId, DS).
 
 -spec list(list_opts()) -> {ok, [job()]} | {error, term()}.
-list(_Opts) -> error(not_implemented).
+list(#{queue := Queue} = Opts) ->
+    {Mod, DS} = lookup(Queue),
+    Mod:job_list(Opts, DS).
 
 %--- Internal -----------------------------------------------------------------
 
@@ -207,4 +218,18 @@ lookup(Name) ->
     case ets:lookup(gaffer_queues, Name) of
         [{_, Entry}] -> Entry;
         [] -> error({unknown_queue, Name})
+    end.
+
+-spec find_driver(job_id()) ->
+    {module(), gaffer_driver:driver_state()}.
+find_driver(JobId) ->
+    Entries = ets:tab2list(gaffer_queues),
+    find_driver(JobId, Entries).
+
+find_driver(_JobId, []) ->
+    error(not_found);
+find_driver(JobId, [{_, {Mod, DS}} | Rest]) ->
+    case Mod:job_get(JobId, DS) of
+        {ok, _} -> {Mod, DS};
+        {error, not_found} -> find_driver(JobId, Rest)
     end.
