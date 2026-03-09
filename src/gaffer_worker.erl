@@ -7,7 +7,8 @@
 %% persisted queue config or per-job opts at insert time.
 
 -callback perform(Job :: gaffer:job()) ->
-    ok
-    | {ok, term()}
-    | {error, term()}
-    | {cancel, binary()}.
+    complete
+    | {complete, term()}
+    | {fail, term()}
+    | {cancel, binary()}
+    | {schedule, gaffer:timestamp()}.

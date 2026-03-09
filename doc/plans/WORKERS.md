@@ -254,7 +254,7 @@ Each item is independently committable and should pass all checks.
   - [x] Rename `concurrency` to `global_max_workers` in `queue_conf()` type
   - [x] Add `max_workers`, `poll_interval`, `shutdown_timeout` to `queue_conf()`
 - [ ] Worker callback
-  - [ ] Update `gaffer_worker.erl` callback spec
+  - [x] Update `gaffer_worker.erl` callback spec
 - [ ] Driver behaviour + ETS implementation
   - [ ] Add `job_fetch/2`, `job_schedule/2` callbacks to `gaffer_driver`
   - [ ] Implement `job_fetch/2` in ETS driver (with `global_max_workers`)
