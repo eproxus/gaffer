@@ -125,21 +125,21 @@ stop(_State) -> ok.
 %--- Queue management ---------------------------------------------------------
 
 -spec create_queue(queue_conf()) -> ok | {error, term()}.
-create_queue(_Conf) -> {error, not_implemented}.
+create_queue(_Conf) -> error(not_implemented).
 
 -spec get_queue(queue_name()) ->
     {ok, queue_conf()} | {error, term()}.
-get_queue(_Name) -> {error, not_implemented}.
+get_queue(_Name) -> error(not_implemented).
 
 -spec update_queue(queue_name(), map()) ->
     ok | {error, term()}.
-update_queue(_Name, _Updates) -> {error, not_implemented}.
+update_queue(_Name, _Updates) -> error(not_implemented).
 
 -spec delete_queue(queue_name()) -> ok | {error, term()}.
-delete_queue(_Name) -> {error, not_implemented}.
+delete_queue(_Name) -> error(not_implemented).
 
 -spec list_queues() -> {ok, [queue_conf()]} | {error, term()}.
-list_queues() -> {error, not_implemented}.
+list_queues() -> error(not_implemented).
 
 %--- Enqueueing ---------------------------------------------------------------
 
@@ -149,15 +149,15 @@ insert(Queue, Args) -> insert(Queue, Args, #{}).
 
 -spec insert(queue_name(), map(), job_opts()) ->
     {ok, job()} | {error, term()}.
-insert(_Queue, _Args, _Opts) -> {error, not_implemented}.
+insert(_Queue, _Args, _Opts) -> error(not_implemented).
 
 %--- Lifecycle ----------------------------------------------------------------
 
 -spec cancel(job_id()) -> {ok, job()} | {error, term()}.
-cancel(_JobId) -> {error, not_implemented}.
+cancel(_JobId) -> error(not_implemented).
 
 -spec retry(job_id()) -> {ok, job()} | {error, term()}.
-retry(_JobId) -> {error, not_implemented}.
+retry(_JobId) -> error(not_implemented).
 
 -spec drain(drain_opts()) ->
     #{completed := integer(), failed := integer()}.
@@ -166,7 +166,7 @@ drain(_Opts) -> #{completed => 0, failed => 0}.
 %--- Querying -----------------------------------------------------------------
 
 -spec get(job_id()) -> {ok, job()} | {error, term()}.
-get(_JobId) -> {error, not_implemented}.
+get(_JobId) -> error(not_implemented).
 
 -spec list(list_opts()) -> {ok, [job()]} | {error, term()}.
-list(_Opts) -> {error, not_implemented}.
+list(_Opts) -> error(not_implemented).
