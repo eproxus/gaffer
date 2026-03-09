@@ -24,6 +24,19 @@
 -export([get/2]).
 -export([list/1]).
 
+-ignore_xref([
+    create_queue/1,
+    get_queue/1,
+    update_queue/2,
+    delete_queue/1,
+    list_queues/0,
+    insert/2,
+    insert/3,
+    cancel/2,
+    get/2,
+    list/1
+]).
+
 %--- Types --------------------------------------------------------------------
 
 -type job_id() :: binary().
@@ -161,7 +174,7 @@ delete_queue(Name) ->
 -spec list_queues() -> {ok, [queue_conf()]}.
 list_queues() ->
     Entries = ets:tab2list(gaffer_queues),
-    {ok, lists:map(fun queue_from_entry/1, Entries)}.
+    {ok, [queue_from_entry(E) || E <- Entries]}.
 
 queue_from_entry({Name, {Mod, DS}}) ->
     {ok, Conf} = Mod:queue_get(Name, DS),

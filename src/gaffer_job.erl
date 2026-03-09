@@ -5,6 +5,9 @@
 -export([transition/2]).
 -export([add_error/2]).
 
+% FIXME: Remove once a production driver calls these functions
+-ignore_xref([validate/1, transition/2, add_error/2]).
+
 %--- API ----------------------------------------------------------------------
 
 -spec new(gaffer:queue_name(), map(), gaffer:job_opts()) ->
