@@ -29,9 +29,9 @@
 
 -spec start(map()) -> {ok, state()}.
 start(_Opts) ->
-    Queued = ets:new(gaffer_queued, [public, set]),
-    Locked = ets:new(gaffer_locked, [public, set]),
-    Queues = ets:new(gaffer_queues, [public, set]),
+    Queued = ets:new(gaffer_driver_ets_queued, [public, set]),
+    Locked = ets:new(gaffer_driver_ets_locked, [public, set]),
+    Queues = ets:new(gaffer_driver_ets_queues, [public, set]),
     {ok, #{queued => Queued, locked => Locked, queues => Queues}}.
 
 -spec stop(state()) -> ok.

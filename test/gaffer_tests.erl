@@ -130,7 +130,7 @@ cancel(Driver) ->
         #{name => ?FUNCTION_NAME, driver => Driver}
     ),
     {ok, #{id := Id}} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
-    {ok, Job} = gaffer:cancel(Id),
+    {ok, Job} = gaffer:cancel(?FUNCTION_NAME, Id),
     ?assertMatch(#{state := cancelled, id := Id}, Job).
 
 %--- Query tests --------------------------------------------------------------
@@ -140,7 +140,7 @@ get_job(Driver) ->
         #{name => ?FUNCTION_NAME, driver => Driver}
     ),
     {ok, #{id := Id}} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
-    {ok, Job} = gaffer:get(Id),
+    {ok, Job} = gaffer:get(?FUNCTION_NAME, Id),
     ?assertMatch(
         #{id := Id, queue := get_job, args := #{task := 1}}, Job
     ).

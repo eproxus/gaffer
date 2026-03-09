@@ -18,10 +18,10 @@
 -export([insert/3]).
 
 %% Lifecycle
--export([cancel/1]).
+-export([cancel/2]).
 
 %% Querying
--export([get/1]).
+-export([get/2]).
 -export([list/1]).
 
 %--- Types --------------------------------------------------------------------
@@ -177,16 +177,16 @@ insert(Queue, Args, Opts) ->
 
 %--- Lifecycle ----------------------------------------------------------------
 
--spec cancel(job_id()) -> {ok, job()} | {error, term()}.
-cancel(JobId) ->
-    {Mod, DS} = find_driver(JobId),
+-spec cancel(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
+cancel(Queue, JobId) ->
+    {Mod, DS} = lookup(Queue),
     Mod:job_cancel(JobId, DS).
 
 %--- Querying -----------------------------------------------------------------
 
--spec get(job_id()) -> {ok, job()} | {error, term()}.
-get(JobId) ->
-    {Mod, DS} = find_driver(JobId),
+-spec get(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
+get(Queue, JobId) ->
+    {Mod, DS} = lookup(Queue),
     Mod:job_get(JobId, DS).
 
 -spec list(list_opts()) -> {ok, [job()]} | {error, term()}.
@@ -202,18 +202,4 @@ lookup(Name) ->
     case ets:lookup(gaffer_queues, Name) of
         [{_, Entry}] -> Entry;
         [] -> error({unknown_queue, Name})
-    end.
-
--spec find_driver(job_id()) ->
-    {module(), gaffer_driver:driver_state()}.
-find_driver(JobId) ->
-    Entries = ets:tab2list(gaffer_queues),
-    find_driver(JobId, Entries).
-
-find_driver(_JobId, []) ->
-    error(not_found);
-find_driver(JobId, [{_, {Mod, DS}} | Rest]) ->
-    case Mod:job_get(JobId, DS) of
-        {ok, _} -> {Mod, DS};
-        {error, not_found} -> find_driver(JobId, Rest)
     end.
