@@ -59,11 +59,11 @@ update_queue(Driver) ->
     ok = gaffer:create_queue(#{
         name => ?FUNCTION_NAME,
         driver => Driver,
-        concurrency => 5
+        global_max_workers => 5
     }),
-    ok = gaffer:update_queue(?FUNCTION_NAME, #{concurrency => 10}),
+    ok = gaffer:update_queue(?FUNCTION_NAME, #{global_max_workers => 10}),
     {ok, Updated} = gaffer:get_queue(?FUNCTION_NAME),
-    ?assertEqual(10, maps:get(concurrency, Updated)),
+    ?assertEqual(10, maps:get(global_max_workers, Updated)),
     ?assertEqual(Driver, maps:get(driver, Updated)).
 
 delete_queue(Driver) ->

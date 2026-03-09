@@ -250,9 +250,9 @@ cancels it.
 
 Each item is independently committable and should pass all checks.
 
-- [ ] Queue configuration
-  - [ ] Rename `concurrency` to `global_max_workers` in `queue_conf()` type
-  - [ ] Add `max_workers`, `poll_interval`, `shutdown_timeout` to `queue_conf()`
+- [x] Queue configuration
+  - [x] Rename `concurrency` to `global_max_workers` in `queue_conf()` type
+  - [x] Add `max_workers`, `poll_interval`, `shutdown_timeout` to `queue_conf()`
 - [ ] Worker callback
   - [ ] Update `gaffer_worker.erl` callback spec
 - [ ] Driver behaviour + ETS implementation
