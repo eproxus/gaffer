@@ -36,5 +36,7 @@
     {ok, gaffer:job()}.
 -callback job_cancel(gaffer:job_id(), driver_state()) ->
     {ok, gaffer:job()}.
+-callback job_schedule(gaffer:job_id(), gaffer:timestamp(), driver_state()) ->
+    {ok, gaffer:job()}.
 -callback job_prune(gaffer:prune_opts(), driver_state()) ->
     {ok, non_neg_integer()}.

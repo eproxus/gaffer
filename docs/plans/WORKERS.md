@@ -256,10 +256,10 @@ Each item is independently committable and should pass all checks.
 - [ ] Worker callback
   - [x] Update `gaffer_worker.erl` callback spec
 - [ ] Driver behaviour + ETS implementation
-  - [ ] Add `job_fetch/2`, `job_schedule/2` callbacks to `gaffer_driver`
-  - [ ] Implement `job_fetch/2` in ETS driver (with `global_max_workers`)
-  - [ ] Implement `job_complete/2`, `job_fail/2`, `job_cancel/2`, `job_schedule/2`
-  - [ ] Store notify fun, call on `job_insert`
+  - [ ] Add `job_schedule/3` callback to `gaffer_driver`
+  - [ ] Add `executing -> scheduled` transition to `gaffer_job`
+  - [ ] Implement `job_schedule/3` in ETS driver
+  - [ ] Enforce `global_max_workers` in ETS `job_fetch/2`
 - [ ] Queue runner (`gaffer_queue_runner`)
   - [ ] Implement as `gen_statem` with `handle_event_function` callback mode
   - [ ] Process registration/naming for notify fun targeting

@@ -14,6 +14,7 @@
 -export([job_complete/2]).
 -export([job_fail/3]).
 -export([job_cancel/2]).
+-export([job_schedule/3]).
 -export([job_prune/2]).
 
 -export_type([state/0]).
@@ -90,9 +91,10 @@ job_list(Opts, #{queued := Queued, locked := Locked}) ->
 
 -spec job_fetch(gaffer:fetch_opts(), state()) ->
     {ok, [gaffer:job()]}.
-job_fetch(Opts, #{queued := Queued, locked := Locked}) ->
+job_fetch(Opts, #{queued := Queued, locked := Locked, queues := Queues}) ->
     Queue = maps:get(queue, Opts, undefined),
-    Limit = maps:get(limit, Opts, 1),
+    Limit0 = maps:get(limit, Opts, 1),
+    Limit = apply_global_max(Queue, Limit0, Locked, Queues),
     Now = erlang:system_time(microsecond),
     All = [Job || {_, Job} <:- ets:tab2list(Queued)],
     Available = [
@@ -103,7 +105,7 @@ job_fetch(Opts, #{queued := Queued, locked := Locked}) ->
         not is_scheduled_future(Job, Now)
     ],
     Sorted = lists:sort(fun compare_priority/2, Available),
-    ToFetch = lists:sublist(Sorted, Limit),
+    ToFetch = lists:sublist(Sorted, max(0, Limit)),
     Claimed = claim_jobs(ToFetch, Queued, Locked, []),
     {ok, Claimed}.
 
@@ -147,6 +149,16 @@ job_fail(Id, JobError, #{locked := Locked, queued := Queued}) ->
             error({not_executing, Id})
     end.
 
+-spec job_schedule(gaffer:job_id(), gaffer:timestamp(), state()) ->
+    {ok, gaffer:job()}.
+job_schedule(Id, At, #{locked := Locked, queued := Queued}) ->
+    [{_, Job0}] = ets:lookup(Locked, Id),
+    {ok, Job} = gaffer_job:transition(Job0, scheduled),
+    Job1 = Job#{scheduled_at => At},
+    true = ets:delete(Locked, Id),
+    true = ets:insert(Queued, {Id, Job1}),
+    {ok, Job1}.
+
 -spec job_cancel(gaffer:job_id(), state()) ->
     {ok, gaffer:job()}.
 job_cancel(Id, #{queued := Queued, locked := Locked}) ->
@@ -175,6 +187,21 @@ job_prune(Opts, #{queued := Queued, locked := Locked}) ->
     {ok, Count}.
 
 %--- Internal -----------------------------------------------------------------
+
+apply_global_max(undefined, Limit, _Locked, _Queues) ->
+    Limit;
+apply_global_max(Queue, Limit, Locked, Queues) ->
+    case ets:lookup(Queues, Queue) of
+        [{_, #{global_max_workers := Max}}] ->
+            Executing = length([
+                J
+             || {_, #{queue := Q} = J} <:- ets:tab2list(Locked),
+                Q =:= Queue
+            ]),
+            min(Limit, Max - Executing);
+        _ ->
+            Limit
+    end.
 
 matches_queue(undefined, _Job) -> true;
 matches_queue(Q, #{queue := Q}) -> true;

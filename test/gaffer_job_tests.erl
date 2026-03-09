@@ -94,6 +94,13 @@ transition_failed_to_discarded_test() ->
     ?assertEqual(discarded, maps:get(state, Job3)),
     ?assert(maps:is_key(discarded_at, Job3)).
 
+transition_executing_to_scheduled_test() ->
+    Job0 = gaffer_job:new(q, #{}, #{}),
+    {ok, Job1} = gaffer_job:transition(Job0, executing),
+    {ok, Job2} = gaffer_job:transition(Job1, scheduled),
+    ?assertEqual(scheduled, maps:get(state, Job2)),
+    ?assert(maps:is_key(scheduled_at, Job2)).
+
 transition_invalid_test() ->
     Job = gaffer_job:new(q, #{}, #{}),
     ?assertMatch(
