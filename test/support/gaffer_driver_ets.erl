@@ -151,15 +151,11 @@ job_fail(Id, JobError, #{locked := Locked, queued := Queued}) ->
 
 -spec job_cancel(gaffer:job_id(), state()) ->
     {ok, gaffer:job()}.
-job_cancel(Id, #{locked := Locked}) ->
-    case ets:lookup(Locked, Id) of
-        [{_, Job0}] ->
-            {ok, Job} = gaffer_job:transition(Job0, cancelled),
-            true = ets:insert(Locked, {Id, Job}),
-            {ok, Job};
-        [] ->
-            error({not_executing, Id})
-    end.
+job_cancel(Id, #{queued := Queued, locked := Locked}) ->
+    {Job0, Source} = lookup_any(Id, Queued, Locked),
+    {ok, Job} = gaffer_job:transition(Job0, cancelled),
+    true = ets:insert(Source, {Id, Job}),
+    {ok, Job}.
 
 -spec job_retry(
     gaffer:job_id(), calendar:datetime(), state()

@@ -81,7 +81,9 @@ add_error(#{errors := Errors} = Job, Error) ->
 -spec valid_transition(gaffer:job_state(), gaffer:job_state()) ->
     boolean().
 valid_transition(available, executing) -> true;
+valid_transition(available, cancelled) -> true;
 valid_transition(scheduled, available) -> true;
+valid_transition(scheduled, cancelled) -> true;
 valid_transition(executing, completed) -> true;
 valid_transition(executing, failed) -> true;
 valid_transition(executing, cancelled) -> true;

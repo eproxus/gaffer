@@ -130,8 +130,13 @@ insert_with_opts(Driver) ->
 retry(_Driver) ->
     ?assertError(not_found, gaffer:retry(<<"no-such-job">>)).
 
-cancel(_Driver) ->
-    ?assertError(not_found, gaffer:cancel(<<"no-such-job">>)).
+cancel(Driver) ->
+    ok = gaffer:create_queue(
+        #{name => ?FUNCTION_NAME, driver => Driver}
+    ),
+    {ok, #{id := Id}} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
+    {ok, Job} = gaffer:cancel(Id),
+    ?assertMatch(#{state := cancelled, id := Id}, Job).
 
 drain(_Driver) ->
     ?assertEqual(
