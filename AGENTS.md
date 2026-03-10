@@ -41,5 +41,7 @@ The encapsulation layers are as follows:
 
 ## Changes
 
-After every change, verify and test the codebase. List the number of added or
-removed lines for all files with nice graphics.
+After every change
+* Format the code (`rebar3 fmt`)
+* Verify and test the codebase
+* List the number of added or removed lines for all files with nice graphics
