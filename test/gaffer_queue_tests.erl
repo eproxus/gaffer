@@ -4,19 +4,6 @@
 
 %--- Helpers ------------------------------------------------------------------
 
-new_driver() ->
-    gaffer_queue:new(gaffer_driver_mock, #{}).
-
-insert_job(D) -> insert_job(D, #{}).
-insert_job(D, Opts) ->
-    gaffer_queue:insert(test_queue, #{task => 1}, Opts, D).
-
-claim_one(D) ->
-    gaffer_queue:claim(#{queue => test_queue, limit => 1}, D).
-
-make_error(N) ->
-    #{attempt => N, error => boom, at => erlang:system_time(microsecond)}.
-
 %% Force a job's state in the mock driver (for simulating scheduled→available).
 set_job_state(Id, State, {Mod, #{jobs := Jobs} = DS}) ->
     #{Id := Job} = Jobs,
@@ -26,8 +13,8 @@ set_job_state(Id, State, {Mod, #{jobs := Jobs} = DS}) ->
 %--- Insert tests -------------------------------------------------------------
 
 insert_defaults_test() ->
-    D0 = new_driver(),
-    {Job, _D1} = insert_job(D0),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {Job, _D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     ?assertMatch(
         #{
             queue := test_queue,
@@ -46,21 +33,23 @@ insert_defaults_test() ->
     ?assert(is_integer(maps:get(inserted_at, Job))).
 
 insert_scheduled_test() ->
-    D0 = new_driver(),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     At = 1767261600000000,
     {Job, _D1} =
-        insert_job(D0, #{scheduled_at => At}),
+        gaffer_queue:insert(
+            test_queue, #{task => 1}, #{scheduled_at => At}, D0
+        ),
     ?assertMatch(#{state := scheduled, scheduled_at := At}, Job).
 
 insert_with_opts_test() ->
-    D0 = new_driver(),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     Opts = #{
         max_attempts => 5,
         priority => 10,
         tags => [~"urgent"],
         meta => #{source => ~"api"}
     },
-    {Job, _D1} = insert_job(D0, Opts),
+    {Job, _D1} = gaffer_queue:insert(test_queue, #{task => 1}, Opts, D0),
     ?assertMatch(
         #{
             max_attempts := 5,
@@ -74,22 +63,22 @@ insert_with_opts_test() ->
 %--- Get / list tests ---------------------------------------------------------
 
 get_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     {ok, Found} = gaffer_queue:get(Id, D1),
     ?assertMatch(#{id := Id}, Found).
 
 get_not_found_test() ->
-    D0 = new_driver(),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     ?assertEqual(
         {error, not_found},
         gaffer_queue:get(~"nope", D0)
     ).
 
 list_test() ->
-    D0 = new_driver(),
-    {_, D1} = insert_job(D0),
-    {_, D2} = insert_job(D1),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {_, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
+    {_, D2} = gaffer_queue:insert(test_queue, #{task => 2}, #{}, D1),
     Jobs = gaffer_queue:list(
         #{queue => test_queue}, D2
     ),
@@ -98,36 +87,38 @@ list_test() ->
 %--- Cancel tests -------------------------------------------------------------
 
 cancel_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     {ok, Cancelled, _D2} = gaffer_queue:cancel(Id, D1),
     ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled).
 
 cancel_not_found_test() ->
-    D0 = new_driver(),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     ?assertEqual(
         {error, not_found},
         gaffer_queue:cancel(~"nope", D0)
     ).
 
 cancel_scheduled_test() ->
-    D0 = new_driver(),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     At = 1767261600000000,
-    {#{id := Id}, D1} = insert_job(D0, #{scheduled_at => At}),
+    {#{id := Id}, D1} = gaffer_queue:insert(
+        test_queue, #{task => 1}, #{scheduled_at => At}, D0
+    ),
     {ok, Cancelled, _D2} = gaffer_queue:cancel(Id, D1),
     ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled).
 
 cancel_executing_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
-    {[_], D2} = claim_one(D1),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
     {ok, Cancelled, _D3} = gaffer_queue:cancel(Id, D2),
     ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled).
 
 cancel_completed_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
-    {[_], D2} = claim_one(D1),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
     {ok, _, D3} = gaffer_queue:complete(Id, D2),
     ?assertMatch(
         {error, {invalid_transition, {completed, cancelled}}},
@@ -135,10 +126,13 @@ cancel_completed_test() ->
     ).
 
 cancel_discarded_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 1}),
-    {[_], D2} = claim_one(D1),
-    {ok, _, D3} = gaffer_queue:fail(Id, make_error(1), D2),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(
+        test_queue, #{task => 1}, #{max_attempts => 1}, D0
+    ),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
+    E = #{attempt => 1, error => boom, at => erlang:system_time(microsecond)},
+    {ok, _, D3} = gaffer_queue:fail(Id, E, D2),
     ?assertMatch(
         {error, {invalid_transition, {discarded, cancelled}}},
         gaffer_queue:cancel(Id, D3)
@@ -147,17 +141,17 @@ cancel_discarded_test() ->
 %--- Complete tests -----------------------------------------------------------
 
 complete_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
-    {[_], D2} = claim_one(D1),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
     {ok, Completed, _D3} = gaffer_queue:complete(Id, D2),
     ?assertMatch(
         #{state := completed, attempt := 1, completed_at := _}, Completed
     ).
 
 complete_available_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     ?assertMatch(
         {error, {invalid_transition, {available, completed}}},
         gaffer_queue:complete(Id, D1)
@@ -166,9 +160,11 @@ complete_available_test() ->
 %--- Fail tests ---------------------------------------------------------------
 
 fail_retryable_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 3}),
-    {[_], D2} = claim_one(D1),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(
+        test_queue, #{task => 1}, #{max_attempts => 3}, D0
+    ),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
     JobError = #{
         attempt => 1,
         error => timeout,
@@ -180,9 +176,11 @@ fail_retryable_test() ->
     ).
 
 fail_discarded_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 1}),
-    {[_], D2} = claim_one(D1),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(
+        test_queue, #{task => 1}, #{max_attempts => 1}, D0
+    ),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
     JobError = #{
         attempt => 1,
         error => boom,
@@ -196,11 +194,13 @@ fail_discarded_test() ->
 %--- Full lifecycle tests -----------------------------------------------------
 
 full_retry_cycle_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 3}),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(
+        test_queue, #{task => 1}, #{max_attempts => 3}, D0
+    ),
     %% Attempt 1: claim → fail (retryable)
-    {[_], D2} = claim_one(D1),
-    E1 = make_error(1),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
+    E1 = #{attempt => 1, error => boom, at => erlang:system_time(microsecond)},
     {ok, F1, D3} = gaffer_queue:fail(Id, E1, D2),
     ?assertMatch(#{state := failed, attempt := 1}, F1),
     %% Schedule retry → schedule → claim again
@@ -209,16 +209,16 @@ full_retry_cycle_test() ->
     %% Transition scheduled→available via the mock
     D5 = set_job_state(Id, available, D4),
     %% Attempt 2: claim → fail (retryable)
-    {[_], D6} = claim_one(D5),
-    E2 = make_error(2),
+    {[_], D6} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D5),
+    E2 = #{attempt => 2, error => boom, at => erlang:system_time(microsecond)},
     {ok, F2, D7} = gaffer_queue:fail(Id, E2, D6),
     ?assertMatch(#{state := failed, attempt := 2, errors := [E2, E1]}, F2),
     %% Schedule retry again
     {ok, _, D8} = gaffer_queue:schedule(Id, RetryAt, D7),
     D9 = set_job_state(Id, available, D8),
     %% Attempt 3: claim → fail (discarded — max attempts reached)
-    {[_], D10} = claim_one(D9),
-    E3 = make_error(3),
+    {[_], D10} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D9),
+    E3 = #{attempt => 3, error => boom, at => erlang:system_time(microsecond)},
     {ok, Discarded, _D11} = gaffer_queue:fail(Id, E3, D10),
     ?assertMatch(
         #{state := discarded, attempt := 3, errors := [E3, E2, E1]},
@@ -228,9 +228,9 @@ full_retry_cycle_test() ->
 %--- Schedule tests -----------------------------------------------------------
 
 schedule_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
-    {[_], D2} = claim_one(D1),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
     FutureAt = erlang:system_time(microsecond) + 60_000_000,
     {ok, Scheduled, _D3} = gaffer_queue:schedule(
         Id, FutureAt, D2
@@ -238,10 +238,13 @@ schedule_test() ->
     ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
 
 schedule_from_failed_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 3}),
-    {[_], D2} = claim_one(D1),
-    {ok, _, D3} = gaffer_queue:fail(Id, make_error(1), D2),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(
+        test_queue, #{task => 1}, #{max_attempts => 3}, D0
+    ),
+    {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
+    E = #{attempt => 1, error => boom, at => erlang:system_time(microsecond)},
+    {ok, _, D3} = gaffer_queue:fail(Id, E, D2),
     FutureAt = erlang:system_time(microsecond) + 60_000_000,
     {ok, Scheduled, _D4} = gaffer_queue:schedule(
         Id, FutureAt, D3
@@ -249,8 +252,8 @@ schedule_from_failed_test() ->
     ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
 
 schedule_available_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     FutureAt = erlang:system_time(microsecond) + 60_000_000,
     ?assertMatch(
         {error, {invalid_transition, {available, scheduled}}},
@@ -260,9 +263,9 @@ schedule_available_test() ->
 %--- Claim tests --------------------------------------------------------------
 
 claim_test() ->
-    D0 = new_driver(),
-    {_, D1} = insert_job(D0),
-    {_, D2} = insert_job(D1),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {_, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
+    {_, D2} = gaffer_queue:insert(test_queue, #{task => 2}, #{}, D1),
     {Claimed, _D3} = gaffer_queue:claim(
         #{queue => test_queue, limit => 1}, D2
     ),
@@ -271,7 +274,7 @@ claim_test() ->
     ?assertMatch(#{state := executing, attempted_at := _}, Job).
 
 claim_empty_test() ->
-    D0 = new_driver(),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     {Claimed, _D1} = gaffer_queue:claim(
         #{queue => test_queue, limit => 5}, D0
     ),
@@ -280,8 +283,8 @@ claim_empty_test() ->
 %--- Prune tests --------------------------------------------------------------
 
 prune_test() ->
-    D0 = new_driver(),
-    {#{id := Id}, D1} = insert_job(D0),
+    D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
+    {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     {ok, _, D2} = gaffer_queue:cancel(Id, D1),
     {Count, _D3} = gaffer_queue:prune(
         #{states => [cancelled]}, D2
