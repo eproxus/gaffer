@@ -25,12 +25,12 @@
 
 %--- Lifecycle ----------------------------------------------------------------
 
--spec start(map()) -> {ok, state()}.
+-spec start(map()) -> state().
 start(_Opts) ->
     Queued = ets:new(gaffer_driver_ets_queued, [public, set]),
     Locked = ets:new(gaffer_driver_ets_locked, [public, set]),
     Queues = ets:new(gaffer_driver_ets_queues, [public, set]),
-    {ok, #{queued => Queued, locked => Locked, queues => Queues}}.
+    #{queued => Queued, locked => Locked, queues => Queues}.
 
 -spec stop(state()) -> ok.
 stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
@@ -42,47 +42,47 @@ stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
 %--- Queue config -------------------------------------------------------------
 
 -spec queue_put(gaffer:queue_conf(), state()) ->
-    {ok, state()}.
+    state().
 queue_put(#{name := Name} = Conf, #{queues := Tab} = State) ->
     true = ets:insert(Tab, {Name, Conf}),
-    {ok, State}.
+    State.
 
 -spec queue_get(gaffer:queue_name(), state()) ->
-    {ok, gaffer:queue_conf()}.
-queue_get(Name, #{queues := Tab}) ->
+    {gaffer:queue_conf(), state()}.
+queue_get(Name, #{queues := Tab} = State) ->
     [{_, Conf}] = ets:lookup(Tab, Name),
-    {ok, Conf}.
+    {Conf, State}.
 
 -spec queue_delete(gaffer:queue_name(), state()) ->
-    {ok, state()}.
+    state().
 queue_delete(Name, #{queues := Tab} = State) ->
     true = ets:delete(Tab, Name),
-    {ok, State}.
+    State.
 
 %--- Jobs ---------------------------------------------------------------------
 
 -spec job_insert(gaffer:job(), state()) ->
-    {ok, gaffer:job(), state()}.
+    {gaffer:job(), state()}.
 job_insert(#{id := Id} = Job, #{queued := Tab} = State) ->
     true = ets:insert(Tab, {Id, Job}),
-    {ok, Job, State}.
+    {Job, State}.
 
 -spec job_get(gaffer:job_id(), state()) ->
-    {ok, gaffer:job()} | {error, not_found}.
-job_get(Id, #{queued := Queued, locked := Locked}) ->
+    {gaffer:job() | not_found, state()}.
+job_get(Id, #{queued := Queued, locked := Locked} = State) ->
     case ets:lookup(Locked, Id) of
         [{_, Job}] ->
-            {ok, Job};
+            {Job, State};
         [] ->
             case ets:lookup(Queued, Id) of
-                [{_, Job}] -> {ok, Job};
-                [] -> {error, not_found}
+                [{_, Job}] -> {Job, State};
+                [] -> {not_found, State}
             end
     end.
 
 -spec job_list(gaffer:list_opts(), state()) ->
-    {ok, [gaffer:job()]}.
-job_list(Opts, #{queued := Queued, locked := Locked}) ->
+    {[gaffer:job()], state()}.
+job_list(Opts, #{queued := Queued, locked := Locked} = State) ->
     Pattern = {'_', Opts},
     Jobs =
         [Job || {_, Job} <:- ets:match_object(Queued, Pattern)] ++
@@ -90,19 +90,19 @@ job_list(Opts, #{queued := Queued, locked := Locked}) ->
                 Job
              || {_, Job} <:- ets:match_object(Locked, Pattern)
             ],
-    {ok, Jobs}.
+    {Jobs, State}.
 
 -spec job_delete(gaffer:job_id(), state()) ->
-    {ok, state()}.
+    state().
 job_delete(Id, #{queued := Queued, locked := Locked} = State) ->
     ets:delete(Queued, Id),
     ets:delete(Locked, Id),
-    {ok, State}.
+    State.
 
 -spec job_claim(
     gaffer:claim_opts(), gaffer:job_changes(), state()
 ) ->
-    {ok, [gaffer:job()], state()}.
+    {[gaffer:job()], state()}.
 job_claim(
     Opts,
     Changes,
@@ -123,10 +123,10 @@ job_claim(
     Sorted = lists:sort(fun compare_priority/2, Available),
     ToFetch = lists:sublist(Sorted, max(0, Limit)),
     Claimed = claim_jobs(ToFetch, Changes, Queued, Locked, []),
-    {ok, Claimed, State}.
+    {Claimed, State}.
 
 -spec job_update(gaffer:job(), state()) ->
-    {ok, gaffer:job(), state()}.
+    state().
 job_update(
     #{id := Id, state := JobState} = Job,
     #{queued := Queued, locked := Locked} = State
@@ -140,10 +140,10 @@ job_update(
             ets:delete(Locked, Id),
             true = ets:insert(Queued, {Id, Job})
     end,
-    {ok, Job, State}.
+    State.
 
 -spec job_prune(gaffer:prune_opts(), state()) ->
-    {ok, non_neg_integer(), state()}.
+    {non_neg_integer(), state()}.
 job_prune(Opts, #{queued := Queued, locked := Locked} = State) ->
     States = maps:get(states, Opts, [completed, discarded]),
     AllQ = [
@@ -159,7 +159,7 @@ job_prune(Opts, #{queued := Queued, locked := Locked} = State) ->
     Count = length(AllQ) + length(AllL),
     _ = [ets:delete(Queued, Id) || {Id, _} <:- AllQ],
     _ = [ets:delete(Locked, Id) || {Id, _} <:- AllL],
-    {ok, Count, State}.
+    {Count, State}.
 
 %--- Internal -----------------------------------------------------------------
 

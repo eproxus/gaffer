@@ -31,7 +31,7 @@
 
 -spec new(module(), map()) -> {ok, driver()}.
 new(Mod, Opts) ->
-    {ok, DS} = Mod:start(Opts),
+    DS = Mod:start(Opts),
     {ok, {Mod, DS}}.
 
 %--- Queue config operations --------------------------------------------------
@@ -39,18 +39,19 @@ new(Mod, Opts) ->
 -spec put_conf(gaffer:queue_conf(), driver()) ->
     {ok, driver()}.
 put_conf(Conf, {Mod, DS}) ->
-    {ok, DS1} = Mod:queue_put(Conf, DS),
+    DS1 = Mod:queue_put(Conf, DS),
     {ok, {Mod, DS1}}.
 
 -spec get_conf(gaffer:queue_name(), driver()) ->
-    {ok, gaffer:queue_conf()}.
+    {ok, gaffer:queue_conf(), driver()}.
 get_conf(Name, {Mod, DS}) ->
-    Mod:queue_get(Name, DS).
+    {Conf, DS1} = Mod:queue_get(Name, DS),
+    {ok, Conf, {Mod, DS1}}.
 
 -spec delete_conf(gaffer:queue_name(), driver()) ->
     {ok, driver()}.
 delete_conf(Name, {Mod, DS}) ->
-    {ok, DS1} = Mod:queue_delete(Name, DS),
+    DS1 = Mod:queue_delete(Name, DS),
     {ok, {Mod, DS1}}.
 
 %--- Job operations -----------------------------------------------------------
@@ -61,7 +62,7 @@ insert(Queue, Args, Opts, {Mod, DS}) ->
     Job = build_job(Queue, Args, Opts),
     case validate(Job) of
         ok ->
-            {ok, Inserted, DS1} = Mod:job_insert(Job, DS),
+            {Inserted, DS1} = Mod:job_insert(Job, DS),
             {ok, Inserted, {Mod, DS1}};
         {error, _} = Err ->
             Err
@@ -70,52 +71,57 @@ insert(Queue, Args, Opts, {Mod, DS}) ->
 -spec get(gaffer:job_id(), driver()) ->
     {ok, gaffer:job()} | {error, not_found}.
 get(Id, {Mod, DS}) ->
-    Mod:job_get(Id, DS).
+    case Mod:job_get(Id, DS) of
+        {not_found, _DS1} -> {error, not_found};
+        {Job, _DS1} -> {ok, Job}
+    end.
 
 -spec list(gaffer:list_opts(), driver()) ->
     {ok, [gaffer:job()]}.
 list(Opts, {Mod, DS}) ->
-    Mod:job_list(Opts, DS).
+    {Jobs, _DS1} = Mod:job_list(Opts, DS),
+    {ok, Jobs}.
 
 -spec cancel(gaffer:job_id(), driver()) ->
     {ok, gaffer:job(), driver()} | {error, term()}.
 cancel(Id, {Mod, DS}) ->
     case Mod:job_get(Id, DS) of
-        {ok, Job} ->
+        {not_found, _DS1} ->
+            {error, not_found};
+        {Job, DS1} ->
             case transition(Job, cancelled) of
                 {ok, Updated} ->
-                    {ok, Result, DS1} = Mod:job_update(Updated, DS),
-                    {ok, Result, {Mod, DS1}};
+                    DS2 = Mod:job_update(Updated, DS1),
+                    {ok, Updated, {Mod, DS2}};
                 {error, _} = Err ->
                     Err
-            end;
-        {error, _} = Err ->
-            Err
+            end
     end.
 
 -spec complete(gaffer:job_id(), driver()) ->
     {ok, gaffer:job(), driver()} | {error, term()}.
 complete(Id, {Mod, DS}) ->
     case Mod:job_get(Id, DS) of
-        {ok, #{attempt := Attempt} = Job} ->
+        {not_found, _DS1} ->
+            {error, not_found};
+        {#{attempt := Attempt} = Job, DS1} ->
             case transition(Job, completed) of
                 {ok, Updated} ->
-                    {ok, Result, DS1} = Mod:job_update(
-                        Updated#{attempt := Attempt + 1}, DS
-                    ),
-                    {ok, Result, {Mod, DS1}};
+                    Result = Updated#{attempt := Attempt + 1},
+                    DS2 = Mod:job_update(Result, DS1),
+                    {ok, Result, {Mod, DS2}};
                 {error, _} = Err ->
                     Err
-            end;
-        {error, _} = Err ->
-            Err
+            end
     end.
 
 -spec fail(gaffer:job_id(), gaffer:job_error(), driver()) ->
     {ok, gaffer:job(), driver()} | {error, term()}.
 fail(Id, Error, {Mod, DS}) ->
     case Mod:job_get(Id, DS) of
-        {ok, Job} ->
+        {not_found, _DS1} ->
+            {error, not_found};
+        {Job, DS1} ->
             Attempt = maps:get(attempt, Job) + 1,
             MaxAttempts = maps:get(max_attempts, Job, 3),
             Job1 = Job#{attempt := Attempt},
@@ -129,28 +135,25 @@ fail(Id, Error, {Mod, DS}) ->
                     false ->
                         Job3
                 end,
-            {ok, Result, DS1} = Mod:job_update(Job4, DS),
-            {ok, Result, {Mod, DS1}};
-        {error, _} = Err ->
-            Err
+            DS2 = Mod:job_update(Job4, DS1),
+            {ok, Job4, {Mod, DS2}}
     end.
 
 -spec schedule(gaffer:job_id(), gaffer:timestamp(), driver()) ->
     {ok, gaffer:job(), driver()} | {error, term()}.
 schedule(Id, At, {Mod, DS}) ->
     case Mod:job_get(Id, DS) of
-        {ok, Job} ->
+        {not_found, _DS1} ->
+            {error, not_found};
+        {Job, DS1} ->
             case transition(Job, scheduled) of
                 {ok, Updated} ->
-                    {ok, Result, DS1} = Mod:job_update(
-                        Updated#{scheduled_at => At}, DS
-                    ),
-                    {ok, Result, {Mod, DS1}};
+                    Result = Updated#{scheduled_at => At},
+                    DS2 = Mod:job_update(Result, DS1),
+                    {ok, Result, {Mod, DS2}};
                 {error, _} = Err ->
                     Err
-            end;
-        {error, _} = Err ->
-            Err
+            end
     end.
 
 -spec claim(gaffer:claim_opts(), driver()) ->
@@ -158,13 +161,13 @@ schedule(Id, At, {Mod, DS}) ->
 claim(Opts, {Mod, DS}) ->
     Now = erlang:system_time(microsecond),
     Changes = #{state => executing, attempted_at => Now},
-    {ok, Claimed, DS1} = Mod:job_claim(Opts, Changes, DS),
+    {Claimed, DS1} = Mod:job_claim(Opts, Changes, DS),
     {ok, Claimed, {Mod, DS1}}.
 
 -spec prune(gaffer:prune_opts(), driver()) ->
     {ok, non_neg_integer(), driver()}.
 prune(Opts, {Mod, DS}) ->
-    {ok, Count, DS1} = Mod:job_prune(Opts, DS),
+    {Count, DS1} = Mod:job_prune(Opts, DS),
     {ok, Count, {Mod, DS1}}.
 
 %--- Job construction (private) -----------------------------------------------

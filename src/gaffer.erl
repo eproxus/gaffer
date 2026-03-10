@@ -166,14 +166,15 @@ create_queue(#{name := Name, driver := Driver} = Conf) ->
 -spec get_queue(queue_name()) -> {ok, queue_conf()}.
 get_queue(Name) ->
     Driver = lookup(Name),
-    gaffer_queue:get_conf(Name, Driver).
+    {ok, Conf, _Driver1} = gaffer_queue:get_conf(Name, Driver),
+    {ok, Conf}.
 
 -spec update_queue(queue_name(), map()) -> ok.
 update_queue(Name, Updates) ->
     Driver = lookup(Name),
-    {ok, Conf} = gaffer_queue:get_conf(Name, Driver),
+    {ok, Conf, Driver0} = gaffer_queue:get_conf(Name, Driver),
     Merged = maps:merge(Conf, maps:remove(name, Updates)),
-    {ok, Driver1} = gaffer_queue:put_conf(Merged, Driver),
+    {ok, Driver1} = gaffer_queue:put_conf(Merged, Driver0),
     true = ets:insert(gaffer_queues, {Name, Driver1}),
     ok.
 
@@ -191,7 +192,7 @@ list_queues() ->
     {ok, [queue_from_entry(E) || E <:- Entries]}.
 
 queue_from_entry({Name, Driver}) ->
-    {ok, Conf} = gaffer_queue:get_conf(Name, Driver),
+    {ok, Conf, _Driver1} = gaffer_queue:get_conf(Name, Driver),
     Conf.
 
 %--- Enqueueing ---------------------------------------------------------------

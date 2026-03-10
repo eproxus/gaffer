@@ -22,9 +22,9 @@
 
 %--- Lifecycle ----------------------------------------------------------------
 
--spec start(map()) -> {ok, state()}.
+-spec start(map()) -> state().
 start(_Opts) ->
-    {ok, #{jobs => #{}}}.
+    #{jobs => #{}}.
 
 -spec stop(state()) -> ok.
 stop(_State) ->
@@ -33,50 +33,50 @@ stop(_State) ->
 %--- Queue config (no-op for unit tests) --------------------------------------
 
 -spec queue_put(gaffer:queue_conf(), state()) ->
-    {ok, state()}.
-queue_put(_Conf, State) -> {ok, State}.
+    state().
+queue_put(_Conf, State) -> State.
 
 -spec queue_get(gaffer:queue_name(), state()) ->
-    {ok, gaffer:queue_conf()}.
-queue_get(Name, _State) -> {ok, #{name => Name}}.
+    {gaffer:queue_conf(), state()}.
+queue_get(Name, State) -> {#{name => Name}, State}.
 
 -spec queue_delete(gaffer:queue_name(), state()) ->
-    {ok, state()}.
-queue_delete(_Name, State) -> {ok, State}.
+    state().
+queue_delete(_Name, State) -> State.
 
 %--- Jobs ---------------------------------------------------------------------
 
 -spec job_insert(gaffer:job(), state()) ->
-    {ok, gaffer:job(), state()}.
+    {gaffer:job(), state()}.
 job_insert(#{id := Id} = Job, #{jobs := Jobs} = State) ->
-    {ok, Job, State#{jobs := Jobs#{Id => Job}}}.
+    {Job, State#{jobs := Jobs#{Id => Job}}}.
 
 -spec job_get(gaffer:job_id(), state()) ->
-    {ok, gaffer:job()} | {error, not_found}.
-job_get(Id, #{jobs := Jobs}) ->
+    {gaffer:job() | not_found, state()}.
+job_get(Id, #{jobs := Jobs} = State) ->
     case maps:find(Id, Jobs) of
-        {ok, Job} -> {ok, Job};
-        error -> {error, not_found}
+        {ok, Job} -> {Job, State};
+        error -> {not_found, State}
     end.
 
 -spec job_list(gaffer:list_opts(), state()) ->
-    {ok, [gaffer:job()]}.
-job_list(Opts, #{jobs := Jobs}) ->
+    {[gaffer:job()], state()}.
+job_list(Opts, #{jobs := Jobs} = State) ->
     All = maps:values(Jobs),
     Filtered = lists:filter(
         fun(Job) -> matches(Opts, Job) end, All
     ),
-    {ok, Filtered}.
+    {Filtered, State}.
 
 -spec job_delete(gaffer:job_id(), state()) ->
-    {ok, state()}.
+    state().
 job_delete(Id, #{jobs := Jobs} = State) ->
-    {ok, State#{jobs := maps:remove(Id, Jobs)}}.
+    State#{jobs := maps:remove(Id, Jobs)}.
 
 -spec job_claim(
     gaffer:claim_opts(), gaffer:job_changes(), state()
 ) ->
-    {ok, [gaffer:job()], state()}.
+    {[gaffer:job()], state()}.
 job_claim(Opts, Changes, #{jobs := Jobs} = State) ->
     Limit = maps:get(limit, Opts, 1),
     Queue = maps:get(queue, Opts, undefined),
@@ -95,15 +95,15 @@ job_claim(Opts, Changes, #{jobs := Jobs} = State) ->
         Jobs,
         Updated
     ),
-    {ok, Updated, State#{jobs := NewJobs}}.
+    {Updated, State#{jobs := NewJobs}}.
 
 -spec job_update(gaffer:job(), state()) ->
-    {ok, gaffer:job(), state()}.
+    state().
 job_update(#{id := Id} = Job, #{jobs := Jobs} = State) ->
-    {ok, Job, State#{jobs := Jobs#{Id := Job}}}.
+    State#{jobs := Jobs#{Id := Job}}.
 
 -spec job_prune(gaffer:prune_opts(), state()) ->
-    {ok, non_neg_integer(), state()}.
+    {non_neg_integer(), state()}.
 job_prune(Opts, #{jobs := Jobs} = State) ->
     States = maps:get(states, Opts, [completed, discarded]),
     {Keep, Count} = maps:fold(
@@ -116,7 +116,7 @@ job_prune(Opts, #{jobs := Jobs} = State) ->
         {Jobs, 0},
         Jobs
     ),
-    {ok, Count, State#{jobs := Keep}}.
+    {Count, State#{jobs := Keep}}.
 
 %--- Internal -----------------------------------------------------------------
 

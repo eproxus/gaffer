@@ -26,7 +26,7 @@ gaffer_test_() ->
 
 setup() ->
     {ok, _} = application:ensure_all_started(gaffer),
-    {ok, DS} = gaffer_driver_ets:start(#{}),
+    DS = gaffer_driver_ets:start(#{}),
     {gaffer_driver_ets, DS}.
 
 cleanup({gaffer_driver_ets, DS}) ->
