@@ -155,7 +155,7 @@ stop(_State) ->
 create_queue(#{name := Name, driver := Driver} = Conf) ->
     case ets:insert_new(gaffer_queues, {Name, Driver}) of
         true ->
-            {ok, Driver1} = gaffer_queue:put_conf(Conf, Driver),
+            Driver1 = gaffer_queue:put_conf(Conf, Driver),
             true = ets:insert(gaffer_queues, {Name, Driver1}),
             {ok, _Pid} = gaffer_sup:start_queue(Name, Driver1),
             ok;
@@ -163,18 +163,18 @@ create_queue(#{name := Name, driver := Driver} = Conf) ->
             {error, already_exists}
     end.
 
--spec get_queue(queue_name()) -> {ok, queue_conf()}.
+-spec get_queue(queue_name()) -> queue_conf().
 get_queue(Name) ->
     Driver = lookup(Name),
-    {ok, Conf, _Driver1} = gaffer_queue:get_conf(Name, Driver),
-    {ok, Conf}.
+    {Conf, _Driver1} = gaffer_queue:get_conf(Name, Driver),
+    Conf.
 
 -spec update_queue(queue_name(), map()) -> ok.
 update_queue(Name, Updates) ->
     Driver = lookup(Name),
-    {ok, Conf, Driver0} = gaffer_queue:get_conf(Name, Driver),
+    {Conf, Driver0} = gaffer_queue:get_conf(Name, Driver),
     Merged = maps:merge(Conf, maps:remove(name, Updates)),
-    {ok, Driver1} = gaffer_queue:put_conf(Merged, Driver0),
+    Driver1 = gaffer_queue:put_conf(Merged, Driver0),
     true = ets:insert(gaffer_queues, {Name, Driver1}),
     ok.
 
@@ -183,26 +183,26 @@ delete_queue(Name) ->
     Driver = lookup(Name),
     true = ets:delete(gaffer_queues, Name),
     ok = gaffer_sup:stop_queue(Name),
-    {ok, _Driver1} = gaffer_queue:delete_conf(Name, Driver),
+    _Driver1 = gaffer_queue:delete_conf(Name, Driver),
     ok.
 
--spec list_queues() -> {ok, [queue_conf()]}.
+-spec list_queues() -> [queue_conf()].
 list_queues() ->
     Entries = ets:tab2list(gaffer_queues),
-    {ok, [queue_from_entry(E) || E <:- Entries]}.
+    [queue_from_entry(E) || E <:- Entries].
 
 queue_from_entry({Name, Driver}) ->
-    {ok, Conf, _Driver1} = gaffer_queue:get_conf(Name, Driver),
+    {Conf, _Driver1} = gaffer_queue:get_conf(Name, Driver),
     Conf.
 
 %--- Enqueueing ---------------------------------------------------------------
 
 -spec insert(queue_name(), map()) ->
-    {ok, job()} | {error, term()}.
+    job().
 insert(Queue, Args) -> insert(Queue, Args, #{}).
 
 -spec insert(queue_name(), map(), job_opts()) ->
-    {ok, job()} | {error, term()}.
+    job().
 insert(Queue, Args, Opts) ->
     gaffer_queue_proc:insert(Queue, Args, Opts).
 
@@ -220,7 +220,7 @@ cancel(Queue, JobId) ->
 get(Queue, JobId) ->
     gaffer_queue_proc:get(Queue, JobId).
 
--spec list(list_opts()) -> {ok, [job()]} | {error, term()}.
+-spec list(list_opts()) -> [job()].
 list(#{queue := Queue} = Opts) ->
     gaffer_queue_proc:list(Queue, Opts).
 

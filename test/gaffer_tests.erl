@@ -43,7 +43,7 @@ create_queue(Driver) ->
     Conf = #{name => ?FUNCTION_NAME, driver => Driver},
     ?assertEqual(ok, gaffer:create_queue(Conf)),
     ?assertMatch(
-        {ok, #{name := create_queue}},
+        #{name := create_queue},
         gaffer:get_queue(?FUNCTION_NAME)
     ),
     ?assertEqual(
@@ -53,7 +53,7 @@ create_queue(Driver) ->
 get_queue(Driver) ->
     Conf = #{name => ?FUNCTION_NAME, driver => Driver},
     ok = gaffer:create_queue(Conf),
-    ?assertEqual({ok, Conf}, gaffer:get_queue(?FUNCTION_NAME)).
+    ?assertEqual(Conf, gaffer:get_queue(?FUNCTION_NAME)).
 
 update_queue(Driver) ->
     ok = gaffer:create_queue(#{
@@ -62,7 +62,7 @@ update_queue(Driver) ->
         global_max_workers => 5
     }),
     ok = gaffer:update_queue(?FUNCTION_NAME, #{global_max_workers => 10}),
-    {ok, Updated} = gaffer:get_queue(?FUNCTION_NAME),
+    Updated = gaffer:get_queue(?FUNCTION_NAME),
     ?assertEqual(10, maps:get(global_max_workers, Updated)),
     ?assertEqual(Driver, maps:get(driver, Updated)).
 
@@ -87,7 +87,7 @@ list_queues(Driver) ->
     ok = gaffer:create_queue(
         #{name => list_queues_2, driver => Driver}
     ),
-    {ok, Queues} = gaffer:list_queues(),
+    Queues = gaffer:list_queues(),
     Names = [maps:get(name, Q) || Q <:- Queues],
     ?assert(lists:member(list_queues_1, Names)),
     ?assert(lists:member(list_queues_2, Names)).
@@ -96,7 +96,7 @@ list_queues(Driver) ->
 
 insert(Driver) ->
     ok = gaffer:create_queue(#{name => ?FUNCTION_NAME, driver => Driver}),
-    {ok, Job} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
+    Job = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
     ?assertMatch(
         #{
             queue := insert,
@@ -112,7 +112,7 @@ insert(Driver) ->
 insert_with_opts(Driver) ->
     ok = gaffer:create_queue(#{name => ?FUNCTION_NAME, driver => Driver}),
     Opts = #{priority => 5, max_attempts => 10},
-    {ok, Job} = gaffer:insert(?FUNCTION_NAME, #{task => 1}, Opts),
+    Job = gaffer:insert(?FUNCTION_NAME, #{task => 1}, Opts),
     ?assertMatch(
         #{
             queue := insert_with_opts,
@@ -129,7 +129,7 @@ cancel(Driver) ->
     ok = gaffer:create_queue(
         #{name => ?FUNCTION_NAME, driver => Driver}
     ),
-    {ok, #{id := Id}} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
+    #{id := Id} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
     {ok, Job} = gaffer:cancel(?FUNCTION_NAME, Id),
     ?assertMatch(#{state := cancelled, id := Id}, Job).
 
@@ -139,7 +139,7 @@ get_job(Driver) ->
     ok = gaffer:create_queue(
         #{name => ?FUNCTION_NAME, driver => Driver}
     ),
-    {ok, #{id := Id}} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
+    #{id := Id} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
     {ok, Job} = gaffer:get(?FUNCTION_NAME, Id),
     ?assertMatch(
         #{id := Id, queue := get_job, args := #{task := 1}}, Job
@@ -149,7 +149,7 @@ list_jobs(Driver) ->
     ok = gaffer:create_queue(
         #{name => ?FUNCTION_NAME, driver => Driver}
     ),
-    {ok, _} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
-    {ok, _} = gaffer:insert(?FUNCTION_NAME, #{task => 2}),
-    {ok, Jobs} = gaffer:list(#{queue => ?FUNCTION_NAME}),
+    _ = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
+    _ = gaffer:insert(?FUNCTION_NAME, #{task => 2}),
+    Jobs = gaffer:list(#{queue => ?FUNCTION_NAME}),
     ?assertEqual(2, length(Jobs)).

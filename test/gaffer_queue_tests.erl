@@ -5,14 +5,11 @@
 %--- Helpers ------------------------------------------------------------------
 
 new_driver() ->
-    {ok, D} = gaffer_queue:new(gaffer_driver_mock, #{}),
-    D.
+    gaffer_queue:new(gaffer_driver_mock, #{}).
 
 insert_job(D) -> insert_job(D, #{}).
 insert_job(D, Opts) ->
-    {ok, Inserted, D1} =
-        gaffer_queue:insert(test_queue, #{task => 1}, Opts, D),
-    {Inserted, D1}.
+    gaffer_queue:insert(test_queue, #{task => 1}, Opts, D).
 
 %--- Insert tests -------------------------------------------------------------
 
@@ -77,7 +74,7 @@ list_test() ->
     D0 = new_driver(),
     {_, D1} = insert_job(D0),
     {_, D2} = insert_job(D1),
-    {ok, Jobs} = gaffer_queue:list(
+    Jobs = gaffer_queue:list(
         #{queue => test_queue}, D2
     ),
     ?assertEqual(2, length(Jobs)).
@@ -103,7 +100,7 @@ cancel_not_found_test() ->
 complete_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0),
-    {ok, [_], D2} = gaffer_queue:claim(
+    {[_], D2} = gaffer_queue:claim(
         #{queue => test_queue, limit => 1}, D1
     ),
     {ok, Completed, _D3} = gaffer_queue:complete(Id, D2),
@@ -116,7 +113,7 @@ complete_test() ->
 fail_retryable_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 3}),
-    {ok, [_], D2} = gaffer_queue:claim(
+    {[_], D2} = gaffer_queue:claim(
         #{queue => test_queue, limit => 1}, D1
     ),
     JobError = #{
@@ -132,7 +129,7 @@ fail_retryable_test() ->
 fail_discarded_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 1}),
-    {ok, [_], D2} = gaffer_queue:claim(
+    {[_], D2} = gaffer_queue:claim(
         #{queue => test_queue, limit => 1}, D1
     ),
     JobError = #{
@@ -151,7 +148,7 @@ fail_discarded_test() ->
 schedule_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0),
-    {ok, [_], D2} = gaffer_queue:claim(
+    {[_], D2} = gaffer_queue:claim(
         #{queue => test_queue, limit => 1}, D1
     ),
     FutureAt = erlang:system_time(microsecond) + 60_000_000,
@@ -167,7 +164,7 @@ claim_test() ->
     D0 = new_driver(),
     {_, D1} = insert_job(D0),
     {_, D2} = insert_job(D1),
-    {ok, Claimed, _D3} = gaffer_queue:claim(
+    {Claimed, _D3} = gaffer_queue:claim(
         #{queue => test_queue, limit => 1}, D2
     ),
     ?assertEqual(1, length(Claimed)),
@@ -177,7 +174,7 @@ claim_test() ->
 
 claim_empty_test() ->
     D0 = new_driver(),
-    {ok, Claimed, _D1} = gaffer_queue:claim(
+    {Claimed, _D1} = gaffer_queue:claim(
         #{queue => test_queue, limit => 5}, D0
     ),
     ?assertEqual([], Claimed).
@@ -188,7 +185,7 @@ prune_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0),
     {ok, _, D2} = gaffer_queue:cancel(Id, D1),
-    {ok, Count, _D3} = gaffer_queue:prune(
+    {Count, _D3} = gaffer_queue:prune(
         #{states => [cancelled]}, D2
     ),
     ?assertEqual(1, Count).

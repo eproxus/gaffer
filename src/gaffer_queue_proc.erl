@@ -45,7 +45,7 @@ start_link(Name, Driver) ->
     ).
 
 -spec insert(gaffer:queue_name(), map(), gaffer:job_opts()) ->
-    {ok, gaffer:job()} | {error, term()}.
+    gaffer:job().
 insert(Name, Args, Opts) ->
     gen_statem:call(
         proc_name(Name), {insert, Name, Args, Opts}
@@ -54,14 +54,14 @@ insert(Name, Args, Opts) ->
 -spec get(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, not_found}.
 get(Name, Id) ->
-    {ok, Driver} =
+    Driver =
         gen_statem:call(proc_name(Name), get_driver),
     gaffer_queue:get(Id, Driver).
 
 -spec list(gaffer:queue_name(), gaffer:list_opts()) ->
-    {ok, [gaffer:job()]}.
+    [gaffer:job()].
 list(Name, Opts) ->
-    {ok, Driver} =
+    Driver =
         gen_statem:call(proc_name(Name), get_driver),
     gaffer_queue:list(Opts, Driver).
 
@@ -94,12 +94,12 @@ schedule(Name, Id, At) ->
     ).
 
 -spec claim(gaffer:queue_name(), gaffer:claim_opts()) ->
-    {ok, [gaffer:job()]}.
+    [gaffer:job()].
 claim(Name, Opts) ->
     gen_statem:call(proc_name(Name), {claim, Opts}).
 
 -spec prune(gaffer:queue_name(), gaffer:prune_opts()) ->
-    {ok, non_neg_integer()}.
+    non_neg_integer().
 prune(Name, Opts) ->
     gen_statem:call(proc_name(Name), {prune, Opts}).
 
@@ -124,7 +124,8 @@ handle_event(
 %--- Internal -----------------------------------------------------------------
 
 dispatch({insert, Queue, Args, Opts}, Driver) ->
-    tag(gaffer_queue:insert(Queue, Args, Opts, Driver));
+    {Job, D1} = gaffer_queue:insert(Queue, Args, Opts, Driver),
+    {mutated, Job, D1};
 dispatch({cancel, Id}, Driver) ->
     tag(gaffer_queue:cancel(Id, Driver));
 dispatch({complete, Id}, Driver) ->
@@ -134,13 +135,13 @@ dispatch({fail, Id, Error}, Driver) ->
 dispatch({schedule, Id, At}, Driver) ->
     tag(gaffer_queue:schedule(Id, At, Driver));
 dispatch({claim, Opts}, Driver) ->
-    {ok, Claimed, D1} = gaffer_queue:claim(Opts, Driver),
-    {mutated, {ok, Claimed}, D1};
+    {Claimed, D1} = gaffer_queue:claim(Opts, Driver),
+    {mutated, Claimed, D1};
 dispatch({prune, Opts}, Driver) ->
-    {ok, Count, D1} = gaffer_queue:prune(Opts, Driver),
-    {mutated, {ok, Count}, D1};
+    {Count, D1} = gaffer_queue:prune(Opts, Driver),
+    {mutated, Count, D1};
 dispatch(get_driver, Driver) ->
-    {readonly, {ok, Driver}}.
+    {readonly, Driver}.
 
 tag({ok, Value, D1}) -> {mutated, {ok, Value}, D1};
 tag({error, _} = Err) -> {readonly, Err}.

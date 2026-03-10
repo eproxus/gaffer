@@ -29,44 +29,40 @@
 
 %--- Queue construction -------------------------------------------------------
 
--spec new(module(), map()) -> {ok, driver()}.
+-spec new(module(), map()) -> driver().
 new(Mod, Opts) ->
     DS = Mod:start(Opts),
-    {ok, {Mod, DS}}.
+    {Mod, DS}.
 
 %--- Queue config operations --------------------------------------------------
 
 -spec put_conf(gaffer:queue_conf(), driver()) ->
-    {ok, driver()}.
+    driver().
 put_conf(Conf, {Mod, DS}) ->
     DS1 = Mod:queue_put(Conf, DS),
-    {ok, {Mod, DS1}}.
+    {Mod, DS1}.
 
 -spec get_conf(gaffer:queue_name(), driver()) ->
-    {ok, gaffer:queue_conf(), driver()}.
+    {gaffer:queue_conf(), driver()}.
 get_conf(Name, {Mod, DS}) ->
     {Conf, DS1} = Mod:queue_get(Name, DS),
-    {ok, Conf, {Mod, DS1}}.
+    {Conf, {Mod, DS1}}.
 
 -spec delete_conf(gaffer:queue_name(), driver()) ->
-    {ok, driver()}.
+    driver().
 delete_conf(Name, {Mod, DS}) ->
     DS1 = Mod:queue_delete(Name, DS),
-    {ok, {Mod, DS1}}.
+    {Mod, DS1}.
 
 %--- Job operations -----------------------------------------------------------
 
 -spec insert(gaffer:queue_name(), map(), gaffer:job_opts(), driver()) ->
-    {ok, gaffer:job(), driver()} | {error, term()}.
+    {gaffer:job(), driver()}.
 insert(Queue, Args, Opts, {Mod, DS}) ->
     Job = build_job(Queue, Args, Opts),
-    case validate(Job) of
-        ok ->
-            {Inserted, DS1} = Mod:job_insert(Job, DS),
-            {ok, Inserted, {Mod, DS1}};
-        {error, _} = Err ->
-            Err
-    end.
+    validate(Job),
+    {Inserted, DS1} = Mod:job_insert(Job, DS),
+    {Inserted, {Mod, DS1}}.
 
 -spec get(gaffer:job_id(), driver()) ->
     {ok, gaffer:job()} | {error, not_found}.
@@ -77,10 +73,10 @@ get(Id, {Mod, DS}) ->
     end.
 
 -spec list(gaffer:list_opts(), driver()) ->
-    {ok, [gaffer:job()]}.
+    [gaffer:job()].
 list(Opts, {Mod, DS}) ->
     {Jobs, _DS1} = Mod:job_list(Opts, DS),
-    {ok, Jobs}.
+    Jobs.
 
 -spec cancel(gaffer:job_id(), driver()) ->
     {ok, gaffer:job(), driver()} | {error, term()}.
@@ -157,18 +153,18 @@ schedule(Id, At, {Mod, DS}) ->
     end.
 
 -spec claim(gaffer:claim_opts(), driver()) ->
-    {ok, [gaffer:job()], driver()}.
+    {[gaffer:job()], driver()}.
 claim(Opts, {Mod, DS}) ->
     Now = erlang:system_time(microsecond),
     Changes = #{state => executing, attempted_at => Now},
     {Claimed, DS1} = Mod:job_claim(Opts, Changes, DS),
-    {ok, Claimed, {Mod, DS1}}.
+    {Claimed, {Mod, DS1}}.
 
 -spec prune(gaffer:prune_opts(), driver()) ->
-    {ok, non_neg_integer(), driver()}.
+    {non_neg_integer(), driver()}.
 prune(Opts, {Mod, DS}) ->
     {Count, DS1} = Mod:job_prune(Opts, DS),
-    {ok, Count, {Mod, DS1}}.
+    {Count, {Mod, DS1}}.
 
 %--- Job construction (private) -----------------------------------------------
 
@@ -201,7 +197,7 @@ build_job(Queue, Args, Opts) ->
 
 %--- Validation (private) -----------------------------------------------------
 
--spec validate(map()) -> ok | {error, term()}.
+-spec validate(map()) -> ok.
 validate(#{id := Id, queue := Queue, args := Args} = Job) ->
     Checks = [
         {
@@ -225,7 +221,7 @@ validate(#{id := Id, queue := Queue, args := Args} = Job) ->
     ],
     run_checks(Checks);
 validate(_) ->
-    {error, missing_required_fields}.
+    error({invalid_job, missing_required_fields}).
 
 %--- State machine (private) --------------------------------------------------
 
@@ -277,8 +273,8 @@ maybe_put(Key, Value, Map) -> Map#{Key => Value}.
 
 run_checks([]) ->
     ok;
-run_checks([{Check, Error} | Rest]) ->
+run_checks([{Check, Reason} | Rest]) ->
     case Check() of
         true -> run_checks(Rest);
-        false -> {error, Error}
+        false -> error({invalid_job, Reason})
     end.
