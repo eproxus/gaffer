@@ -38,8 +38,7 @@ insert_scheduled_test() ->
     At = 1767261600000000,
     {Job, _D1} =
         insert_job(D0, #{scheduled_at => At}),
-    ?assertEqual(scheduled, maps:get(state, Job)),
-    ?assertEqual(At, maps:get(scheduled_at, Job)).
+    ?assertMatch(#{state := scheduled, scheduled_at := At}, Job).
 
 insert_with_opts_test() ->
     D0 = new_driver(),
@@ -50,10 +49,15 @@ insert_with_opts_test() ->
         meta => #{source => <<"api">>}
     },
     {Job, _D1} = insert_job(D0, Opts),
-    ?assertEqual(5, maps:get(max_attempts, Job)),
-    ?assertEqual(10, maps:get(priority, Job)),
-    ?assertEqual([<<"urgent">>], maps:get(tags, Job)),
-    ?assertEqual(#{source => <<"api">>}, maps:get(meta, Job)).
+    ?assertMatch(
+        #{
+            max_attempts := 5,
+            priority := 10,
+            tags := [<<"urgent">>],
+            meta := #{source := <<"api">>}
+        },
+        Job
+    ).
 
 %--- Get / list tests ---------------------------------------------------------
 
@@ -61,7 +65,7 @@ get_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0),
     {ok, Found} = gaffer_queue:get(Id, D1),
-    ?assertEqual(Id, maps:get(id, Found)).
+    ?assertMatch(#{id := Id}, Found).
 
 get_not_found_test() ->
     D0 = new_driver(),
@@ -85,8 +89,7 @@ cancel_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0),
     {ok, Cancelled, _D2} = gaffer_queue:cancel(Id, D1),
-    ?assertEqual(cancelled, maps:get(state, Cancelled)),
-    ?assert(maps:is_key(cancelled_at, Cancelled)).
+    ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled).
 
 cancel_not_found_test() ->
     D0 = new_driver(),
@@ -104,9 +107,9 @@ complete_test() ->
         #{queue => test_queue, limit => 1}, D1
     ),
     {ok, Completed, _D3} = gaffer_queue:complete(Id, D2),
-    ?assertEqual(completed, maps:get(state, Completed)),
-    ?assertEqual(1, maps:get(attempt, Completed)),
-    ?assert(maps:is_key(completed_at, Completed)).
+    ?assertMatch(
+        #{state := completed, attempt := 1, completed_at := _}, Completed
+    ).
 
 %--- Fail tests ---------------------------------------------------------------
 
@@ -122,9 +125,9 @@ fail_retryable_test() ->
         at => erlang:system_time(microsecond)
     },
     {ok, Failed, _D3} = gaffer_queue:fail(Id, JobError, D2),
-    ?assertEqual(failed, maps:get(state, Failed)),
-    ?assertEqual(1, maps:get(attempt, Failed)),
-    ?assertEqual([JobError], maps:get(errors, Failed)).
+    ?assertMatch(
+        #{state := failed, attempt := 1, errors := [JobError]}, Failed
+    ).
 
 fail_discarded_test() ->
     D0 = new_driver(),
@@ -140,8 +143,7 @@ fail_discarded_test() ->
     {ok, Discarded, _D3} = gaffer_queue:fail(
         Id, JobError, D2
     ),
-    ?assertEqual(discarded, maps:get(state, Discarded)),
-    ?assert(maps:is_key(discarded_at, Discarded)).
+    ?assertMatch(#{state := discarded, discarded_at := _}, Discarded).
 
 %--- Schedule tests -----------------------------------------------------------
 
@@ -155,8 +157,7 @@ schedule_test() ->
     {ok, Scheduled, _D3} = gaffer_queue:schedule(
         Id, FutureAt, D2
     ),
-    ?assertEqual(scheduled, maps:get(state, Scheduled)),
-    ?assertEqual(FutureAt, maps:get(scheduled_at, Scheduled)).
+    ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
 
 %--- Claim tests --------------------------------------------------------------
 
@@ -169,8 +170,7 @@ claim_test() ->
     ),
     ?assertEqual(1, length(Claimed)),
     [Job] = Claimed,
-    ?assertEqual(executing, maps:get(state, Job)),
-    ?assert(maps:is_key(attempted_at, Job)).
+    ?assertMatch(#{state := executing, attempted_at := _}, Job).
 
 claim_empty_test() ->
     D0 = new_driver(),
