@@ -32,16 +32,13 @@ stop(_State) ->
 
 %--- Queue config (no-op for unit tests) --------------------------------------
 
--spec queue_put(gaffer:queue_conf(), state()) ->
-    state().
+-spec queue_put(gaffer:queue_conf(), state()) -> state().
 queue_put(_Conf, State) -> State.
 
--spec queue_get(gaffer:queue_name(), state()) ->
-    {gaffer:queue_conf(), state()}.
+-spec queue_get(gaffer:queue_name(), state()) -> {gaffer:queue_conf(), state()}.
 queue_get(Name, State) -> {#{name => Name}, State}.
 
--spec queue_delete(gaffer:queue_name(), state()) ->
-    state().
+-spec queue_delete(gaffer:queue_name(), state()) -> state().
 queue_delete(_Name, State) -> State.
 
 %--- Jobs ---------------------------------------------------------------------
