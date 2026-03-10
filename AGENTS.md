@@ -21,7 +21,7 @@ Modules:
 
 * `gaffer` - Public user API
 * `gaffer_queue` - Functional queue implementation
-* `gaffer_queue_proc` - Process managing a queue and its jobs (using `gaffer_queue`)
+* `gaffer_queue_runner` - Process managing a queue and its jobs (using `gaffer_queue`)
 * `gaffer_driver` - Storage-agnostic driver behaviour
 * `gaffer_worker` - Worker process executing jobs
 
@@ -29,7 +29,7 @@ Modules:
 
 The encapsulation layers are as follows:
 
-`gaffer` -> `gaffer_queue_proc` -> `gaffer_queue` -> DriverMod.
+`gaffer` -> `gaffer_queue_runner` -> `gaffer_queue` -> DriverMod.
 
 * `gaffer_queue` has a functional API that can be unit tested with a functional
   mock driver.

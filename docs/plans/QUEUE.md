@@ -9,9 +9,9 @@ Drivers currently contain domain logic (state transitions, retry/discard decisio
 1. **Job stays one flat map** — No envelope/payload split. The `gaffer:job()` type is unchanged. Drivers store the full map and query on well-known fields (`state`, `queue`, `priority`, `scheduled_at`) as an implementation detail.
 2. **Driver primitives: `job_claim` + `job_update` + CRUD** — Replace high-level lifecycle callbacks (`job_complete`, `job_fail`, `job_schedule`) with generic storage primitives. Drivers never call `gaffer_job` or contain state machine logic.
 3. **`gaffer_queue` for domain logic + driver coordination** — State machine, attempt counting, retry/discard decisions, error accumulation, job construction. Wraps all driver calls internally. No process — takes `{Mod, DS}` as parameter. Unit-testable with `gaffer_driver_ets`.
-4. **`gaffer_queue_proc` as the process** — gen_statem that owns the poll loop and worker management. Only calls `gaffer_queue` — never the driver directly. This is the module that `gaffer.erl` and external callers interact with.
+4. **`gaffer_queue_runner` as the process** — gen_statem that owns the poll loop and worker management. Only calls `gaffer_queue` — never the driver directly. This is the module that `gaffer.erl` and external callers interact with.
 5. **Eliminate `gaffer_job`** — All logic absorbed by `gaffer_queue`. Module is deleted.
-6. **`gaffer.erl` becomes a thin router** — Public API delegates to `gaffer_queue_proc`.
+6. **`gaffer.erl` becomes a thin router** — Public API delegates to `gaffer_queue_runner`.
 
 ## New Driver Behaviour (`gaffer_driver`)
 
@@ -57,8 +57,8 @@ Drivers currently contain domain logic (state transitions, retry/discard decisio
 
 ### `gaffer.erl` — Public API & thin router
 - Queue CRUD (mostly unchanged)
-- `insert/2,3` — builds the initial job map (absorbs `gaffer_job:new/3`), routes to `gaffer_queue_proc`
-- `cancel/2`, `get/2`, `list/1` — routes to `gaffer_queue_proc`
+- `insert/2,3` — builds the initial job map (absorbs `gaffer_job:new/3`), routes to `gaffer_queue_runner`
+- `cancel/2`, `get/2`, `list/1` — routes to `gaffer_queue_runner`
 
 ### `gaffer_queue.erl` — Domain logic + driver coordination (no process)
 - Takes `{Mod, DS}` (driver module + state) as parameter on all calls
@@ -77,7 +77,7 @@ Drivers currently contain domain logic (state transitions, retry/discard decisio
   - `prune(Opts, Driver)` → `driver:job_prune`
 - Unit-testable without processes — tests use a simple mock driver (not even `gaffer_driver_ets`), just a functional placeholder (e.g. map-based) that verifies business logic in isolation via step-by-step function calls
 
-### `gaffer_queue_proc.erl` — gen_statem process (only calls `gaffer_queue`)
+### `gaffer_queue_runner.erl` — gen_statem process (only calls `gaffer_queue`)
 - **Public module API** (called by `gaffer.erl`):
   - `insert(Queue, Job)` → `gaffer_queue:insert(Job, Driver)`
   - `get(Queue, Id)` → `gaffer_queue:get(Id, Driver)` (no process serialization needed)
@@ -114,11 +114,11 @@ Drivers currently contain domain logic (state transitions, retry/discard decisio
 | File | Action |
 |------|--------|
 | `src/gaffer_driver.erl` | Update callbacks |
-| `src/gaffer.erl` | Absorb `new/3`, route to `gaffer_queue_proc` |
+| `src/gaffer.erl` | Absorb `new/3`, route to `gaffer_queue_runner` |
 | `src/gaffer_job.erl` | Delete |
 | `src/gaffer_queue.erl` | New — pure domain logic (absorbs `gaffer_job`) |
-| `src/gaffer_queue_proc.erl` | New — gen_statem process, only consumer of `gaffer_queue` |
-| `src/gaffer_sup.erl` | May need updates for `gaffer_queue_proc` supervision |
+| `src/gaffer_queue_runner.erl` | New — gen_statem process, only consumer of `gaffer_queue` |
+| `src/gaffer_sup.erl` | May need updates for `gaffer_queue_runner` supervision |
 | `test/gaffer_job_tests.erl` | Migrate to `test/gaffer_queue_tests.erl` |
 | `test/support/gaffer_driver_mock.erl` | New — minimal mock driver (map-based) for `gaffer_queue` unit tests |
 | `test/support/gaffer_driver_ets.erl` | Rewrite to new driver API |
@@ -130,8 +130,8 @@ Drivers currently contain domain logic (state transitions, retry/discard decisio
 2. **Update `gaffer_driver` behaviour** — new callback set
 3. **Rewrite `gaffer_driver_ets`** — implement new callbacks, remove all `gaffer_job` calls
 4. **Create `gaffer_queue`** — pure domain logic, absorb `gaffer_job` functions
-5. **Create `gaffer_queue_proc`** — gen_statem process, module API, uses `gaffer_queue` + driver
-6. **Update `gaffer.erl`** — route through `gaffer_queue_proc`
+5. **Create `gaffer_queue_runner`** — gen_statem process, module API, uses `gaffer_queue` + driver
+6. **Update `gaffer.erl`** — route through `gaffer_queue_runner`
 7. **Delete `gaffer_job.erl`** — migrate tests to `gaffer_queue_tests.erl`
 8. **Update existing tests** — `gaffer_tests.erl` and any test helpers
 
@@ -153,5 +153,5 @@ Key things to verify manually:
 - No module imports or references to `gaffer_job` remain
 - State machine logic lives exclusively in `gaffer_queue`
 - `gaffer_queue` has no process dependencies — testable with a mock driver via stepping
-- `gaffer_queue_proc` only calls `gaffer_queue`, never the driver directly
+- `gaffer_queue_runner` only calls `gaffer_queue`, never the driver directly
 - `gaffer_queue` is the only module that calls driver job callbacks

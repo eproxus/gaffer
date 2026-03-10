@@ -21,7 +21,7 @@ start_queue(Name, Driver) ->
     ChildSpec = #{
         id => Name,
         start =>
-            {gaffer_queue_proc, start_link, [Name, Driver]},
+            {gaffer_queue_runner, start_link, [Name, Driver]},
         restart => transient,
         shutdown => 5000
     },

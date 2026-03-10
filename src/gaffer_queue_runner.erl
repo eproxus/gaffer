@@ -1,4 +1,4 @@
--module(gaffer_queue_proc).
+-module(gaffer_queue_runner).
 
 -behaviour(gen_statem).
 
@@ -149,5 +149,5 @@ tag({error, _} = Err) -> {readonly, Err}.
 -spec proc_name(gaffer:queue_name()) -> atom().
 proc_name(Name) ->
     binary_to_atom(
-        <<"gaffer_queue_proc_", (atom_to_binary(Name))/binary>>
+        <<"gaffer_queue_runner_", (atom_to_binary(Name))/binary>>
     ).

@@ -204,25 +204,25 @@ insert(Queue, Args) -> insert(Queue, Args, #{}).
 -spec insert(queue_name(), map(), job_opts()) ->
     job().
 insert(Queue, Args, Opts) ->
-    gaffer_queue_proc:insert(Queue, Args, Opts).
+    gaffer_queue_runner:insert(Queue, Args, Opts).
 
 %--- Lifecycle ----------------------------------------------------------------
 
 -spec cancel(queue_name(), job_id()) ->
     {ok, job()} | {error, term()}.
 cancel(Queue, JobId) ->
-    gaffer_queue_proc:cancel(Queue, JobId).
+    gaffer_queue_runner:cancel(Queue, JobId).
 
 %--- Querying -----------------------------------------------------------------
 
 -spec get(queue_name(), job_id()) ->
     {ok, job()} | {error, term()}.
 get(Queue, JobId) ->
-    gaffer_queue_proc:get(Queue, JobId).
+    gaffer_queue_runner:get(Queue, JobId).
 
 -spec list(list_opts()) -> [job()].
 list(#{queue := Queue} = Opts) ->
-    gaffer_queue_proc:list(Queue, Opts).
+    gaffer_queue_runner:list(Queue, Opts).
 
 %--- Internal -----------------------------------------------------------------
 
