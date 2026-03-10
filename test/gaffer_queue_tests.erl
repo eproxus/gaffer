@@ -45,16 +45,16 @@ insert_with_opts_test() ->
     Opts = #{
         max_attempts => 5,
         priority => 10,
-        tags => [<<"urgent">>],
-        meta => #{source => <<"api">>}
+        tags => [~"urgent"],
+        meta => #{source => ~"api"}
     },
     {Job, _D1} = insert_job(D0, Opts),
     ?assertMatch(
         #{
             max_attempts := 5,
             priority := 10,
-            tags := [<<"urgent">>],
-            meta := #{source := <<"api">>}
+            tags := [~"urgent"],
+            meta := #{source := ~"api"}
         },
         Job
     ).
@@ -71,7 +71,7 @@ get_not_found_test() ->
     D0 = new_driver(),
     ?assertEqual(
         {error, not_found},
-        gaffer_queue:get(<<"nope">>, D0)
+        gaffer_queue:get(~"nope", D0)
     ).
 
 list_test() ->
@@ -95,7 +95,7 @@ cancel_not_found_test() ->
     D0 = new_driver(),
     ?assertEqual(
         {error, not_found},
-        gaffer_queue:cancel(<<"nope">>, D0)
+        gaffer_queue:cancel(~"nope", D0)
     ).
 
 %--- Complete tests -----------------------------------------------------------
