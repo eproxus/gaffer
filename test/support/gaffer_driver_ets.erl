@@ -61,11 +61,13 @@ queue_delete(Name, #{queues := Tab} = State) ->
 
 %--- Jobs ---------------------------------------------------------------------
 
--spec job_insert(gaffer:job(), state()) ->
+-spec job_insert(gaffer:new_job(), state()) ->
     {gaffer:job(), state()}.
-job_insert(#{id := Id} = Job, #{queued := Tab} = State) ->
-    true = ets:insert(Tab, {Id, Job}),
-    {Job, State}.
+job_insert(Job, #{queued := Tab} = State) ->
+    Id = make_ref(),
+    Job1 = Job#{id => Id},
+    true = ets:insert(Tab, {Id, Job1}),
+    {Job1, State}.
 
 -spec job_get(gaffer:job_id(), state()) ->
     {gaffer:job() | not_found, state()}.

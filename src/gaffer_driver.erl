@@ -21,7 +21,7 @@
     driver_state().
 
 %% Job CRUD
--callback job_insert(gaffer:job(), driver_state()) ->
+-callback job_insert(gaffer:new_job(), driver_state()) ->
     {gaffer:job(), driver_state()}.
 -callback job_get(gaffer:job_id(), driver_state()) ->
     {gaffer:job() | not_found, driver_state()}.

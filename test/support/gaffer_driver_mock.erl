@@ -43,10 +43,12 @@ queue_delete(_Name, State) -> State.
 
 %--- Jobs ---------------------------------------------------------------------
 
--spec job_insert(gaffer:job(), state()) ->
+-spec job_insert(gaffer:new_job(), state()) ->
     {gaffer:job(), state()}.
-job_insert(#{id := Id} = Job, #{jobs := Jobs} = State) ->
-    {Job, State#{jobs := Jobs#{Id => Job}}}.
+job_insert(Job, #{jobs := Jobs} = State) ->
+    Id = make_ref(),
+    Job1 = Job#{id => Id},
+    {Job1, State#{jobs := Jobs#{Id => Job1}}}.
 
 -spec job_get(gaffer:job_id(), state()) ->
     {gaffer:job() | not_found, state()}.

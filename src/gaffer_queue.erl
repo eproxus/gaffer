@@ -59,9 +59,10 @@ delete_conf(Name, {Mod, DS}) ->
 -spec insert(gaffer:queue_name(), term(), gaffer:job_opts(), driver()) ->
     {gaffer:job(), driver()}.
 insert(Queue, Payload, Opts, {Mod, DS}) ->
-    Job = build_job(Queue, Payload, Opts),
-    validate(Job),
-    {Inserted, DS1} = Mod:job_insert(Job, DS),
+    NewJob = build_job(Queue, Payload, Opts),
+    validate(NewJob),
+    {Inserted, DS1} = Mod:job_insert(NewJob, DS),
+    validate_id(Inserted),
     {Inserted, {Mod, DS1}}.
 
 -spec get(gaffer:job_id(), driver()) ->
@@ -169,7 +170,7 @@ prune(Opts, {Mod, DS}) ->
 %--- Job construction (private) -----------------------------------------------
 
 -spec build_job(gaffer:queue_name(), term(), gaffer:job_opts()) ->
-    gaffer:job().
+    gaffer:new_job().
 build_job(Queue, Payload, Opts) ->
     Now = erlang:system_time(microsecond),
     ScheduledAt = maps:get(scheduled_at, Opts, undefined),
@@ -179,7 +180,6 @@ build_job(Queue, Payload, Opts) ->
             _ -> scheduled
         end,
     Job = #{
-        id => keysmith:uuid(7),
         queue => Queue,
         payload => Payload,
         state => State,
@@ -194,12 +194,8 @@ build_job(Queue, Payload, Opts) ->
 %--- Validation (private) -----------------------------------------------------
 
 -spec validate(map()) -> ok.
-validate(#{id := Id, queue := Queue} = Job) ->
+validate(#{queue := Queue} = Job) ->
     Checks = [
-        {
-            fun() -> is_binary(Id) andalso byte_size(Id) > 0 end,
-            {invalid_id, Id}
-        },
         {
             fun() -> is_atom(Queue) end,
             {invalid_queue, Queue}
@@ -216,6 +212,9 @@ validate(#{id := Id, queue := Queue} = Job) ->
     run_checks(Checks);
 validate(_) ->
     error({invalid_job, missing_required_fields}).
+
+validate_id(#{id := _}) -> ok;
+validate_id(_) -> error({invalid_job, missing_id}).
 
 %--- State machine (private) --------------------------------------------------
 

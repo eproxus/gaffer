@@ -27,7 +27,7 @@ insert_defaults_test() ->
         },
         Job
     ),
-    ?assert(is_binary(maps:get(id, Job))),
+    ?assertMatch(#{id := _}, Job),
     ?assert(is_integer(maps:get(inserted_at, Job))).
 
 insert_scheduled_test() ->

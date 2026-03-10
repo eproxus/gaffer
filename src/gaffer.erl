@@ -39,7 +39,7 @@
 
 %--- Types --------------------------------------------------------------------
 
--type job_id() :: binary().
+-type job_id() :: term().
 -type job_state() ::
     available
     | scheduled
@@ -68,6 +68,18 @@
     completed_at => timestamp(),
     cancelled_at => timestamp(),
     discarded_at => timestamp(),
+    errors := [job_error()]
+}.
+
+-type new_job() :: #{
+    queue := queue_name(),
+    payload := term(),
+    state := job_state(),
+    attempt := non_neg_integer(),
+    max_attempts := pos_integer(),
+    priority := non_neg_integer(),
+    scheduled_at => timestamp(),
+    inserted_at := timestamp(),
     errors := [job_error()]
 }.
 
@@ -124,6 +136,7 @@
     queue_name/0,
     timestamp/0,
     job/0,
+    new_job/0,
     job_opts/0,
     job_error/0,
     queue_conf/0,
