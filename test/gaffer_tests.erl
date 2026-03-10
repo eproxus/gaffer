@@ -88,7 +88,7 @@ list_queues(Driver) ->
         #{name => list_queues_2, driver => Driver}
     ),
     Queues = gaffer:list_queues(),
-    Names = [maps:get(name, Q) || Q <:- Queues],
+    Names = [Name || {Name, _} <:- Queues],
     ?assert(lists:member(list_queues_1, Names)),
     ?assert(lists:member(list_queues_2, Names)).
 

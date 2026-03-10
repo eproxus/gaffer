@@ -186,14 +186,16 @@ delete_queue(Name) ->
     _Driver1 = gaffer_queue:delete_conf(Name, Driver),
     ok.
 
--spec list_queues() -> [queue_conf()].
+-spec list_queues() -> [{queue_name(), queue_conf()}].
 list_queues() ->
     Entries = ets:tab2list(gaffer_queues),
-    [queue_from_entry(E) || E <:- Entries].
-
-queue_from_entry({Name, Driver}) ->
-    {Conf, _Driver1} = gaffer_queue:get_conf(Name, Driver),
-    Conf.
+    lists:map(
+        fun({Name, Driver}) ->
+            {Conf, _} = gaffer_queue:get_conf(Name, Driver),
+            {Name, Conf}
+        end,
+        Entries
+    ).
 
 %--- Enqueueing ---------------------------------------------------------------
 
