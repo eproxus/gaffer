@@ -54,9 +54,9 @@ job_insert(#{id := Id} = Job, #{jobs := Jobs} = State) ->
 -spec job_get(gaffer:job_id(), state()) ->
     {gaffer:job() | not_found, state()}.
 job_get(Id, #{jobs := Jobs} = State) ->
-    case maps:find(Id, Jobs) of
-        {ok, Job} -> {Job, State};
-        error -> {not_found, State}
+    case Jobs of
+        #{Id := Job} -> {Job, State};
+        #{} -> {not_found, State}
     end.
 
 -spec job_list(gaffer:list_opts(), state()) ->
@@ -87,9 +87,7 @@ job_claim(Opts, Changes, #{jobs := Jobs} = State) ->
         Queue =:= undefined orelse maps:get(queue, Job) =:= Queue
     ],
     ToTake = lists:sublist(Available, Limit),
-    Updated = lists:map(
-        fun(Job) -> maps:merge(Job, Changes) end, ToTake
-    ),
+    Updated = [maps:merge(Job, Changes) || Job <:- ToTake],
     NewJobs = lists:foldl(
         fun(#{id := Id} = Job, Acc) -> Acc#{Id := Job} end,
         Jobs,
