@@ -11,6 +11,18 @@ insert_job(D) -> insert_job(D, #{}).
 insert_job(D, Opts) ->
     gaffer_queue:insert(test_queue, #{task => 1}, Opts, D).
 
+claim_one(D) ->
+    gaffer_queue:claim(#{queue => test_queue, limit => 1}, D).
+
+make_error(N) ->
+    #{attempt => N, error => boom, at => erlang:system_time(microsecond)}.
+
+%% Force a job's state in the mock driver (for simulating scheduled→available).
+set_job_state(Id, State, {Mod, #{jobs := Jobs} = DS}) ->
+    #{Id := Job} = Jobs,
+    {ok, Updated} = gaffer_queue:transition(Job, State),
+    {Mod, DS#{jobs := Jobs#{Id := Updated}}}.
+
 %--- Insert tests -------------------------------------------------------------
 
 insert_defaults_test() ->
@@ -98,17 +110,57 @@ cancel_not_found_test() ->
         gaffer_queue:cancel(~"nope", D0)
     ).
 
+cancel_scheduled_test() ->
+    D0 = new_driver(),
+    At = 1767261600000000,
+    {#{id := Id}, D1} = insert_job(D0, #{scheduled_at => At}),
+    {ok, Cancelled, _D2} = gaffer_queue:cancel(Id, D1),
+    ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled).
+
+cancel_executing_test() ->
+    D0 = new_driver(),
+    {#{id := Id}, D1} = insert_job(D0),
+    {[_], D2} = claim_one(D1),
+    {ok, Cancelled, _D3} = gaffer_queue:cancel(Id, D2),
+    ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled).
+
+cancel_completed_test() ->
+    D0 = new_driver(),
+    {#{id := Id}, D1} = insert_job(D0),
+    {[_], D2} = claim_one(D1),
+    {ok, _, D3} = gaffer_queue:complete(Id, D2),
+    ?assertMatch(
+        {error, {invalid_transition, {completed, cancelled}}},
+        gaffer_queue:cancel(Id, D3)
+    ).
+
+cancel_discarded_test() ->
+    D0 = new_driver(),
+    {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 1}),
+    {[_], D2} = claim_one(D1),
+    {ok, _, D3} = gaffer_queue:fail(Id, make_error(1), D2),
+    ?assertMatch(
+        {error, {invalid_transition, {discarded, cancelled}}},
+        gaffer_queue:cancel(Id, D3)
+    ).
+
 %--- Complete tests -----------------------------------------------------------
 
 complete_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0),
-    {[_], D2} = gaffer_queue:claim(
-        #{queue => test_queue, limit => 1}, D1
-    ),
+    {[_], D2} = claim_one(D1),
     {ok, Completed, _D3} = gaffer_queue:complete(Id, D2),
     ?assertMatch(
         #{state := completed, attempt := 1, completed_at := _}, Completed
+    ).
+
+complete_available_test() ->
+    D0 = new_driver(),
+    {#{id := Id}, D1} = insert_job(D0),
+    ?assertMatch(
+        {error, {invalid_transition, {available, completed}}},
+        gaffer_queue:complete(Id, D1)
     ).
 
 %--- Fail tests ---------------------------------------------------------------
@@ -116,9 +168,7 @@ complete_test() ->
 fail_retryable_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 3}),
-    {[_], D2} = gaffer_queue:claim(
-        #{queue => test_queue, limit => 1}, D1
-    ),
+    {[_], D2} = claim_one(D1),
     JobError = #{
         attempt => 1,
         error => timeout,
@@ -132,9 +182,7 @@ fail_retryable_test() ->
 fail_discarded_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 1}),
-    {[_], D2} = gaffer_queue:claim(
-        #{queue => test_queue, limit => 1}, D1
-    ),
+    {[_], D2} = claim_one(D1),
     JobError = #{
         attempt => 1,
         error => boom,
@@ -145,19 +193,69 @@ fail_discarded_test() ->
     ),
     ?assertMatch(#{state := discarded, discarded_at := _}, Discarded).
 
+%--- Full lifecycle tests -----------------------------------------------------
+
+full_retry_cycle_test() ->
+    D0 = new_driver(),
+    {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 3}),
+    %% Attempt 1: claim → fail (retryable)
+    {[_], D2} = claim_one(D1),
+    E1 = make_error(1),
+    {ok, F1, D3} = gaffer_queue:fail(Id, E1, D2),
+    ?assertMatch(#{state := failed, attempt := 1}, F1),
+    %% Schedule retry → schedule → claim again
+    RetryAt = erlang:system_time(microsecond),
+    {ok, _, D4} = gaffer_queue:schedule(Id, RetryAt, D3),
+    %% Transition scheduled→available via the mock
+    D5 = set_job_state(Id, available, D4),
+    %% Attempt 2: claim → fail (retryable)
+    {[_], D6} = claim_one(D5),
+    E2 = make_error(2),
+    {ok, F2, D7} = gaffer_queue:fail(Id, E2, D6),
+    ?assertMatch(#{state := failed, attempt := 2, errors := [E2, E1]}, F2),
+    %% Schedule retry again
+    {ok, _, D8} = gaffer_queue:schedule(Id, RetryAt, D7),
+    D9 = set_job_state(Id, available, D8),
+    %% Attempt 3: claim → fail (discarded — max attempts reached)
+    {[_], D10} = claim_one(D9),
+    E3 = make_error(3),
+    {ok, Discarded, _D11} = gaffer_queue:fail(Id, E3, D10),
+    ?assertMatch(
+        #{state := discarded, attempt := 3, errors := [E3, E2, E1]},
+        Discarded
+    ).
+
 %--- Schedule tests -----------------------------------------------------------
 
 schedule_test() ->
     D0 = new_driver(),
     {#{id := Id}, D1} = insert_job(D0),
-    {[_], D2} = gaffer_queue:claim(
-        #{queue => test_queue, limit => 1}, D1
-    ),
+    {[_], D2} = claim_one(D1),
     FutureAt = erlang:system_time(microsecond) + 60_000_000,
     {ok, Scheduled, _D3} = gaffer_queue:schedule(
         Id, FutureAt, D2
     ),
     ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
+
+schedule_from_failed_test() ->
+    D0 = new_driver(),
+    {#{id := Id}, D1} = insert_job(D0, #{max_attempts => 3}),
+    {[_], D2} = claim_one(D1),
+    {ok, _, D3} = gaffer_queue:fail(Id, make_error(1), D2),
+    FutureAt = erlang:system_time(microsecond) + 60_000_000,
+    {ok, Scheduled, _D4} = gaffer_queue:schedule(
+        Id, FutureAt, D3
+    ),
+    ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
+
+schedule_available_test() ->
+    D0 = new_driver(),
+    {#{id := Id}, D1} = insert_job(D0),
+    FutureAt = erlang:system_time(microsecond) + 60_000_000,
+    ?assertMatch(
+        {error, {invalid_transition, {available, scheduled}}},
+        gaffer_queue:schedule(Id, FutureAt, D1)
+    ).
 
 %--- Claim tests --------------------------------------------------------------
 
