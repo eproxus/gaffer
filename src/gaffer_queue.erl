@@ -56,10 +56,10 @@ delete_conf(Name, {Mod, DS}) ->
 
 %--- Job operations -----------------------------------------------------------
 
--spec insert(gaffer:queue_name(), map(), gaffer:job_opts(), driver()) ->
+-spec insert(gaffer:queue_name(), term(), gaffer:job_opts(), driver()) ->
     {gaffer:job(), driver()}.
-insert(Queue, Args, Opts, {Mod, DS}) ->
-    Job = build_job(Queue, Args, Opts),
+insert(Queue, Payload, Opts, {Mod, DS}) ->
+    Job = build_job(Queue, Payload, Opts),
     validate(Job),
     {Inserted, DS1} = Mod:job_insert(Job, DS),
     {Inserted, {Mod, DS1}}.
@@ -168,9 +168,9 @@ prune(Opts, {Mod, DS}) ->
 
 %--- Job construction (private) -----------------------------------------------
 
--spec build_job(gaffer:queue_name(), map(), gaffer:job_opts()) ->
+-spec build_job(gaffer:queue_name(), term(), gaffer:job_opts()) ->
     gaffer:job().
-build_job(Queue, Args, Opts) ->
+build_job(Queue, Payload, Opts) ->
     Now = erlang:system_time(microsecond),
     ScheduledAt = maps:get(scheduled_at, Opts, undefined),
     State =
@@ -181,41 +181,35 @@ build_job(Queue, Args, Opts) ->
     Job = #{
         id => keysmith:uuid(7),
         queue => Queue,
-        args => Args,
+        payload => Payload,
         state => State,
         attempt => 0,
-        max_attempts =>
-            maps:get(max_attempts, Opts, 3),
-        priority =>
-            maps:get(priority, Opts, 0),
+        max_attempts => maps:get(max_attempts, Opts, 3),
+        priority => maps:get(priority, Opts, 0),
         inserted_at => Now,
-        errors => [],
-        tags => maps:get(tags, Opts, []),
-        meta => maps:get(meta, Opts, #{})
+        errors => []
     },
     maybe_put(scheduled_at, ScheduledAt, Job).
 
 %--- Validation (private) -----------------------------------------------------
 
 -spec validate(map()) -> ok.
-validate(#{id := Id, queue := Queue, args := Args} = Job) ->
+validate(#{id := Id, queue := Queue} = Job) ->
     Checks = [
         {
             fun() -> is_binary(Id) andalso byte_size(Id) > 0 end,
             {invalid_id, Id}
         },
-        {fun() -> is_atom(Queue) end, {invalid_queue, Queue}},
-        {fun() -> is_map(Args) end, {invalid_args, Args}},
         {
-            fun() ->
-                maps:get(max_attempts, Job, 1) >= 1
-            end,
+            fun() -> is_atom(Queue) end,
+            {invalid_queue, Queue}
+        },
+        {
+            fun() -> maps:get(max_attempts, Job, 1) >= 1 end,
             invalid_max_attempts
         },
         {
-            fun() ->
-                maps:get(priority, Job, 0) >= 0
-            end,
+            fun() -> maps:get(priority, Job, 0) >= 0 end,
             invalid_priority
         }
     ],

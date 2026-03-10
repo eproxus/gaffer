@@ -57,7 +57,7 @@
 -type job() :: #{
     id := job_id(),
     queue := queue_name(),
-    args := map(),
+    payload := term(),
     state := job_state(),
     attempt := non_neg_integer(),
     max_attempts := pos_integer(),
@@ -68,18 +68,14 @@
     completed_at => timestamp(),
     cancelled_at => timestamp(),
     discarded_at => timestamp(),
-    errors := [job_error()],
-    tags := [binary()],
-    meta := map()
+    errors := [job_error()]
 }.
 
 -type job_opts() :: #{
     queue => queue_name(),
     max_attempts => pos_integer(),
     priority => non_neg_integer(),
-    scheduled_at => timestamp(),
-    tags => [binary()],
-    meta => map()
+    scheduled_at => timestamp()
 }.
 
 -type job_error() :: #{
@@ -199,14 +195,14 @@ list_queues() ->
 
 %--- Enqueueing ---------------------------------------------------------------
 
--spec insert(queue_name(), map()) ->
+-spec insert(queue_name(), term()) ->
     job().
-insert(Queue, Args) -> insert(Queue, Args, #{}).
+insert(Queue, Payload) -> insert(Queue, Payload, #{}).
 
--spec insert(queue_name(), map(), job_opts()) ->
+-spec insert(queue_name(), term(), job_opts()) ->
     job().
-insert(Queue, Args, Opts) ->
-    gaffer_queue_runner:insert(Queue, Args, Opts).
+insert(Queue, Payload, Opts) ->
+    gaffer_queue_runner:insert(Queue, Payload, Opts).
 
 %--- Lifecycle ----------------------------------------------------------------
 

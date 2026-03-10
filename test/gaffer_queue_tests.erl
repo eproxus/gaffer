@@ -18,14 +18,12 @@ insert_defaults_test() ->
     ?assertMatch(
         #{
             queue := test_queue,
-            args := #{task := 1},
+            payload := #{task := 1},
             state := available,
             attempt := 0,
             max_attempts := 3,
             priority := 0,
-            errors := [],
-            tags := [],
-            meta := #{}
+            errors := []
         },
         Job
     ),
@@ -45,17 +43,13 @@ insert_with_opts_test() ->
     D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     Opts = #{
         max_attempts => 5,
-        priority => 10,
-        tags => [~"urgent"],
-        meta => #{source => ~"api"}
+        priority => 10
     },
     {Job, _D1} = gaffer_queue:insert(test_queue, #{task => 1}, Opts, D0),
     ?assertMatch(
         #{
             max_attempts := 5,
-            priority := 10,
-            tags := [~"urgent"],
-            meta := #{source := ~"api"}
+            priority := 10
         },
         Job
     ).
@@ -80,7 +74,7 @@ list_test() ->
     {_, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     {_, D2} = gaffer_queue:insert(test_queue, #{task => 2}, #{}, D1),
     ?assertMatch(
-        [#{args := #{task := _}}, #{args := #{task := _}}],
+        [#{payload := #{task := _}}, #{payload := #{task := _}}],
         gaffer_queue:list(#{queue => test_queue}, D2)
     ).
 

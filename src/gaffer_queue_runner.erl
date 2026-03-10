@@ -44,11 +44,11 @@ start_link(Name, Driver) ->
         []
     ).
 
--spec insert(gaffer:queue_name(), map(), gaffer:job_opts()) ->
+-spec insert(gaffer:queue_name(), term(), gaffer:job_opts()) ->
     gaffer:job().
-insert(Name, Args, Opts) ->
+insert(Name, Payload, Opts) ->
     gen_statem:call(
-        proc_name(Name), {insert, Name, Args, Opts}
+        proc_name(Name), {insert, Name, Payload, Opts}
     ).
 
 -spec get(gaffer:queue_name(), gaffer:job_id()) ->
@@ -123,8 +123,8 @@ handle_event(
 
 %--- Internal -----------------------------------------------------------------
 
-dispatch({insert, Queue, Args, Opts}, Driver) ->
-    {Job, D1} = gaffer_queue:insert(Queue, Args, Opts, Driver),
+dispatch({insert, Queue, Payload, Opts}, Driver) ->
+    {Job, D1} = gaffer_queue:insert(Queue, Payload, Opts, Driver),
     {mutated, Job, D1};
 dispatch({cancel, Id}, Driver) ->
     tag(gaffer_queue:cancel(Id, Driver));

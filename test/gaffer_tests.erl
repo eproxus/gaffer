@@ -100,7 +100,7 @@ insert(Driver) ->
     ?assertMatch(
         #{
             queue := insert,
-            args := #{task := 1},
+            payload := #{task := 1},
             state := available,
             priority := 0,
             max_attempts := 3,
@@ -116,7 +116,7 @@ insert_with_opts(Driver) ->
     ?assertMatch(
         #{
             queue := insert_with_opts,
-            args := #{task := 1},
+            payload := #{task := 1},
             priority := 5,
             max_attempts := 10
         },
@@ -142,7 +142,7 @@ get_job(Driver) ->
     #{id := Id} = gaffer:insert(?FUNCTION_NAME, #{task => 1}),
     {ok, Job} = gaffer:get(?FUNCTION_NAME, Id),
     ?assertMatch(
-        #{id := Id, queue := get_job, args := #{task := 1}}, Job
+        #{id := Id, queue := get_job, payload := #{task := 1}}, Job
     ).
 
 list_jobs(Driver) ->
