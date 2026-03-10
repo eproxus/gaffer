@@ -156,7 +156,7 @@ schedule(Id, At, {Mod, DS}) ->
 -spec claim(gaffer:claim_opts(), driver()) ->
     {[gaffer:job()], driver()}.
 claim(Opts, {Mod, DS}) ->
-    Now = erlang:system_time(microsecond),
+    Now = erlang:system_time(),
     Changes = #{state => executing, attempted_at => Now},
     {Claimed, DS1} = Mod:job_claim(Opts, Changes, DS),
     {Claimed, {Mod, DS1}}.
@@ -172,7 +172,7 @@ prune(Opts, {Mod, DS}) ->
 -spec build_job(gaffer:queue_name(), term(), gaffer:job_opts()) ->
     gaffer:new_job().
 build_job(Queue, Payload, Opts) ->
-    Now = erlang:system_time(microsecond),
+    Now = erlang:system_time(),
     ScheduledAt = maps:get(scheduled_at, Opts, undefined),
     State =
         case ScheduledAt of
@@ -223,7 +223,7 @@ validate_id(_) -> error({invalid_job, missing_id}).
 transition(#{state := From} = Job, To) ->
     case valid_transition(From, To) of
         true ->
-            Now = erlang:system_time(microsecond),
+            Now = erlang:system_time(),
             {ok, set_timestamp(To, Now, Job#{state := To})};
         false ->
             {error, {invalid_transition, {From, To}}}

@@ -51,8 +51,8 @@
 -type queue_name() :: atom().
 
 -type timestamp() :: integer().
-%% Microseconds since Unix epoch (1970-01-01T00:00:00Z).
-%% Maps directly to Postgres timestamptz.
+%% Erlang native time units (erlang:system_time/0).
+%% Drivers may truncate to the precision they need.
 
 -type job() :: #{
     id := job_id(),

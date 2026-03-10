@@ -113,7 +113,7 @@ job_claim(
     Queue = maps:get(queue, Opts, undefined),
     Limit0 = maps:get(limit, Opts, 1),
     Limit = apply_global_max(Queue, Limit0, Locked, Queues),
-    Now = erlang:system_time(microsecond),
+    Now = erlang:system_time(),
     All = [Job || {_, Job} <:- ets:tab2list(Queued)],
     Available = [
         Job

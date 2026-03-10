@@ -32,7 +32,7 @@ insert_defaults_test() ->
 
 insert_scheduled_test() ->
     D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
-    At = 1767261600000000,
+    At = erlang:system_time() + erlang:convert_time_unit(3600, second, native),
     {Job, _D1} =
         gaffer_queue:insert(
             test_queue, #{task => 1}, #{scheduled_at => At}, D0
@@ -95,7 +95,7 @@ cancel_not_found_test() ->
 
 cancel_scheduled_test() ->
     D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
-    At = 1767261600000000,
+    At = erlang:system_time() + erlang:convert_time_unit(3600, second, native),
     {#{id := Id}, D1} = gaffer_queue:insert(
         test_queue, #{task => 1}, #{scheduled_at => At}, D0
     ),
@@ -125,7 +125,7 @@ cancel_discarded_test() ->
         test_queue, #{task => 1}, #{max_attempts => 1}, D0
     ),
     {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
-    E = #{attempt => 1, error => boom, at => erlang:system_time(microsecond)},
+    E = #{attempt => 1, error => boom, at => erlang:system_time()},
     {ok, _, D3} = gaffer_queue:fail(Id, E, D2),
     ?assertMatch(
         {error, {invalid_transition, {discarded, cancelled}}},
@@ -162,7 +162,7 @@ fail_retryable_test() ->
     JobError = #{
         attempt => 1,
         error => timeout,
-        at => erlang:system_time(microsecond)
+        at => erlang:system_time()
     },
     {ok, Failed, _D3} = gaffer_queue:fail(Id, JobError, D2),
     ?assertMatch(
@@ -178,7 +178,7 @@ fail_discarded_test() ->
     JobError = #{
         attempt => 1,
         error => boom,
-        at => erlang:system_time(microsecond)
+        at => erlang:system_time()
     },
     {ok, Discarded, _D3} = gaffer_queue:fail(
         Id, JobError, D2
@@ -194,17 +194,17 @@ full_retry_cycle_test() ->
     ),
     %% Attempt 1: claim → fail (retryable)
     {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
-    E1 = #{attempt => 1, error => boom, at => erlang:system_time(microsecond)},
+    E1 = #{attempt => 1, error => boom, at => erlang:system_time()},
     {ok, F1, D3} = gaffer_queue:fail(Id, E1, D2),
     ?assertMatch(#{state := failed, attempt := 1}, F1),
     %% Schedule retry → schedule → claim again
-    RetryAt = erlang:system_time(microsecond),
+    RetryAt = erlang:system_time(),
     {ok, _, D4} = gaffer_queue:schedule(Id, RetryAt, D3),
     %% Transition scheduled→available via the mock
     D5 = set_job_state(Id, available, D4),
     %% Attempt 2: claim → fail (retryable)
     {[_], D6} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D5),
-    E2 = #{attempt => 2, error => boom, at => erlang:system_time(microsecond)},
+    E2 = #{attempt => 2, error => boom, at => erlang:system_time()},
     {ok, F2, D7} = gaffer_queue:fail(Id, E2, D6),
     ?assertMatch(#{state := failed, attempt := 2, errors := [E2, E1]}, F2),
     %% Schedule retry again
@@ -212,7 +212,7 @@ full_retry_cycle_test() ->
     D9 = set_job_state(Id, available, D8),
     %% Attempt 3: claim → fail (discarded — max attempts reached)
     {[_], D10} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D9),
-    E3 = #{attempt => 3, error => boom, at => erlang:system_time(microsecond)},
+    E3 = #{attempt => 3, error => boom, at => erlang:system_time()},
     {ok, Discarded, _D11} = gaffer_queue:fail(Id, E3, D10),
     ?assertMatch(
         #{state := discarded, attempt := 3, errors := [E3, E2, E1]},
@@ -225,7 +225,8 @@ schedule_test() ->
     D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
-    FutureAt = erlang:system_time(microsecond) + 60_000_000,
+    FutureAt =
+        erlang:system_time() + erlang:convert_time_unit(60, second, native),
     {ok, Scheduled, _D3} = gaffer_queue:schedule(
         Id, FutureAt, D2
     ),
@@ -237,9 +238,10 @@ schedule_from_failed_test() ->
         test_queue, #{task => 1}, #{max_attempts => 3}, D0
     ),
     {[_], D2} = gaffer_queue:claim(#{queue => test_queue, limit => 1}, D1),
-    E = #{attempt => 1, error => boom, at => erlang:system_time(microsecond)},
+    E = #{attempt => 1, error => boom, at => erlang:system_time()},
     {ok, _, D3} = gaffer_queue:fail(Id, E, D2),
-    FutureAt = erlang:system_time(microsecond) + 60_000_000,
+    FutureAt =
+        erlang:system_time() + erlang:convert_time_unit(60, second, native),
     {ok, Scheduled, _D4} = gaffer_queue:schedule(
         Id, FutureAt, D3
     ),
@@ -248,7 +250,8 @@ schedule_from_failed_test() ->
 schedule_available_test() ->
     D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     {#{id := Id}, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
-    FutureAt = erlang:system_time(microsecond) + 60_000_000,
+    FutureAt =
+        erlang:system_time() + erlang:convert_time_unit(60, second, native),
     ?assertMatch(
         {error, {invalid_transition, {available, scheduled}}},
         gaffer_queue:schedule(Id, FutureAt, D1)
