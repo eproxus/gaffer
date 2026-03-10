@@ -15,6 +15,25 @@ rebar3 fmt                  # Format code
 elp lint --diagnostic-filter <code> --apply-fix # Apply specific fixes
 ```
 
+## Architecture
+
+Modules:
+
+* `gaffer` - Public user API
+* `gaffer_queue` - Functional queue implementation
+* `gaffer_queue_proc` - Process managing a queue and its jobs (using `gaffer_queue`)
+* `gaffer_driver` - Storage-agnostic driver behaviour
+* `gaffer_worker` - Worker process executing jobs
+
+### Separation of Concerns / Hierarchy
+
+The encapsulation layers are as follows:
+
+`gaffer` -> `gaffer_queue_proc` -> `gaffer_queue` -> DriverMod.
+
+* `gaffer_queue` has a functional API that can be unit tested with a functional
+  mock driver.
+
 ## Coding Conventions
 
 * Prefer exceptions over tagged return values. If the caller cannot meaningfully
