@@ -249,18 +249,12 @@ valid_transition(failed, discarded) -> true;
 valid_transition(failed, scheduled) -> true;
 valid_transition(_, _) -> false.
 
-set_timestamp(scheduled, Now, Job) ->
-    Job#{scheduled_at => Now};
-set_timestamp(executing, Now, Job) ->
-    Job#{attempted_at => Now};
-set_timestamp(completed, Now, Job) ->
-    Job#{completed_at => Now};
-set_timestamp(cancelled, Now, Job) ->
-    Job#{cancelled_at => Now};
-set_timestamp(discarded, Now, Job) ->
-    Job#{discarded_at => Now};
-set_timestamp(_, _Now, Job) ->
-    Job.
+set_timestamp(scheduled, TS, Job) -> Job#{scheduled_at => TS};
+set_timestamp(executing, TS, Job) -> Job#{attempted_at => TS};
+set_timestamp(completed, TS, Job) -> Job#{completed_at => TS};
+set_timestamp(cancelled, TS, Job) -> Job#{cancelled_at => TS};
+set_timestamp(discarded, TS, Job) -> Job#{discarded_at => TS};
+set_timestamp(_State, _TS, Job) -> Job.
 
 maybe_put(_Key, undefined, Map) -> Map;
 maybe_put(Key, Value, Map) -> Map#{Key => Value}.
