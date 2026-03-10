@@ -79,10 +79,10 @@ list_test() ->
     D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     {_, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     {_, D2} = gaffer_queue:insert(test_queue, #{task => 2}, #{}, D1),
-    Jobs = gaffer_queue:list(
-        #{queue => test_queue}, D2
-    ),
-    ?assertEqual(2, length(Jobs)).
+    ?assertMatch(
+        [#{args := #{task := _}}, #{args := #{task := _}}],
+        gaffer_queue:list(#{queue => test_queue}, D2)
+    ).
 
 %--- Cancel tests -------------------------------------------------------------
 
@@ -266,12 +266,10 @@ claim_test() ->
     D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
     {_, D1} = gaffer_queue:insert(test_queue, #{task => 1}, #{}, D0),
     {_, D2} = gaffer_queue:insert(test_queue, #{task => 2}, #{}, D1),
-    {Claimed, _D3} = gaffer_queue:claim(
-        #{queue => test_queue, limit => 1}, D2
-    ),
-    ?assertEqual(1, length(Claimed)),
-    [Job] = Claimed,
-    ?assertMatch(#{state := executing, attempted_at := _}, Job).
+    ?assertMatch(
+        {[#{state := executing, attempted_at := _}], _},
+        gaffer_queue:claim(#{queue => test_queue, limit => 1}, D2)
+    ).
 
 claim_empty_test() ->
     D0 = gaffer_queue:new(gaffer_driver_mock, #{}),
