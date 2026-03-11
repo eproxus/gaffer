@@ -23,19 +23,18 @@ thin execution wrapper.
 | Timestamps | `timestamptz` in PG, microseconds in Erlang |
 | Atomic claim | Single CTE with `FOR UPDATE SKIP LOCKED` |
 | pgo pool | Accept pool name or pool config |
-| Migrations | Up/down style, `gaffer_schema_migrations` table |
+| Migrations | Up/down style, `gaffer_schema_version` table (single row) |
 | Docker in CT | Rebar3 pre/post hooks for `docker compose` |
 | JSON library | OTP 27+ built-in `json` module |
 | UUID format | Configurable: `v4` (default) or `v7` (PG 18+) |
 
 ## Schema
 
-### `gaffer_schema_migrations`
+### `gaffer_schema_version`
 
 ```sql
-CREATE TABLE IF NOT EXISTS gaffer_schema_migrations (
-    version    BIGINT PRIMARY KEY,
-    applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS gaffer_schema_version (
+    version BIGINT NOT NULL DEFAULT 0
 );
 ```
 
@@ -68,7 +67,7 @@ CREATE TABLE gaffer_jobs (
     queue          TEXT NOT NULL,
     state          TEXT NOT NULL DEFAULT 'available'
                        CHECK (state IN ('available', 'scheduled', 'executing',
-                                        'completed', 'retryable', 'cancelled',
+                                        'completed', 'failed', 'cancelled',
                                         'discarded')),
     payload        JSONB NOT NULL DEFAULT '{}',
     attempt        INTEGER NOT NULL DEFAULT 0,
@@ -236,10 +235,10 @@ Accepts:
 
 After pool is ready, runs migrations (up only) with
 `gaffer_postgres:migrations(Opts)`:
-1. `CREATE TABLE IF NOT EXISTS gaffer_schema_migrations ...`
-2. Read applied versions
-3. Apply unapplied up migrations in order (each in a transaction)
-4. Insert version into `gaffer_schema_migrations` after each successful up
+1. `CREATE TABLE IF NOT EXISTS gaffer_schema_version ...` (seeds version 0)
+2. Read current version
+3. Apply pending migrations in order (each in a transaction)
+4. Update version in `gaffer_schema_version` after each successful up
 
 The `uuid_format` option from `start/1` is forwarded to `migrations/1` so the
 correct UUID default is embedded in the `CREATE TABLE` DDL.
@@ -253,7 +252,7 @@ rollback(TargetVersion, #{pool := Pool}) -> ok.
 Manual operational tool — rolls back all migrations newer than `TargetVersion`
 in reverse order. For each rolled-back migration:
 1. Run the down SQL in a transaction
-2. Delete the version from `gaffer_schema_migrations`
+2. Update version in `gaffer_schema_version`
 
 Not exposed in the public `gaffer` API. Intended for shell/operational use only.
 
@@ -282,7 +281,7 @@ tagged returns for unrecoverable errors).
 ```yaml
 services:
   postgres:
-    image: postgres:17
+    image: postgres:16
     environment:
       POSTGRES_DB: gaffer_test
       POSTGRES_USER: gaffer
@@ -303,7 +302,7 @@ services:
 {post_hooks, [{ct, "docker compose down"}]}
 ```
 
-### CT Config (`test/ct.config`)
+### CT Config (`config/test.config`)
 
 ```erlang
 {postgres, [
@@ -342,11 +341,16 @@ services:
 
 | File | Change |
 |---|---|
-| `rebar.config` | Add `pgo` dep, add CT pre/post hooks, add `ct.config` |
+| `rebar.config` | Add `pgo` dep, add CT pre/post hooks, add `config/test.config` |
 | `hank` ignore | Add `gaffer_driver_pgo.erl` unused_callbacks if needed |
 
-`pgo` is added as a regular dep (not test-only) since `gaffer_driver_pgo` ships
-as part of the library. Users who don't use it simply don't start it.
+`pgo` is an optional/user-supplied dep — not a gaffer dep. It is added as a
+test-only dep in the test profile so CT can run. Users who want the pgo driver
+add `{pgo, "0.14.0"}` to their own deps.
+
+All `gaffer_postgres` functions return `[{SQL, Params}]` — a uniform list of
+query tuples. The driver always runs these in a transaction. Migrations also
+use `[{SQL, Params}]` tuples (with `[]` params for DDL).
 
 ## New Files
 
@@ -355,7 +359,7 @@ as part of the library. Users who don't use it simply don't start it.
 | `src/gaffer_postgres.erl` | SQL queries + serialization |
 | `src/gaffer_driver_pgo.erl` | pgo-based driver (behaviour impl) |
 | `test/gaffer_driver_pgo_SUITE.erl` | CT test suite |
-| `test/ct.config` | Postgres connection config for CT |
+| `config/test.config` | Postgres connection config for CT |
 | `docker-compose.yml` | Test Postgres container |
 
 ## Implementation Order
@@ -369,13 +373,13 @@ cleanly.
 Everything needed to boot the driver against a real Postgres and verify
 migrations work.
 
-- [ ] `docker-compose.yml`
-- [ ] `test/ct.config`
-- [ ] `rebar.config` — add `pgo` dep, CT pre/post hooks
-- [ ] `gaffer_postgres`: `migrations/1`, `migration_versions/1`
-- [ ] `gaffer_driver_pgo`: `start/1`, `stop/1`, `rollback/2`
-- [ ] CT: `init_per_suite`, `end_per_suite`, `migration_idempotent`, `migration_rollback`
-- [ ] Verify: `mise run verify` + `mise run test`
+- [x] `docker-compose.yml`
+- [x] `config/test.config`
+- [x] `rebar.config` — add `pgo` dep, CT pre/post hooks
+- [x] `gaffer_postgres`: `migrations/1`, `migration_versions/1`
+- [x] `gaffer_driver_pgo`: `start/1`, `stop/1`, `rollback/2`
+- [x] CT: `init_per_suite`, `end_per_suite`, `migration_idempotent`, `migration_rollback`
+- [x] Verify: `mise run verify` + `mise run test`
 
 ### Milestone 2: Queue config CRUD
 
