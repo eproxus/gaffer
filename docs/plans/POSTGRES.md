@@ -134,7 +134,7 @@ runtime toggle. Changing the format after initial migration requires a manual
 
 ## Module: `gaffer_postgres` (`src/gaffer_postgres.erl`)
 
-Pure functional module — no pgo dependency. Contains all SQL and serialization.
+Pure functional module — no pgo dependency. Contains all SQL query definitions.
 
 ### Exports
 
@@ -156,10 +156,6 @@ job_delete/1          (JobId)
 job_claim/2           (ClaimOpts, JobChanges)
 job_update/1          (Job)
 job_prune/1           (PruneOpts)
-
-%% Serialization
-row_to_job/2          (Columns, Row)
-row_to_queue_conf/2   (Columns, Row)
 ```
 
 ### Claim Query (CTE)
@@ -200,16 +196,6 @@ WHERE j.id = c.id
 RETURNING <JOB_COLUMNS>
 ```
 
-### Serialization Notes
-
-- `errors` field: `error := term()` serialized via `io_lib:format("~0tp", [T])`
-  for human readability. Stored as a JSON string within the JSONB array.
-- `state` field: stored as `text` with a `CHECK` constraint. Read back
-  with `binary_to_atom/2`. The constraint ensures only valid states are persisted.
-- `queue` atom: stored as `text`, read back with `binary_to_atom/2` (not
-  `binary_to_existing_atom` — cold start safety).
-- NULL timestamps: omitted from the Erlang map (optional `=>` keys).
-- JSON encoding/decoding: use OTP `json` module.
 - `queue_put/1` uses `INSERT ... ON CONFLICT (name) DO UPDATE SET ...` (upsert).
 
 ## Module: `gaffer_driver_pgo` (`src/gaffer_driver_pgo.erl`)
@@ -260,6 +246,28 @@ Not exposed in the public `gaffer` API. Intended for shell/operational use only.
 
 If `owns_pool` is true, stop the pool. Otherwise no-op.
 
+### Serialization Notes
+
+Each driver owns its own row deserialization (`row_to_job/2`, `row_to_queue_conf/2`
+are private functions within the driver module).
+
+- `errors` field: `error := term()` serialized via `io_lib:format("~0tp", [T])`
+  for human readability. Stored as a JSON string within the JSONB array.
+- `state` field: stored as `text` with a `CHECK` constraint. Read back
+  with `binary_to_atom/2`. The constraint ensures only valid states are persisted.
+- **Queue config atoms** (`name`, `worker`, `on_discard`): use
+  `binary_to_existing_atom/2`. These atoms are guaranteed to already exist in the
+  VM atom table — `name` was passed as an atom to `queue_get`, worker modules are
+  loaded code, and `on_discard` references another queue name that must already be
+  registered.
+- **Job `queue` field**: use `binary_to_atom/2` (not `existing_atom`). On cold
+  start the queue runner for that name may not have started yet, so the atom may
+  not be in the table. This is the one exception where `binary_to_atom/2` is
+  acceptable.
+- NULL columns: omitted from the Erlang map (optional `=>` keys) via a
+  `filter_nulls/1` helper.
+- JSON encoding/decoding: use OTP `json` module.
+
 ### Callback Pattern
 
 Each callback follows:
@@ -268,7 +276,7 @@ Each callback follows:
 job_insert(Job, #{pool := Pool} = State) ->
     {SQL, Params} = gaffer_postgres:job_insert(Job),
     #{rows := [Row], columns := Cols} = pgo:query(Pool, SQL, Params),
-    {gaffer_postgres:row_to_job(Cols, Row), State}.
+    {row_to_job(Cols, Row), State}.
 ```
 
 Errors from pgo raise exceptions (project convention: prefer exceptions over
@@ -356,7 +364,7 @@ use `[{SQL, Params}]` tuples (with `[]` params for DDL).
 
 | File | Purpose |
 |---|---|
-| `src/gaffer_postgres.erl` | SQL queries + serialization |
+| `src/gaffer_postgres.erl` | SQL query definitions |
 | `src/gaffer_driver_pgo.erl` | pgo-based driver (behaviour impl) |
 | `test/gaffer_driver_pgo_SUITE.erl` | CT test suite |
 | `config/test.config` | Postgres connection config for CT |
@@ -383,15 +391,15 @@ migrations work.
 
 ### Milestone 2: Queue config CRUD
 
-- [ ] `gaffer_postgres`: `queue_put/1`, `queue_get/1`, `queue_delete/1`, `row_to_queue_conf/2`
-- [ ] `gaffer_driver_pgo`: queue callbacks
+- [ ] `gaffer_postgres`: `queue_put/1`, `queue_get/1`, `queue_delete/1`
+- [ ] `gaffer_driver_pgo`: queue callbacks, `row_to_queue_conf/2`
 - [ ] CT: `queue_put_get_delete`
 - [ ] Verify: `mise run verify` + `mise run test`
 
 ### Milestone 3: Job basics (insert, get, list, delete)
 
-- [ ] `gaffer_postgres`: `job_insert/1`, `job_get/1`, `job_list/1`, `job_delete/1`, `row_to_job/2`
-- [ ] `gaffer_driver_pgo`: job CRUD callbacks
+- [ ] `gaffer_postgres`: `job_insert/1`, `job_get/1`, `job_list/1`, `job_delete/1`
+- [ ] `gaffer_driver_pgo`: job CRUD callbacks, `row_to_job/2`
 - [ ] CT: `insert_and_get`, `insert_and_list`
 - [ ] Verify: `mise run verify` + `mise run test`
 
