@@ -98,7 +98,7 @@
 
 -type queue_conf() :: #{
     name := queue_name(),
-    driver => {module(), gaffer_driver:driver_state()},
+    driver => {module(), gaffer_driver:driver_opts()},
     worker => module(),
     global_max_workers => pos_integer(),
     max_workers => pos_integer(),
@@ -149,97 +149,56 @@
 %--- Application callbacks ----------------------------------------------------
 
 start(_StartType, _StartArgs) ->
-    gaffer_queues = ets:new(gaffer_queues, [
-        named_table, public, set, {read_concurrency, true}
-    ]),
+    gaffer_queue:init(),
     gaffer_sup:start_link().
 
 stop(_State) ->
-    ets:delete(gaffer_queues),
-    ok.
+    gaffer_queue:teardown().
 
 %--- Queue management ---------------------------------------------------------
 
 -spec create_queue(queue_conf()) -> ok | {error, already_exists}.
-create_queue(#{name := Name, driver := Driver} = Conf) ->
-    case ets:insert_new(gaffer_queues, {Name, Driver}) of
-        true ->
-            Driver1 = gaffer_queue:put_conf(Conf, Driver),
-            true = ets:insert(gaffer_queues, {Name, Driver1}),
-            {ok, _Pid} = gaffer_sup:start_queue(Name, Driver1),
-            ok;
-        false ->
-            {error, already_exists}
-    end.
+create_queue(Conf) ->
+    gaffer_queue:create(Conf).
 
 -spec get_queue(queue_name()) -> queue_conf().
 get_queue(Name) ->
-    Driver = lookup(Name),
-    {Conf, _Driver1} = gaffer_queue:get_conf(Name, Driver),
-    Conf.
+    gaffer_queue:get(Name).
 
 -spec update_queue(queue_name(), map()) -> ok.
 update_queue(Name, Updates) ->
-    Driver = lookup(Name),
-    {Conf, Driver0} = gaffer_queue:get_conf(Name, Driver),
-    Merged = maps:merge(Conf, maps:remove(name, Updates)),
-    Driver1 = gaffer_queue:put_conf(Merged, Driver0),
-    true = ets:insert(gaffer_queues, {Name, Driver1}),
-    ok.
+    gaffer_queue:update(Name, Updates).
 
 -spec delete_queue(queue_name()) -> ok.
 delete_queue(Name) ->
-    Driver = lookup(Name),
-    true = ets:delete(gaffer_queues, Name),
-    ok = gaffer_sup:stop_queue(Name),
-    _Driver1 = gaffer_queue:delete_conf(Name, Driver),
-    ok.
+    gaffer_queue:delete(Name).
 
 -spec list_queues() -> [{queue_name(), queue_conf()}].
 list_queues() ->
-    Entries = ets:tab2list(gaffer_queues),
-    lists:map(
-        fun({Name, Driver}) ->
-            {Conf, _} = gaffer_queue:get_conf(Name, Driver),
-            {Name, Conf}
-        end,
-        Entries
-    ).
+    gaffer_queue:list().
 
 %--- Enqueueing ---------------------------------------------------------------
 
--spec insert(queue_name(), term()) ->
-    job().
-insert(Queue, Payload) -> insert(Queue, Payload, #{}).
+-spec insert(queue_name(), term()) -> job().
+insert(Queue, Payload) ->
+    insert(Queue, Payload, #{}).
 
--spec insert(queue_name(), term(), job_opts()) ->
-    job().
+-spec insert(queue_name(), term(), job_opts()) -> job().
 insert(Queue, Payload, Opts) ->
-    gaffer_queue_runner:insert(Queue, Payload, Opts).
+    gaffer_queue:insert_job(Queue, Payload, Opts).
 
 %--- Lifecycle ----------------------------------------------------------------
 
--spec cancel(queue_name(), job_id()) ->
-    {ok, job()} | {error, term()}.
+-spec cancel(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
 cancel(Queue, JobId) ->
-    gaffer_queue_runner:cancel(Queue, JobId).
+    gaffer_queue:cancel_job(Queue, JobId).
 
 %--- Querying -----------------------------------------------------------------
 
--spec get(queue_name(), job_id()) ->
-    {ok, job()} | {error, term()}.
+-spec get(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
 get(Queue, JobId) ->
-    gaffer_queue_runner:get(Queue, JobId).
+    gaffer_queue:get_job(Queue, JobId).
 
 -spec list(list_opts()) -> [job()].
-list(#{queue := Queue} = Opts) ->
-    gaffer_queue_runner:list(Queue, Opts).
-
-%--- Internal -----------------------------------------------------------------
-
--spec lookup(queue_name()) -> gaffer_queue:driver().
-lookup(Name) ->
-    case ets:lookup(gaffer_queues, Name) of
-        [{_, Driver}] -> Driver;
-        [] -> error({unknown_queue, Name})
-    end.
+list(Opts) ->
+    gaffer_queue:list_jobs(Opts).

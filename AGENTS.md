@@ -9,7 +9,7 @@ Gaffer is a persistent job queue implemented in Erlang/OTP.
 ## Build & Development Commands
 
 ```sh
-mise run verify             # Run all verification checks
+mise run verify             # Run all linting
 mise run test               # Run all tests (requires Docker for CT)
 rebar3 fmt                  # Format code
 rebar3 eunit --module=gaffer_tests  # Run a single eunit module

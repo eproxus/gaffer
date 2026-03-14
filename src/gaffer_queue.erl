@@ -1,124 +1,165 @@
 -module(gaffer_queue).
 
-%% Functional API for managing a queue and its jobs. No process —
-%% takes a driver tuple {Mod, DriverState} on all calls.
+%% Functional API for managing a queue and its jobs.
 %%
 %% This is the only module that calls driver callbacks.
 
--export([new/2]).
--export([put_conf/2]).
--export([get_conf/2]).
--export([delete_conf/2]).
--export([insert/4]).
--export([get/2]).
--export([list/2]).
--export([cancel/2]).
--export([complete/2]).
--export([fail/3]).
--export([schedule/3]).
--export([claim/2]).
--export([prune/2]).
--export([validate/1]).
--export([transition/2]).
--export([add_error/2]).
+%% Queue management
+-export([init/0]).
+-export([teardown/0]).
+-export([create/1]).
+-export([delete/1]).
+-export([get/1]).
+-export([update/2]).
+-export([list/0]).
+-export([lookup/1]).
 
--ignore_xref([new/2, validate/1, transition/2, add_error/2]).
+%% Job operations (queue-name based)
+-export([insert_job/3]).
+-export([get_job/2]).
+-export([list_jobs/1]).
+-export([cancel_job/2]).
 
--type driver() :: {module(), gaffer_driver:driver_state()}.
+%% Job operations (driver-explicit, used by gaffer_queue_runner)
+-export([complete_job/2]).
+-export([fail_job/3]).
+-export([schedule_job/3]).
+-export([claim_jobs/2]).
+-export([prune_jobs/2]).
+
+-compile({no_auto_import, [get/1]}).
+
+-type driver() :: {module(), gaffer_driver:driver_opts()}.
+
+%% Dialyzer over-constrains types from internal call sites, making exhaustive
+%% clauses in the state machine appear unreachable.
+-dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).
 -export_type([driver/0]).
 
-%--- Queue construction -------------------------------------------------------
+%--- Queue management ----------------------------------------------------------
 
--spec new(module(), map()) -> driver().
-new(Mod, Opts) ->
-    DS = Mod:start(Opts),
-    {Mod, DS}.
+-spec init() -> ok.
+init() ->
+    ok.
 
-%--- Queue config operations --------------------------------------------------
+-spec teardown() -> ok.
+teardown() ->
+    _ = [
+        persistent_term:erase(Key)
+     || {Key, _} <:- persistent_term:get(),
+        is_gaffer_key(Key)
+    ],
+    ok.
 
--spec put_conf(gaffer:queue_conf(), driver()) ->
-    driver().
-put_conf(Conf, {Mod, DS}) ->
-    DS1 = Mod:queue_put(Conf, DS),
-    {Mod, DS1}.
-
--spec get_conf(gaffer:queue_name(), driver()) ->
-    {gaffer:queue_conf(), driver()}.
-get_conf(Name, {Mod, DS}) ->
-    {Conf, DS1} = Mod:queue_get(Name, DS),
-    {Conf, {Mod, DS1}}.
-
--spec delete_conf(gaffer:queue_name(), driver()) ->
-    driver().
-delete_conf(Name, {Mod, DS}) ->
-    DS1 = Mod:queue_delete(Name, DS),
-    {Mod, DS1}.
-
-%--- Job operations -----------------------------------------------------------
-
--spec insert(gaffer:queue_name(), term(), gaffer:job_opts(), driver()) ->
-    {gaffer:job(), driver()}.
-insert(Queue, Payload, Opts, {Mod, DS}) ->
-    NewJob = build_job(Queue, Payload, Opts),
-    validate(NewJob),
-    {Inserted, DS1} = Mod:job_insert(NewJob, DS),
-    validate_id(Inserted),
-    {Inserted, {Mod, DS1}}.
-
--spec get(gaffer:job_id(), driver()) ->
-    {ok, gaffer:job()} | {error, not_found}.
-get(Id, {Mod, DS}) ->
-    case Mod:job_get(Id, DS) of
-        {not_found, _DS1} -> {error, not_found};
-        {Job, _DS1} -> {ok, Job}
+-spec create(gaffer:queue_conf()) -> ok | {error, already_exists}.
+create(#{name := Name, driver := {Mod, DS} = Driver} = Conf) ->
+    case persistent_term:get({gaffer_queue, Name}, undefined) of
+        undefined ->
+            Mod:queue_put(Conf, DS),
+            persistent_term:put({gaffer_queue, Name}, Driver),
+            {ok, _Pid} = gaffer_sup:start_queue(Name),
+            ok;
+        _ ->
+            {error, already_exists}
     end.
 
--spec list(gaffer:list_opts(), driver()) ->
-    [gaffer:job()].
-list(Opts, {Mod, DS}) ->
-    {Jobs, _DS1} = Mod:job_list(Opts, DS),
-    Jobs.
+-spec delete(gaffer:queue_name()) -> ok.
+delete(Name) ->
+    ok = gaffer_sup:stop_queue(Name),
+    {Mod, DS} = lookup(Name),
+    persistent_term:erase({gaffer_queue, Name}),
+    Mod:queue_delete(Name, DS),
+    ok.
 
--spec cancel(gaffer:job_id(), driver()) ->
-    {ok, gaffer:job(), driver()} | {error, term()}.
-cancel(Id, {Mod, DS}) ->
-    case Mod:job_get(Id, DS) of
-        {not_found, _DS1} ->
+-spec list() -> [{gaffer:queue_name(), gaffer:queue_conf()}].
+list() ->
+    lists:filtermap(fun queue_entry/1, persistent_term:get()).
+
+-spec queue_entry({term(), term()}) ->
+    {true, {gaffer:queue_name(), gaffer:queue_conf()}} | false.
+queue_entry({{gaffer_queue, Name}, {Mod, _}}) when
+    is_atom(Name), is_atom(Mod)
+->
+    {true, {Name, get(Name)}};
+queue_entry(_) ->
+    false.
+
+-spec get(gaffer:queue_name()) -> gaffer:queue_conf().
+get(Name) ->
+    call(Name, queue_get, [Name]).
+
+-spec update(gaffer:queue_name(), map()) -> ok.
+update(Name, Updates) ->
+    Conf = get(Name),
+    Merged = maps:merge(Conf, maps:remove(name, Updates)),
+    call(Name, queue_put, [Merged]).
+
+%--- Job operations (queue-name based) -----------------------------------------
+
+-spec insert_job(gaffer:queue_name(), term(), gaffer:job_opts()) ->
+    gaffer:job().
+insert_job(Queue, Payload, Opts) ->
+    NewJob = build_job(Queue, Payload, Opts),
+    validate(NewJob),
+    Inserted = call(Queue, job_insert, [NewJob]),
+    validate_id(Inserted),
+    Inserted.
+
+-spec get_job(gaffer:queue_name(), gaffer:job_id()) ->
+    {ok, gaffer:job()} | {error, not_found}.
+get_job(Queue, JobId) ->
+    case call(Queue, job_get, [JobId]) of
+        not_found -> {error, not_found};
+        Job -> {ok, Job}
+    end.
+
+-spec list_jobs(gaffer:list_opts()) ->
+    [gaffer:job()].
+list_jobs(#{queue := Queue} = Opts) ->
+    call(Queue, job_list, [Opts]).
+
+-spec cancel_job(gaffer:queue_name(), gaffer:job_id()) ->
+    {ok, gaffer:job()} | {error, term()}.
+cancel_job(Queue, JobId) ->
+    case call(Queue, job_get, [JobId]) of
+        not_found ->
             {error, not_found};
-        {Job, DS1} ->
+        Job ->
             case transition(Job, cancelled) of
                 {ok, Updated} ->
-                    DS2 = Mod:job_update(Updated, DS1),
-                    {ok, Updated, {Mod, DS2}};
+                    call(Queue, job_update, [Updated]),
+                    {ok, Updated};
                 {error, _} = Err ->
                     Err
             end
     end.
 
--spec complete(gaffer:job_id(), driver()) ->
-    {ok, gaffer:job(), driver()} | {error, term()}.
-complete(Id, {Mod, DS}) ->
+%--- Job operations (driver-explicit) ------------------------------------------
+
+-spec complete_job(gaffer:job_id(), driver()) ->
+    {ok, gaffer:job()} | {error, term()}.
+complete_job(Id, {Mod, DS}) ->
     case Mod:job_get(Id, DS) of
-        {not_found, _DS1} ->
+        not_found ->
             {error, not_found};
-        {#{attempt := Attempt} = Job, DS1} ->
+        #{attempt := Attempt} = Job ->
             case transition(Job, completed) of
                 {ok, Updated} ->
                     Result = Updated#{attempt := Attempt + 1},
-                    DS2 = Mod:job_update(Result, DS1),
-                    {ok, Result, {Mod, DS2}};
+                    Mod:job_update(Result, DS),
+                    {ok, Result};
                 {error, _} = Err ->
                     Err
             end
     end.
 
--spec fail(gaffer:job_id(), gaffer:job_error(), driver()) ->
-    {ok, gaffer:job(), driver()} | {error, term()}.
-fail(Id, Error, {Mod, DS}) ->
+-spec fail_job(gaffer:job_id(), gaffer:job_error(), driver()) ->
+    {ok, gaffer:job()} | {error, term()}.
+fail_job(Id, Error, {Mod, DS}) ->
     case Mod:job_get(Id, DS) of
-        {not_found, _DS1} ->
+        not_found ->
             {error, not_found};
-        {Job, DS1} ->
+        Job ->
             Attempt = maps:get(attempt, Job) + 1,
             MaxAttempts = maps:get(max_attempts, Job, 3),
             Job1 = Job#{attempt := Attempt},
@@ -132,40 +173,38 @@ fail(Id, Error, {Mod, DS}) ->
                     false ->
                         Job3
                 end,
-            DS2 = Mod:job_update(Job4, DS1),
-            {ok, Job4, {Mod, DS2}}
+            Mod:job_update(Job4, DS),
+            {ok, Job4}
     end.
 
--spec schedule(gaffer:job_id(), gaffer:timestamp(), driver()) ->
-    {ok, gaffer:job(), driver()} | {error, term()}.
-schedule(Id, At, {Mod, DS}) ->
+-spec schedule_job(gaffer:job_id(), gaffer:timestamp(), driver()) ->
+    {ok, gaffer:job()} | {error, term()}.
+schedule_job(Id, At, {Mod, DS}) ->
     case Mod:job_get(Id, DS) of
-        {not_found, _DS1} ->
+        not_found ->
             {error, not_found};
-        {Job, DS1} ->
+        Job ->
             case transition(Job, scheduled) of
                 {ok, Updated} ->
                     Result = Updated#{scheduled_at => At},
-                    DS2 = Mod:job_update(Result, DS1),
-                    {ok, Result, {Mod, DS2}};
+                    Mod:job_update(Result, DS),
+                    {ok, Result};
                 {error, _} = Err ->
                     Err
             end
     end.
 
--spec claim(gaffer:claim_opts(), driver()) ->
-    {[gaffer:job()], driver()}.
-claim(Opts, {Mod, DS}) ->
+-spec claim_jobs(gaffer:claim_opts(), driver()) ->
+    [gaffer:job()].
+claim_jobs(Opts, {Mod, DS}) ->
     Now = erlang:system_time(),
     Changes = #{state => executing, attempted_at => Now},
-    {Claimed, DS1} = Mod:job_claim(Opts, Changes, DS),
-    {Claimed, {Mod, DS1}}.
+    Mod:job_claim(Opts, Changes, DS).
 
--spec prune(gaffer:prune_opts(), driver()) ->
-    {non_neg_integer(), driver()}.
-prune(Opts, {Mod, DS}) ->
-    {Count, DS1} = Mod:job_prune(Opts, DS),
-    {Count, {Mod, DS1}}.
+-spec prune_jobs(gaffer:prune_opts(), driver()) ->
+    non_neg_integer().
+prune_jobs(Opts, {Mod, DS}) ->
+    Mod:job_prune(Opts, DS).
 
 %--- Job construction (private) -----------------------------------------------
 
@@ -209,12 +248,9 @@ validate(#{queue := Queue} = Job) ->
             invalid_priority
         }
     ],
-    run_checks(Checks);
-validate(_) ->
-    error({invalid_job, missing_required_fields}).
+    run_checks(Checks).
 
-validate_id(#{id := _}) -> ok;
-validate_id(_) -> error({invalid_job, missing_id}).
+validate_id(#{id := _}) -> ok.
 
 %--- State machine (private) --------------------------------------------------
 
@@ -265,3 +301,19 @@ run_checks([{Check, Reason} | Rest]) ->
         true -> run_checks(Rest);
         false -> error({invalid_job, Reason})
     end.
+
+%--- Driver dispatch (private) ------------------------------------------------
+
+call(Queue, Fun, Args) ->
+    {Mod, DS} = lookup(Queue),
+    apply(Mod, Fun, Args ++ [DS]).
+
+-spec lookup(gaffer:queue_name()) -> driver().
+lookup(Name) ->
+    case persistent_term:get({gaffer_queue, Name}, undefined) of
+        undefined -> error({unknown_queue, Name});
+        Driver -> Driver
+    end.
+
+is_gaffer_key({gaffer_queue, _}) -> true;
+is_gaffer_key(_) -> false.

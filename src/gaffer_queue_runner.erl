@@ -3,11 +3,7 @@
 -behaviour(gen_statem).
 
 %% Public API
--export([start_link/2]).
--export([insert/3]).
--export([get/2]).
--export([list/2]).
--export([cancel/2]).
+-export([start_link/1]).
 -export([complete/2]).
 -export([fail/3]).
 -export([schedule/3]).
@@ -20,11 +16,7 @@
 -export([handle_event/4]).
 
 -ignore_xref([
-    start_link/2,
-    insert/3,
-    get/2,
-    list/2,
-    cancel/2,
+    start_link/1,
     complete/2,
     fail/3,
     schedule/3,
@@ -34,41 +26,15 @@
 
 %--- Public API ---------------------------------------------------------------
 
--spec start_link(gaffer:queue_name(), gaffer_queue:driver()) ->
+-spec start_link(gaffer:queue_name()) ->
     gen_statem:start_ret().
-start_link(Name, Driver) ->
+start_link(Name) ->
     gen_statem:start_link(
         {local, proc_name(Name)},
         ?MODULE,
-        {Name, Driver},
+        Name,
         []
     ).
-
--spec insert(gaffer:queue_name(), term(), gaffer:job_opts()) ->
-    gaffer:job().
-insert(Name, Payload, Opts) ->
-    gen_statem:call(
-        proc_name(Name), {insert, Name, Payload, Opts}
-    ).
-
--spec get(gaffer:queue_name(), gaffer:job_id()) ->
-    {ok, gaffer:job()} | {error, not_found}.
-get(Name, Id) ->
-    Driver =
-        gen_statem:call(proc_name(Name), get_driver),
-    gaffer_queue:get(Id, Driver).
-
--spec list(gaffer:queue_name(), gaffer:list_opts()) ->
-    [gaffer:job()].
-list(Name, Opts) ->
-    Driver =
-        gen_statem:call(proc_name(Name), get_driver),
-    gaffer_queue:list(Opts, Driver).
-
--spec cancel(gaffer:queue_name(), gaffer:job_id()) ->
-    {ok, gaffer:job()} | {error, term()}.
-cancel(Name, Id) ->
-    gen_statem:call(proc_name(Name), {cancel, Id}).
 
 -spec complete(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
@@ -107,44 +73,29 @@ prune(Name, Opts) ->
 
 callback_mode() -> handle_event_function.
 
-init({Name, Driver}) ->
-    Data = #{name => Name, driver => Driver},
+init(Name) ->
+    Data = #{name => Name},
     {ok, idle, Data}.
 
 handle_event(
-    {call, From}, Cmd, _State, #{driver := Driver} = Data
+    {call, From}, Cmd, _State, #{name := Name} = Data
 ) ->
-    case dispatch(Cmd, Driver) of
-        {mutated, Reply, NewDriver} ->
-            {keep_state, Data#{driver := NewDriver}, [{reply, From, Reply}]};
-        {readonly, Reply} ->
-            {keep_state, Data, [{reply, From, Reply}]}
-    end.
+    Driver = gaffer_queue:lookup(Name),
+    Reply = dispatch(Cmd, Driver),
+    {keep_state, Data, [{reply, From, Reply}]}.
 
 %--- Internal -----------------------------------------------------------------
 
-dispatch({insert, Queue, Payload, Opts}, Driver) ->
-    {Job, D1} = gaffer_queue:insert(Queue, Payload, Opts, Driver),
-    {mutated, Job, D1};
-dispatch({cancel, Id}, Driver) ->
-    tag(gaffer_queue:cancel(Id, Driver));
 dispatch({complete, Id}, Driver) ->
-    tag(gaffer_queue:complete(Id, Driver));
+    gaffer_queue:complete_job(Id, Driver);
 dispatch({fail, Id, Error}, Driver) ->
-    tag(gaffer_queue:fail(Id, Error, Driver));
+    gaffer_queue:fail_job(Id, Error, Driver);
 dispatch({schedule, Id, At}, Driver) ->
-    tag(gaffer_queue:schedule(Id, At, Driver));
+    gaffer_queue:schedule_job(Id, At, Driver);
 dispatch({claim, Opts}, Driver) ->
-    {Claimed, D1} = gaffer_queue:claim(Opts, Driver),
-    {mutated, Claimed, D1};
+    gaffer_queue:claim_jobs(Opts, Driver);
 dispatch({prune, Opts}, Driver) ->
-    {Count, D1} = gaffer_queue:prune(Opts, Driver),
-    {mutated, Count, D1};
-dispatch(get_driver, Driver) ->
-    {readonly, Driver}.
-
-tag({ok, Value, D1}) -> {mutated, {ok, Value}, D1};
-tag({error, _} = Err) -> {readonly, Err}.
+    gaffer_queue:prune_jobs(Opts, Driver).
 
 -spec proc_name(gaffer:queue_name()) -> atom().
 proc_name(Name) ->

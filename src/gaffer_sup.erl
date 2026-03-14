@@ -4,7 +4,7 @@
 
 % API
 -export([start_link/0]).
--export([start_queue/2]).
+-export([start_queue/1]).
 -export([stop_queue/1]).
 
 % Callbacks
@@ -15,13 +15,13 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, _InitArgs = {}).
 
--spec start_queue(gaffer:queue_name(), gaffer_queue:driver()) ->
+-spec start_queue(gaffer:queue_name()) ->
     {ok, pid()}.
-start_queue(Name, Driver) ->
+start_queue(Name) ->
     ChildSpec = #{
         id => Name,
         start =>
-            {gaffer_queue_runner, start_link, [Name, Driver]},
+            {gaffer_queue_runner, start_link, [Name]},
         restart => transient,
         shutdown => 5000
     },

@@ -18,6 +18,7 @@ elp eqwalize-all
 [tasks.test]
 description = "Run all tests"
 run = """
-rebar3 eunit
-rebar3 ct
+rebar3 eunit --cover
+rebar3 ct --cover
+rebar3 cover
 """
