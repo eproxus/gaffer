@@ -52,7 +52,7 @@ CREATE TABLE gaffer_queues (
     timeout            INTEGER,
     backoff            INTEGER,
     priority           INTEGER DEFAULT 0,
-    on_discard         TEXT
+    on_discard         TEXT REFERENCES gaffer_queues(name)
 );
 ```
 

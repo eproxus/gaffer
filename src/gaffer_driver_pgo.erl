@@ -79,6 +79,8 @@ rollback(TargetVersion, #{pool := Pool}) ->
 
 %--- Queue config (stubs) ----------------------------------------------------
 
+%% TODO: Catch FK violation on on_discard and raise
+%%       error({on_discard_queue_not_found, Name}).
 -spec queue_put(gaffer:queue_conf(), state()) -> no_return().
 queue_put(_Conf, _State) -> error(not_implemented).
 
