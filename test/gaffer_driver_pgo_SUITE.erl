@@ -13,18 +13,12 @@
     migration_idempotent_test/1,
     migration_rollback_test/1,
     start_with_new_pool_test/1,
-    queue_put_get_test/1,
-    queue_update_test/1,
-    queue_delete_test/1,
     queue_on_discard_test/1,
     queue_idempotent_create_test/1,
     queue_config_mismatch_test/1,
     queue_update_on_discard_fk_test/1,
-    insert_and_get_test/1,
-    insert_with_opts_test/1,
     insert_scheduled_test/1,
     get_not_found_test/1,
-    insert_and_list_test/1,
     list_filter_state_test/1,
     job_delete_test/1,
     job_delete_not_found_test/1
@@ -35,18 +29,12 @@ all() ->
         migration_idempotent_test,
         migration_rollback_test,
         start_with_new_pool_test,
-        queue_put_get_test,
-        queue_update_test,
-        queue_delete_test,
         queue_on_discard_test,
         queue_idempotent_create_test,
         queue_config_mismatch_test,
         queue_update_on_discard_fk_test,
-        insert_and_get_test,
-        insert_with_opts_test,
         insert_scheduled_test,
         get_not_found_test,
-        insert_and_list_test,
         list_filter_state_test,
         job_delete_test,
         job_delete_not_found_test
@@ -125,31 +113,6 @@ start_with_new_pool_test(Config) ->
         gaffer_driver_pgo:stop(State)
     end.
 
-queue_put_get_test(_Config) ->
-    Driver = driver(),
-    Conf = queue_conf(Driver),
-    ok = gaffer:create_queue(Conf),
-    Got = gaffer:get_queue(queue_conf_name()),
-    %% Stored conf has defaults applied and no driver/worker keys
-    Expected = maps:without([driver], Conf),
-    ?assertEqual(Expected, Got).
-
-queue_update_test(_Config) ->
-    Driver = driver(),
-    ok = gaffer:create_queue(#{
-        name => queue_update, driver => Driver, global_max_workers => 5
-    }),
-    ok = gaffer:update_queue(queue_update, #{global_max_workers => 20}),
-    ?assertMatch(
-        #{global_max_workers := 20}, gaffer:get_queue(queue_update)
-    ).
-
-queue_delete_test(_Config) ->
-    Driver = driver(),
-    ok = gaffer:create_queue(#{name => queue_del, driver => Driver}),
-    ok = gaffer:delete_queue(queue_del),
-    ?assertError({unknown_queue, _}, gaffer:get_queue(queue_del)).
-
 queue_on_discard_test(_Config) ->
     Driver = driver(),
     %% Create a dead_letter queue first
@@ -215,36 +178,6 @@ queue_update_on_discard_fk_test(_Config) ->
 
 %--- Job CRUD tests -----------------------------------------------------------
 
-insert_and_get_test(_Config) ->
-    Driver = driver(),
-    Queue = job_test_q,
-    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
-    Payload = #{task => 1, data => ~"hello"},
-    Job = gaffer:insert(Queue, Payload),
-    ?assertMatch(#{id := _, state := available}, Job),
-    Got = gaffer:get(Queue, maps:get(id, Job)),
-    ?assertEqual(maps:get(id, Job), maps:get(id, Got)),
-    ?assertEqual(Queue, maps:get(queue, Got)),
-    ?assertEqual(available, maps:get(state, Got)),
-    % Payload round-trips with binary keys
-    ?assertEqual(
-        #{~"task" => 1, ~"data" => ~"hello"}, maps:get(payload, Got)
-    ),
-    ?assertEqual(0, maps:get(attempt, Got)),
-    ?assertEqual(3, maps:get(max_attempts, Got)),
-    ?assertEqual(0, maps:get(priority, Got)),
-    ?assertEqual([], maps:get(errors, Got)),
-    ?assert(is_map_key(inserted_at, Got)).
-
-insert_with_opts_test(_Config) ->
-    Driver = driver(),
-    Queue = job_opts_q,
-    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
-    Job = gaffer:insert(Queue, #{}, #{priority => 5, max_attempts => 10}),
-    Got = gaffer:get(Queue, maps:get(id, Job)),
-    ?assertEqual(5, maps:get(priority, Got)),
-    ?assertEqual(10, maps:get(max_attempts, Got)).
-
 insert_scheduled_test(_Config) ->
     Driver = driver(),
     Queue = job_sched_q,
@@ -264,15 +197,6 @@ get_not_found_test(_Config) ->
     Queue = job_nf_q,
     ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
     ?assertError({unknown_job, _}, gaffer:get(Queue, <<0:128>>)).
-
-insert_and_list_test(_Config) ->
-    Driver = driver(),
-    Queue = job_list_q,
-    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
-    gaffer:insert(Queue, #{a => 1}),
-    gaffer:insert(Queue, #{a => 2}),
-    Jobs = gaffer:list(#{queue => Queue}),
-    ?assertEqual(2, length(Jobs)).
 
 list_filter_state_test(_Config) ->
     Driver = driver(),
@@ -321,22 +245,6 @@ reset_database(Pool) ->
 driver() ->
     State = gaffer_driver_pgo:start(#{pool => test_pool}),
     {gaffer_driver_pgo, State}.
-
-queue_conf_name() -> queue_conf_test.
-
-queue_conf(Driver) ->
-    #{
-        name => queue_conf_name(),
-        driver => Driver,
-        global_max_workers => 5,
-        max_workers => 2,
-        poll_interval => 1000,
-        shutdown_timeout => 5000,
-        max_attempts => 3,
-        timeout => 30000,
-        backoff => 1000,
-        priority => 1
-    }.
 
 %% See gaffer_driver_pgo:stop_pool/1
 stop_pool(Pool) ->

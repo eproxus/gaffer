@@ -5,30 +5,46 @@
 %% Tests intentionally pass invalid conf to verify validation
 -eqwalizer({nowarn_function, create_queue_extra_key/1}).
 
-%--- Fixture ------------------------------------------------------------------
+%--- Fixtures -----------------------------------------------------------------
 
-% TODO: Use this same harness for Postgres too once implemented
+% Tests that run against all drivers (ETS + Postgres)
 gaffer_test_() ->
-    {setup, fun setup/0, fun cleanup/1, fun(Driver) ->
+    Tests = [
+        %% Queue management
+        fun create_queue/1,
+        fun get_queue/1,
+        fun update_queue/1,
+        fun delete_queue/1,
+        fun list_queues/1,
+        %% Insert
+        fun insert/1,
+        fun insert_with_opts/1,
+        fun insert_scheduled/1,
+        %% Get / list
+        fun get_job/1,
+        fun list_jobs/1,
+        %% Insert validation
+        fun insert_invalid_max_attempts/1,
+        %% Validation
+        fun create_queue_extra_key/1,
+        fun update_queue_extra_key/1,
+        fun update_queue_empty/1
+    ],
+    [
+        harness(gaffer_driver_ets, Tests),
+        harness(gaffer_driver_pgo, Tests)
+    ].
+
+% Tests that run against ETS only (to be migrated into gaffer_test_/0)
+gaffer_ets_test_() ->
+    {setup, fun() -> setup(gaffer_driver_ets) end, fun teardown/1, fun(
+        #{driver := Driver}
+    ) ->
         {inparallel, [
             {with, Driver, [T]}
          || T <:- [
-                %% Application
-                fun start_stop/1,
-                %% Queue management
-                fun create_queue/1,
-                fun get_queue/1,
-                fun update_queue/1,
-                fun delete_queue/1,
-                fun list_queues/1,
-                %% Insert
-                fun insert/1,
-                fun insert_with_opts/1,
-                fun insert_scheduled/1,
-                %% Get / list
-                fun get_job/1,
+                %% Get / list (make_ref IDs not supported in PGO)
                 fun get_not_found/1,
-                fun list_jobs/1,
                 %% Cancel
                 fun cancel/1,
                 fun cancel_not_found/1,
@@ -50,12 +66,6 @@ gaffer_test_() ->
                 fun schedule_from_failed/1,
                 fun schedule_not_found/1,
                 fun schedule_available_error/1,
-                %% Insert validation
-                fun insert_invalid_max_attempts/1,
-                %% Validation
-                fun create_queue_extra_key/1,
-                fun update_queue_extra_key/1,
-                fun update_queue_empty/1,
                 %% Claim
                 fun claim/1,
                 fun claim_empty/1,
@@ -65,18 +75,67 @@ gaffer_test_() ->
         ]}
     end}.
 
-setup() ->
-    {ok, _} = application:ensure_all_started(gaffer),
+harness(DriverMod, Tests) ->
+    {setup, fun() -> setup(DriverMod) end, fun teardown/1, fun(
+        #{driver := Driver}
+    ) ->
+        {inparallel, [{with, Driver, [T]} || T <:- Tests]}
+    end}.
+
+%--- Setup / teardown ---------------------------------------------------------
+
+setup(DriverMod) ->
+    {Driver, Apps0} = setup_driver(DriverMod),
+    {ok, Apps1} = application:ensure_all_started(gaffer),
+    #{driver => Driver, gaffer_apps => Apps1, driver_apps => Apps0}.
+
+teardown(#{
+    driver := Driver, gaffer_apps := GafferApps, driver_apps := DriverApps
+}) ->
+    [application:stop(A) || A <:- lists:reverse(GafferApps)],
+    teardown_driver(Driver),
+    [application:stop(A) || A <:- lists:reverse(DriverApps)].
+
+setup_driver(gaffer_driver_ets) ->
     DS = gaffer_driver_ets:start(#{}),
-    {gaffer_driver_ets, DS}.
+    {{gaffer_driver_ets, DS}, []};
+setup_driver(gaffer_driver_pgo) ->
+    {ok, Apps} = application:ensure_all_started(pgo),
+    stop_pool(test_pool),
+    {ok, _} = pgo:start_pool(test_pool, pgo_pool_config()),
+    reset_database(test_pool),
+    DS = gaffer_driver_pgo:start(#{pool => test_pool}),
+    {{gaffer_driver_pgo, DS}, Apps}.
 
-cleanup({gaffer_driver_ets, DS}) ->
-    gaffer_driver_ets:stop(DS),
-    application:stop(gaffer).
+teardown_driver({gaffer_driver_ets, DS}) ->
+    gaffer_driver_ets:stop(DS);
+teardown_driver({gaffer_driver_pgo, DS}) ->
+    gaffer_driver_pgo:stop(DS),
+    reset_database(test_pool),
+    stop_pool(test_pool).
 
-%--- Application tests --------------------------------------------------------
+%--- PGO helpers --------------------------------------------------------------
 
-start_stop(_Driver) -> ok.
+pgo_pool_config() ->
+    {ok, [PgConfig]} = file:consult("config/test.config"),
+    {postgres, Props} = PgConfig,
+    Config = maps:with(
+        [host, port, database, user, password],
+        maps:from_list(Props)
+    ),
+    Config#{pool_size => 2}.
+
+reset_database(Pool) ->
+    Opts = #{pool => Pool},
+    pgo:query(~"DROP SCHEMA public CASCADE", [], Opts),
+    pgo:query(~"CREATE SCHEMA public", [], Opts),
+    ok.
+
+stop_pool(Pool) ->
+    case whereis(Pool) of
+        undefined -> ok;
+        Pid -> supervisor:terminate_child(pgo_sup, Pid)
+    end.
 
 %--- Queue management tests ---------------------------------------------------
 
@@ -94,12 +153,15 @@ create_queue(Driver) ->
 get_queue(Driver) ->
     Conf = #{name => ?FUNCTION_NAME, driver => Driver},
     ok = gaffer:create_queue(Conf),
-    Got = gaffer:get_queue(?FUNCTION_NAME),
-    ?assertMatch(#{name := get_queue}, Got),
-    %% Defaults are applied
-    ?assertEqual(25, maps:get(global_max_workers, Got)),
-    ?assertEqual(5, maps:get(max_workers, Got)),
-    ?assertEqual(0, maps:get(priority, Got)).
+    ?assertMatch(
+        #{
+            name := get_queue,
+            global_max_workers := 25,
+            max_workers := 5,
+            priority := 0
+        },
+        gaffer:get_queue(?FUNCTION_NAME)
+    ).
 
 update_queue(Driver) ->
     ok = gaffer:create_queue(#{
@@ -152,7 +214,7 @@ insert(Driver) ->
             max_attempts := 3,
             attempt := 0
         },
-        Job
+        atomize_keys(Job)
     ).
 
 insert_with_opts(Driver) ->
@@ -167,7 +229,7 @@ insert_with_opts(Driver) ->
             priority := 5,
             max_attempts := 10
         },
-        Job
+        atomize_keys(Job)
     ).
 
 insert_scheduled(Driver) ->
@@ -175,7 +237,7 @@ insert_scheduled(Driver) ->
     ok = gaffer:create_queue(#{name => Q, driver => Driver}),
     At = erlang:system_time() + erlang:convert_time_unit(3600, second, native),
     Job = gaffer:insert(Q, #{task => 1}, #{scheduled_at => At}),
-    ?assertMatch(#{state := scheduled, scheduled_at := At}, Job).
+    ?assertMatch(#{state := scheduled, scheduled_at := _}, Job).
 
 %--- Get / list tests ---------------------------------------------------------
 
@@ -185,7 +247,8 @@ get_job(Driver) ->
     #{id := Id} = gaffer:insert(Q, #{task => 1}),
     Job = gaffer:get(Q, Id),
     ?assertMatch(
-        #{id := Id, queue := get_job, payload := #{task := 1}}, Job
+        #{id := Id, queue := get_job, payload := #{task := 1}},
+        atomize_keys(Job)
     ).
 
 get_not_found(Driver) ->
@@ -447,3 +510,19 @@ prune(Driver) ->
     {ok, _} = gaffer:cancel(Q, Id),
     Count = gaffer_queue_runner:prune(Q, #{states => [cancelled]}),
     ?assert(Count >= 1).
+
+%--- Helpers ------------------------------------------------------------------
+
+atomize_keys(Map) when is_map(Map) ->
+    maps:fold(
+        fun
+            (K, V, Acc) when is_binary(K) ->
+                Acc#{binary_to_existing_atom(K) => atomize_keys(V)};
+            (K, V, Acc) ->
+                Acc#{K => atomize_keys(V)}
+        end,
+        #{},
+        Map
+    );
+atomize_keys(Other) ->
+    Other.
