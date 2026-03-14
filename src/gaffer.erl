@@ -19,6 +19,10 @@
 
 %% Lifecycle
 -export([cancel/2]).
+-export([drain/1]).
+-export([drain/2]).
+-export([flush/1]).
+-export([flush/2]).
 
 %% Querying
 -export([get/2]).
@@ -33,6 +37,10 @@
     insert/2,
     insert/3,
     cancel/2,
+    drain/1,
+    drain/2,
+    flush/1,
+    flush/2,
     get/2,
     list/1
 ]).
@@ -192,6 +200,28 @@ insert(Queue, Payload, Opts) ->
 -spec cancel(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
 cancel(Queue, JobId) ->
     gaffer_queue:cancel_job(Queue, JobId).
+
+-spec drain(queue_name()) -> ok.
+drain(Queue) ->
+    drain(Queue, 5000).
+
+-spec drain(queue_name(), timeout()) -> ok.
+-dialyzer([
+    {no_return, [drain/1, drain/2, flush/1, flush/2]},
+    {no_contracts, [drain/1, drain/2, flush/1, flush/2]}
+]).
+drain(_Queue, _Timeout) ->
+    % TODO: stop claiming, wait for in-flight workers
+    error(not_implemented).
+
+-spec flush(queue_name()) -> ok.
+flush(Queue) ->
+    flush(Queue, infinity).
+
+-spec flush(queue_name(), timeout()) -> ok.
+flush(_Queue, _Timeout) ->
+    % TODO: process all remaining items in the queue until empty
+    error(not_implemented).
 
 %--- Querying -----------------------------------------------------------------
 
