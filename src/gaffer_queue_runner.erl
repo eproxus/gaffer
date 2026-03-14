@@ -2,7 +2,7 @@
 
 -behaviour(gen_statem).
 
-%% Public API
+% Public API
 -export([start_link/1]).
 -export([complete/2]).
 -export([fail/3]).
@@ -10,7 +10,7 @@
 -export([claim/2]).
 -export([prune/2]).
 
-%% gen_statem callbacks
+% gen_statem callbacks
 -export([callback_mode/0]).
 -export([init/1]).
 -export([handle_event/4]).

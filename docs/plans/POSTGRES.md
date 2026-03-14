@@ -139,19 +139,19 @@ Pure functional module — no pgo dependency. Contains all SQL query definitions
 ### Exports
 
 ```
-%% Migrations — returns versioned up/down query lists
+% Migrations — returns versioned up/down query lists
 migrations/1              -> [{Version, Up, Down}]      % accepts #{uuid_format => v4 | v7}
 migrate_up/1              -> [{SQL, Params}]             % wrap up queries + version update
 migrate_down/1            -> [{SQL, Params}]             % wrap down queries + version decrement
 ensure_migrations_table() -> [{SQL, Params}]             % CREATE IF NOT EXISTS + seed
 applied_version()         -> [{SQL, Params}]             % SELECT current version
 
-%% Queue config queries — each returns [{SQL, Params}]
+% Queue config queries — each returns [{SQL, Params}]
 queue_put/1           (QueueConf)
 queue_get/1           (QueueName)
 queue_delete/1        (QueueName)
 
-%% Job queries — each returns [{SQL, Params}]
+% Job queries — each returns [{SQL, Params}]
 job_insert/1          (NewJob)  — INSERT without id, RETURNING * to get driver-generated UUID
 job_get/1             (JobId)
 job_list/1            (ListOpts)

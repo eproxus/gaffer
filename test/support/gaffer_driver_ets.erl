@@ -159,7 +159,7 @@ job_update(
     #{id := Id, state := JobState} = Job,
     #{queued := Queued, locked := Locked}
 ) ->
-    %% Move job to appropriate table based on state
+    % Move job to appropriate table based on state
     case JobState of
         executing ->
             ets:delete(Queued, Id),

@@ -1,10 +1,10 @@
 -module(gaffer_postgres).
 
-%% Pure SQL module — no pgo dependency. Contains all SQL and
-%% serialization logic for the Postgres driver.
-%%
-%% All public functions return [{SQL, Params}] — a uniform list
-%% of query tuples. The driver runs these in a transaction.
+% Pure SQL module — no pgo dependency. Contains all SQL and
+% serialization logic for the Postgres driver.
+%
+% All public functions return [{SQL, Params}] — a uniform list
+% of query tuples. The driver runs these in a transaction.
 
 -export([migrations/1]).
 -export([migrate_up/1]).
@@ -12,13 +12,13 @@
 -export([ensure_migrations_table/0]).
 -export([applied_version/0]).
 
-%% Queue CRUD
+% Queue CRUD
 -export([queue_insert/1]).
 -export([queue_update/2]).
 -export([queue_get/1]).
 -export([queue_delete/1]).
 
-%% Job CRUD
+% Job CRUD
 -export([job_insert/1]).
 -export([job_get/1]).
 -export([job_list/1]).
@@ -39,7 +39,7 @@ migrations(Opts) ->
     [
         {1,
             queries([
-                %% Queues
+                % Queues
                 ~"""
                 CREATE TABLE gaffer_queues (
                     name               TEXT PRIMARY KEY,
@@ -54,7 +54,7 @@ migrations(Opts) ->
                     on_discard         TEXT REFERENCES gaffer_queues(name)
                 )
                 """,
-                %% Jobs
+                % Jobs
                 iolist_to_binary([
                     ~"""
                     CREATE TABLE gaffer_jobs (
@@ -81,7 +81,7 @@ migrations(Opts) ->
                     )
                     """
                 ]),
-                %% Query indexes
+                % Query indexes
                 ~"""
                 CREATE INDEX idx_gaffer_jobs_claimable
                     ON gaffer_jobs (queue, priority, inserted_at)
@@ -91,7 +91,7 @@ migrations(Opts) ->
                 CREATE INDEX idx_gaffer_jobs_queue_state
                     ON gaffer_jobs (queue, state)
                 """,
-                %% Maintenance indexes
+                % Maintenance indexes
                 ~"""
                 CREATE INDEX idx_gaffer_jobs_state
                     ON gaffer_jobs (state)
@@ -131,7 +131,7 @@ ensure_migrations_table() ->
         """
     ]).
 
-%% Returns a query guaranteed to return a single row with an integer version.
+% Returns a query guaranteed to return a single row with an integer version.
 -spec applied_version() -> [{binary(), list()}].
 applied_version() ->
     [{~"SELECT version FROM gaffer_schema_version", []}].

@@ -2,18 +2,18 @@
 
 -behaviour(gaffer_driver).
 
-%% Lifecycle
+% Lifecycle
 -export([start/1]).
 -export([stop/1]).
 -export([rollback/2]).
 
-%% Queue config
+% Queue config
 -export([queue_insert/2]).
 -export([queue_update/3]).
 -export([queue_get/2]).
 -export([queue_delete/2]).
 
-%% Job CRUD
+% Job CRUD
 -export([job_insert/2]).
 -export([job_get/2]).
 -export([job_list/2]).
@@ -22,10 +22,10 @@
 -export([job_update/2]).
 -export([job_prune/2]).
 
-%% rollback/2 is an operational tool (shell use), not called from app code
+% rollback/2 is an operational tool (shell use), not called from app code
 -ignore_xref([rollback/2]).
 
-%% Stubs — remove ignore_xref as each callback gets implemented
+% Stubs — remove ignore_xref as each callback gets implemented
 -ignore_xref([
     job_claim/3,
     job_update/2,
@@ -183,8 +183,8 @@ start_pool(#{pool := Pool, start := PgoConfig}) ->
 start_pool(#{pool := Pool}) ->
     #{pool => Pool, pool_owner => user}.
 
-%% pgo does not expose a public stop_pool API, so we reach into its
-%% internal supervisor. If pgo changes its supervision tree, update here.
+% pgo does not expose a public stop_pool API, so we reach into its
+% internal supervisor. If pgo changes its supervision tree, update here.
 stop_pool(#{pool_owner := user}) ->
     ok;
 stop_pool(#{pool := Pool, pool_owner := driver}) ->
@@ -213,9 +213,9 @@ applied_version(Pool) ->
     #{rows := [{Version}]} = pgo:query(SQL, Params, #{pool => Pool}),
     Version.
 
-%% Runs a list of queries in a single transaction, returning [pgo:result()].
-%% pgo:query/3 inside a transaction uses the implicit connection from
-%% the process dictionary, set by pgo:transaction/2.
+% Runs a list of queries in a single transaction, returning [pgo:result()].
+% pgo:query/3 inside a transaction uses the implicit connection from
+% the process dictionary, set by pgo:transaction/2.
 transaction(Pool, Queries) ->
     DecodeOpts = [return_rows_as_maps, column_name_as_atom],
     pgo:transaction(

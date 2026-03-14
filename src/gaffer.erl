@@ -2,29 +2,29 @@
 
 -behaviour(application).
 
-%% Application callbacks
+% Application callbacks
 -export([start/2]).
 -export([stop/1]).
 
-%% Queue management
+% Queue management
 -export([create_queue/1]).
 -export([get_queue/1]).
 -export([update_queue/2]).
 -export([delete_queue/1]).
 -export([list_queues/0]).
 
-%% Enqueueing
+% Enqueueing
 -export([insert/2]).
 -export([insert/3]).
 
-%% Lifecycle
+% Lifecycle
 -export([cancel/2]).
 -export([drain/1]).
 -export([drain/2]).
 -export([flush/1]).
 -export([flush/2]).
 
-%% Querying
+% Querying
 -export([get/2]).
 -export([list/1]).
 -export([delete/2]).
@@ -61,8 +61,8 @@
 -type queue_name() :: atom().
 
 -type timestamp() :: integer() | {erlang:time_unit(), integer()}.
-%% Native time units (erlang:system_time/0) or `{Unit, Value}`.
-%% Drivers normalize to their own precision.
+% Native time units (erlang:system_time/0) or `{Unit, Value}`.
+% Drivers normalize to their own precision.
 
 -type job() :: #{
     id := job_id(),

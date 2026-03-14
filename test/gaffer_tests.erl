@@ -2,7 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
-%% Tests intentionally pass invalid conf to verify validation
+% Tests intentionally pass invalid conf to verify validation
 -eqwalizer({nowarn_function, create_queue_extra_key/1}).
 
 -define(Q, ?FUNCTION_NAME).
@@ -12,7 +12,7 @@
 % Tests that run against all drivers (ETS + Postgres)
 gaffer_test_() ->
     Parallel = [
-        %% Queue management
+        % Queue management
         fun create_queue/1,
         fun get_queue/1,
         fun update_queue/1,
@@ -20,27 +20,27 @@ gaffer_test_() ->
         fun list_queues/1,
         fun create_queue_on_discard/1,
         fun update_queue_on_discard_not_found/1,
-        %% Insert
+        % Insert
         fun insert/1,
         fun insert_with_opts/1,
         fun insert_scheduled/1,
         fun insert_scheduled_microsecond/1,
-        %% Get / list
+        % Get / list
         fun get_job/1,
         fun list_jobs/1,
-        %% Delete
+        % Delete
         fun delete_job/1,
-        %% List filtering
+        % List filtering
         fun list_filter_state/1,
-        %% Insert validation
+        % Insert validation
         fun insert_invalid_max_attempts/1,
-        %% Validation
+        % Validation
         fun create_queue_extra_key/1,
         fun update_queue_extra_key/1,
         fun update_queue_empty/1
     ],
     Sequential = [
-        %% Tests that restart gaffer
+        % Tests that restart gaffer
         fun create_queue_config_mismatch/1
     ],
     [
@@ -53,33 +53,33 @@ gaffer_ets_test_() ->
     harness(
         gaffer_driver_ets,
         [
-            %% Get / list (make_ref IDs not supported in PGO)
+            % Get / list (make_ref IDs not supported in PGO)
             fun get_not_found/1,
-            %% Cancel
+            % Cancel
             fun cancel/1,
             fun cancel_not_found/1,
             fun cancel_scheduled/1,
             fun cancel_executing/1,
             fun cancel_completed_error/1,
             fun cancel_discarded_error/1,
-            %% Complete
+            % Complete
             fun complete/1,
             fun complete_not_found/1,
             fun complete_available_error/1,
-            %% Fail
+            % Fail
             fun fail_retryable/1,
             fun fail_discarded/1,
             fun fail_not_found/1,
             fun fail_error_normalization/1,
-            %% Schedule
+            % Schedule
             fun schedule/1,
             fun schedule_from_failed/1,
             fun schedule_not_found/1,
             fun schedule_available_error/1,
-            %% Claim
+            % Claim
             fun claim/1,
             fun claim_empty/1,
-            %% Prune
+            % Prune
             fun prune/1
         ],
         []

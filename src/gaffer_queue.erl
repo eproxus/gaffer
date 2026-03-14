@@ -1,10 +1,10 @@
 -module(gaffer_queue).
 
-%% Functional API for managing a queue and its jobs.
-%%
-%% This is the only module that calls driver callbacks.
+% Functional API for managing a queue and its jobs.
+%
+% This is the only module that calls driver callbacks.
 
-%% Queue management
+% Queue management
 -export([init/0]).
 -export([teardown/0]).
 -export([create/1]).
@@ -14,17 +14,17 @@
 -export([list/0]).
 -export([lookup/1]).
 
-%% Queue conf
+% Queue conf
 -export([queue_conf_template/0]).
 
-%% Job operations (queue-name based)
+% Job operations (queue-name based)
 -export([insert_job/3]).
 -export([get_job/2]).
 -export([list_jobs/1]).
 -export([cancel_job/2]).
 -export([delete_job/2]).
 
-%% Job operations (driver-explicit, used by gaffer_queue_runner)
+% Job operations (driver-explicit, used by gaffer_queue_runner)
 -export([complete_job/2]).
 -export([fail_job/3]).
 -export([schedule_job/3]).
@@ -50,8 +50,8 @@
     on_discard => gaffer:queue_name()
 }.
 
-%% Dialyzer over-constrains types from internal call sites, making exhaustive
-%% clauses in the state machine appear unreachable.
+% Dialyzer over-constrains types from internal call sites, making exhaustive
+% clauses in the state machine appear unreachable.
 -dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).
 -export_type([driver/0, queue_conf/0]).
 
@@ -234,7 +234,7 @@ prune_jobs(Opts, {Mod, DS}) ->
 %--- Queue conf template & validation (exported) ------------------------------
 
 -spec queue_conf_template() -> map().
-%% erlfmt-ignore
+% erlfmt-ignore
 queue_conf_template() ->
     #{
         global_max_workers => #{type => integer, default => 25},
