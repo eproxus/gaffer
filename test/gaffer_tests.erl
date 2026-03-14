@@ -2,8 +2,12 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
+%% Tests intentionally pass invalid conf to verify validation
+-eqwalizer({nowarn_function, create_queue_extra_key/1}).
+
 %--- Fixture ------------------------------------------------------------------
 
+% TODO: Use this same harness for Postgres too once implemented
 gaffer_test_() ->
     {setup, fun setup/0, fun cleanup/1, fun(Driver) ->
         {inparallel, [
@@ -47,6 +51,10 @@ gaffer_test_() ->
                 fun schedule_available_error/1,
                 %% Insert validation
                 fun insert_invalid_max_attempts/1,
+                %% Validation
+                fun create_queue_extra_key/1,
+                fun update_queue_extra_key/1,
+                fun update_queue_empty/1,
                 %% Claim
                 fun claim/1,
                 fun claim_empty/1,
@@ -85,7 +93,12 @@ create_queue(Driver) ->
 get_queue(Driver) ->
     Conf = #{name => ?FUNCTION_NAME, driver => Driver},
     ok = gaffer:create_queue(Conf),
-    ?assertEqual(Conf, gaffer:get_queue(?FUNCTION_NAME)).
+    Got = gaffer:get_queue(?FUNCTION_NAME),
+    ?assertMatch(#{name := get_queue}, Got),
+    %% Defaults are applied
+    ?assertEqual(25, maps:get(global_max_workers, Got)),
+    ?assertEqual(5, maps:get(max_workers, Got)),
+    ?assertEqual(0, maps:get(priority, Got)).
 
 update_queue(Driver) ->
     ok = gaffer:create_queue(#{
@@ -95,8 +108,7 @@ update_queue(Driver) ->
     }),
     ok = gaffer:update_queue(?FUNCTION_NAME, #{global_max_workers => 10}),
     Updated = gaffer:get_queue(?FUNCTION_NAME),
-    ?assertEqual(10, maps:get(global_max_workers, Updated)),
-    ?assertEqual(Driver, maps:get(driver, Updated)).
+    ?assertEqual(10, maps:get(global_max_workers, Updated)).
 
 delete_queue(Driver) ->
     ok = gaffer:create_queue(
@@ -360,6 +372,30 @@ insert_invalid_max_attempts(Driver) ->
     ?assertError(
         {invalid_job, invalid_max_attempts},
         gaffer:insert(Q, #{task => 1}, #{max_attempts => 0})
+    ).
+
+%--- Validation tests ---------------------------------------------------------
+
+create_queue_extra_key(Driver) ->
+    ?assertError(
+        {invalid_queue_conf, #{extra := [bogus]}},
+        gaffer:create_queue(#{
+            name => ?FUNCTION_NAME, driver => Driver, bogus => 42
+        })
+    ).
+
+update_queue_extra_key(Driver) ->
+    ok = gaffer:create_queue(#{name => ?FUNCTION_NAME, driver => Driver}),
+    ?assertError(
+        {invalid_queue_conf, _},
+        gaffer:update_queue(?FUNCTION_NAME, #{bogus => 42})
+    ).
+
+update_queue_empty(Driver) ->
+    ok = gaffer:create_queue(#{name => ?FUNCTION_NAME, driver => Driver}),
+    ?assertError(
+        {invalid_queue_conf, _},
+        gaffer:update_queue(?FUNCTION_NAME, #{})
     ).
 
 %--- Claim tests --------------------------------------------------------------

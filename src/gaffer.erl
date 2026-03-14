@@ -104,20 +104,7 @@
     at := timestamp()
 }.
 
--type queue_conf() :: #{
-    name := queue_name(),
-    driver => {module(), gaffer_driver:driver_opts()},
-    worker => module(),
-    global_max_workers => pos_integer(),
-    max_workers => pos_integer(),
-    poll_interval => pos_integer() | infinity,
-    shutdown_timeout => pos_integer(),
-    max_attempts => pos_integer(),
-    timeout => pos_integer(),
-    backoff => pos_integer(),
-    priority => non_neg_integer(),
-    on_discard => queue_name()
-}.
+-type queue_conf() :: gaffer_queue:queue_conf().
 
 -type list_opts() :: #{
     queue => queue_name(),

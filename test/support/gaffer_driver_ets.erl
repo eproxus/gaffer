@@ -4,7 +4,8 @@
 
 -export([start/1]).
 -export([stop/1]).
--export([queue_put/2]).
+-export([queue_insert/2]).
+-export([queue_update/3]).
 -export([queue_get/2]).
 -export([queue_delete/2]).
 -export([job_insert/2]).
@@ -41,10 +42,18 @@ stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
 
 %--- Queue config -------------------------------------------------------------
 
--spec queue_put(gaffer:queue_conf(), state()) ->
+-spec queue_insert(gaffer:queue_conf(), state()) ->
     ok.
-queue_put(#{name := Name} = Conf, #{queues := Tab}) ->
+queue_insert(#{name := Name} = Conf, #{queues := Tab}) ->
     true = ets:insert(Tab, {Name, Conf}),
+    ok.
+
+-spec queue_update(gaffer:queue_name(), map(), state()) ->
+    ok.
+queue_update(Name, Updates, #{queues := Tab}) ->
+    [{_, Conf}] = ets:lookup(Tab, Name),
+    Merged = maps:merge(Conf, Updates),
+    true = ets:insert(Tab, {Name, Merged}),
     ok.
 
 -spec queue_get(gaffer:queue_name(), state()) ->

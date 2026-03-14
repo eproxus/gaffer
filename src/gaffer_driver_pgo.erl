@@ -8,7 +8,8 @@
 -export([rollback/2]).
 
 %% Queue config
--export([queue_put/2]).
+-export([queue_insert/2]).
+-export([queue_update/3]).
 -export([queue_get/2]).
 -export([queue_delete/2]).
 
@@ -26,9 +27,6 @@
 
 %% Stubs — remove ignore_xref as each callback gets implemented
 -ignore_xref([
-    queue_put/2,
-    queue_get/2,
-    queue_delete/2,
     job_insert/2,
     job_get/2,
     job_list/2,
@@ -38,9 +36,10 @@
     job_prune/2
 ]).
 
+-type pool_owner() :: driver | user.
 -type state() :: #{
     pool := atom(),
-    owns_pool := boolean()
+    pool_owner := pool_owner()
 }.
 
 -export_type([state/0]).
@@ -49,8 +48,8 @@
 
 -spec start(map()) -> state().
 start(Opts) ->
-    {Pool, OwnsPool} = resolve_pool(Opts),
-    State = #{pool => Pool, owns_pool => OwnsPool},
+    State = start_pool(Opts),
+    #{pool := Pool} = State,
     MigrationOpts = maps:with([uuid_format], Opts),
     ensure_migrations_table(Pool),
     Current = applied_version(Pool),
@@ -60,11 +59,8 @@ start(Opts) ->
     State.
 
 -spec stop(state()) -> ok.
-stop(#{owns_pool := false}) ->
-    ok;
-stop(#{pool := Pool, owns_pool := true}) ->
-    stop_pool(Pool),
-    ok.
+stop(State) ->
+    stop_pool(State).
 
 -spec rollback(TargetVersion :: non_neg_integer(), state()) -> ok.
 rollback(TargetVersion, #{pool := Pool}) ->
@@ -77,18 +73,54 @@ rollback(TargetVersion, #{pool := Pool}) ->
     run_migrations(Pool, fun gaffer_postgres:migrate_down/1, ToRollback),
     ok.
 
-%--- Queue config (stubs) ----------------------------------------------------
+%--- Queue config -------------------------------------------------------------
 
-%% TODO: Catch FK violation on on_discard and raise
-%%       error({on_discard_queue_not_found, Name}).
--spec queue_put(gaffer:queue_conf(), state()) -> no_return().
-queue_put(_Conf, _State) -> error(not_implemented).
+-spec queue_insert(gaffer:queue_conf(), state()) -> ok.
+queue_insert(Conf, #{pool := Pool} = State) ->
+    Encoded = encode_conf(Conf),
+    case queue_transaction(Pool, gaffer_postgres:queue_insert(Encoded), Conf) of
+        [#{num_rows := 1}] ->
+            % Row inserted. New queue created
+            ok;
+        [#{num_rows := 0}] ->
+            % Queue already exists
+            Name = maps:get(name, Conf),
+            Existing = queue_get(Name, State),
+            case Existing =:= Conf of
+                true ->
+                    % We are inserting the same queue
+                    ok;
+                false ->
+                    % Configuration mismatch
+                    error(
+                        {queue_config_mismatch, Name, #{
+                            expected => Conf, stored => Existing
+                        }}
+                    )
+            end
+    end.
 
--spec queue_get(gaffer:queue_name(), state()) -> no_return().
-queue_get(_Name, _State) -> error(not_implemented).
+-spec queue_update(gaffer:queue_name(), map(), state()) -> ok.
+queue_update(Name, Updates, #{pool := Pool}) ->
+    Encoded = encode_conf(Updates),
+    queue_transaction(
+        Pool, gaffer_postgres:queue_update(Name, Encoded), Updates
+    ),
+    ok.
 
--spec queue_delete(gaffer:queue_name(), state()) -> no_return().
-queue_delete(_Name, _State) -> error(not_implemented).
+-spec queue_get(gaffer:queue_name(), state()) -> gaffer:queue_conf().
+queue_get(Name, #{pool := Pool}) ->
+    [#{rows := Rows}] =
+        transaction(Pool, gaffer_postgres:queue_get(Name)),
+    case Rows of
+        [Row] -> row_to_queue_conf(Row);
+        [] -> error({unknown_queue, Name})
+    end.
+
+-spec queue_delete(gaffer:queue_name(), state()) -> ok.
+queue_delete(Name, #{pool := Pool}) ->
+    transaction(Pool, gaffer_postgres:queue_delete(Name)),
+    ok.
 
 %--- Job CRUD (stubs) --------------------------------------------------------
 
@@ -117,19 +149,33 @@ job_prune(_Opts, _State) -> error(not_implemented).
 
 %--- Internal -----------------------------------------------------------------
 
+queue_transaction(Pool, Queries, Conf) ->
+    try
+        transaction(Pool, Queries)
+    catch
+        error:{pgsql_error, #{
+            code := ~"23503",
+            constraint := ~"gaffer_queues_on_discard_fkey"
+        }} ->
+            error({on_discard_queue_not_found, maps:get(on_discard, Conf)})
+    end.
+
+start_pool(#{pool := Pool, start := PgoConfig}) ->
+    {ok, _} = pgo:start_pool(Pool, PgoConfig),
+    #{pool => Pool, pool_owner => driver};
+start_pool(#{pool := Pool}) ->
+    #{pool => Pool, pool_owner => user}.
+
 %% pgo does not expose a public stop_pool API, so we reach into its
 %% internal supervisor. If pgo changes its supervision tree, update here.
-stop_pool(Pool) ->
+stop_pool(#{pool_owner := user}) ->
+    ok;
+stop_pool(#{pool := Pool, pool_owner := driver}) ->
     case whereis(Pool) of
         undefined -> ok;
         Pid -> supervisor:terminate_child(pgo_sup, Pid)
-    end.
-
-resolve_pool(#{pool := Pool, start := PgoConfig}) ->
-    {ok, _} = pgo:start_pool(Pool, PgoConfig),
-    {Pool, true};
-resolve_pool(#{pool := Pool}) ->
-    {Pool, false}.
+    end,
+    ok.
 
 ensure_migrations_table(Pool) ->
     lists:foreach(
@@ -150,16 +196,54 @@ applied_version(Pool) ->
     #{rows := [{Version}]} = pgo:query(SQL, Params, #{pool => Pool}),
     Version.
 
-%% Runs a list of queries in a single transaction.
-%% pgo:query/2 (without pool opt) uses the implicit transaction
-%% connection from the process dictionary, set by pgo:transaction/2.
+%% Runs a list of queries in a single transaction, returning [pgo:result()].
+%% pgo:query/3 inside a transaction uses the implicit connection from
+%% the process dictionary, set by pgo:transaction/2.
 transaction(Pool, Queries) ->
+    DecodeOpts = [return_rows_as_maps, column_name_as_atom],
     pgo:transaction(
         fun() ->
-            lists:foreach(
-                fun({SQL, Params}) -> pgo:query(SQL, Params) end,
-                Queries
-            )
+            [
+                case pgo:query(SQL, Params, #{decode_opts => DecodeOpts}) of
+                    {error, {pgsql_error, Error}} ->
+                        error({pgsql_error, Error});
+                    #{command := _} = Result ->
+                        Result
+                end
+             || {SQL, Params} <:- Queries
+            ]
         end,
         #{pool => Pool}
     ).
+
+encode_conf(Conf) ->
+    Template = gaffer_queue:queue_conf_template(),
+    maps:map(
+        fun(K, V) ->
+            case maps:find(K, Template) of
+                {ok, #{type := atom}} -> atom_to_binary(V);
+                {ok, _} -> V;
+                error when is_atom(V) -> atom_to_binary(V);
+                error -> V
+            end
+        end,
+        Conf
+    ).
+
+row_to_queue_conf(Row) ->
+    Template = gaffer_queue:queue_conf_template(),
+    maps:filtermap(
+        fun
+            (_K, null) -> false;
+            (K, V) -> {true, decode_conf_field(K, V, Template)}
+        end,
+        Row
+    ).
+
+decode_conf_field(K, V, Template) ->
+    case maps:find(K, Template) of
+        {ok, #{type := atom}} -> binary_to_existing_atom(V);
+        {ok, _} -> V;
+        error when is_binary(V) -> binary_to_existing_atom(V);
+        error -> V
+    end.

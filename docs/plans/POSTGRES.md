@@ -405,10 +405,10 @@ migrations work.
 
 ### Milestone 2: Queue config CRUD
 
-- [ ] **Red**: CT `queue_put_get_delete` (calls driver queue callbacks, asserts round-trip)
-- [ ] **Green**: `gaffer_postgres` `queue_put/1`, `queue_get/1`, `queue_delete/1`
-- [ ] **Green**: `gaffer_driver_pgo` queue callbacks, `row_to_queue_conf/2`
-- [ ] **Verify**: `mise run verify` + `mise run test`
+- [x] **Red**: CT `queue_put_get_delete` (calls driver queue callbacks, asserts round-trip)
+- [x] **Green**: `gaffer_postgres` `queue_put/1`, `queue_get/1`, `queue_delete/1`
+- [x] **Green**: `gaffer_driver_pgo` queue callbacks, `row_to_queue_conf/2`
+- [x] **Verify**: `mise run verify` + `mise run test`
 
 ### Milestone 3: Job basics (insert, get, list, delete)
 

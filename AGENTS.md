@@ -33,22 +33,15 @@ Modules:
 * `gaffer_worker` - Worker process executing jobs
 * `gaffer_sup` - Top-level supervisor
 
-### Separation of Concerns / Hierarchy
-
-The encapsulation layers are as follows:
-
-`gaffer` -> `gaffer_queue_runner` -> `gaffer_queue` -> DriverMod.
-
-* `gaffer_queue` has a functional API that can be unit tested with a functional
-  mock driver.
-
 ## Coding Conventions
 
 * Prefer exceptions over tagged return values. If the caller cannot meaningfully
   act on the return value at the call site, an exception should be used.
+* Always comment using single comment characters (%)
 
 ## Changes
 
 After every change
 * Format the code (`rebar3 fmt`)
 * Verify and test the codebase
+* Check that all modified code is covered by tests

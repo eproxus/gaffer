@@ -14,6 +14,9 @@
 -export([list/0]).
 -export([lookup/1]).
 
+%% Queue conf
+-export([queue_conf_template/0]).
+
 %% Job operations (queue-name based)
 -export([insert_job/3]).
 -export([get_job/2]).
@@ -31,10 +34,25 @@
 
 -type driver() :: {module(), gaffer_driver:driver_opts()}.
 
+-type queue_conf() :: #{
+    name := gaffer:queue_name(),
+    driver => {module(), gaffer_driver:driver_opts()},
+    worker => module(),
+    global_max_workers => pos_integer(),
+    max_workers => pos_integer(),
+    poll_interval => pos_integer() | infinity,
+    shutdown_timeout => pos_integer(),
+    max_attempts => pos_integer(),
+    timeout => pos_integer(),
+    backoff => pos_integer(),
+    priority => non_neg_integer(),
+    on_discard => gaffer:queue_name()
+}.
+
 %% Dialyzer over-constrains types from internal call sites, making exhaustive
 %% clauses in the state machine appear unreachable.
 -dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).
--export_type([driver/0]).
+-export_type([driver/0, queue_conf/0]).
 
 %--- Queue management ----------------------------------------------------------
 
@@ -51,11 +69,13 @@ teardown() ->
     ],
     ok.
 
--spec create(gaffer:queue_conf()) -> ok | {error, already_exists}.
+-spec create(queue_conf()) -> ok | {error, already_exists}.
 create(#{name := Name, driver := {Mod, DS} = Driver} = Conf) ->
     case persistent_term:get({gaffer_queue, Name}, undefined) of
         undefined ->
-            Mod:queue_put(Conf, DS),
+            Validated = validate_conf(strip_runtime(Conf)),
+            Persisted = Validated#{name => Name},
+            Mod:queue_insert(Persisted, DS),
             persistent_term:put({gaffer_queue, Name}, Driver),
             {ok, _Pid} = gaffer_sup:start_queue(Name),
             ok;
@@ -90,9 +110,8 @@ get(Name) ->
 
 -spec update(gaffer:queue_name(), map()) -> ok.
 update(Name, Updates) ->
-    Conf = get(Name),
-    Merged = maps:merge(Conf, maps:remove(name, Updates)),
-    call(Name, queue_put, [Merged]).
+    Validated = validate_updates(strip_runtime(Updates)),
+    call(Name, queue_update, [Name, Validated]).
 
 %--- Job operations (queue-name based) -----------------------------------------
 
@@ -205,6 +224,56 @@ claim_jobs(Opts, {Mod, DS}) ->
     non_neg_integer().
 prune_jobs(Opts, {Mod, DS}) ->
     Mod:job_prune(Opts, DS).
+
+%--- Queue conf template & validation (exported) ------------------------------
+
+-spec queue_conf_template() -> map().
+%% erlfmt-ignore
+queue_conf_template() ->
+    #{
+        global_max_workers => #{type => integer, default => 25},
+        max_workers        => #{type => integer, default => 5},
+        poll_interval      => #{type => integer, default => 1000},
+        shutdown_timeout   => #{type => integer, default => 5000},
+        max_attempts       => #{type => integer, default => 3},
+        timeout            => #{type => integer, default => 30000},
+        backoff            => #{type => integer, default => 1000},
+        priority           => #{type => integer, default => 0},
+        on_discard         => #{type => atom}
+    }.
+
+validate_conf(Conf) ->
+    check_extra_keys(Conf),
+    apply_defaults(Conf, queue_conf_template()).
+
+validate_updates(Updates) when map_size(Updates) =:= 0 ->
+    error({invalid_queue_conf, #{extra => []}});
+validate_updates(Updates) ->
+    check_extra_keys(Updates),
+    Updates.
+
+check_extra_keys(Map) ->
+    Template = queue_conf_template(),
+    case maps:keys(maps:without(maps:keys(Template), Map)) of
+        [] -> ok;
+        Extra -> error({invalid_queue_conf, #{extra => Extra}})
+    end.
+
+strip_runtime(Conf) ->
+    maps:without([name, driver, worker], Conf).
+
+apply_defaults(Conf, Template) ->
+    maps:fold(
+        fun(K, Spec, Acc) ->
+            case {maps:is_key(K, Acc), maps:get(default, Spec, undefined)} of
+                {false, undefined} -> Acc;
+                {false, Default} -> Acc#{K => Default};
+                {true, _} -> Acc
+            end
+        end,
+        Conf,
+        Template
+    ).
 
 %--- Job construction (private) -----------------------------------------------
 

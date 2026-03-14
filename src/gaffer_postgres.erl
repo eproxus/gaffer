@@ -12,6 +12,12 @@
 -export([ensure_migrations_table/0]).
 -export([applied_version/0]).
 
+%% Queue CRUD
+-export([queue_insert/1]).
+-export([queue_update/2]).
+-export([queue_get/1]).
+-export([queue_delete/1]).
+
 %--- Migrations ---------------------------------------------------------------
 
 -spec migrations(Opts :: map()) ->
@@ -31,7 +37,6 @@ migrations(Opts) ->
                 ~"""
                 CREATE TABLE gaffer_queues (
                     name               TEXT PRIMARY KEY,
-                    worker             TEXT,
                     global_max_workers INTEGER,
                     max_workers        INTEGER,
                     poll_interval      INTEGER,
@@ -39,7 +44,7 @@ migrations(Opts) ->
                     max_attempts       INTEGER,
                     timeout            INTEGER,
                     backoff            INTEGER,
-                    priority           INTEGER DEFAULT 0,
+                    priority           INTEGER,
                     on_discard         TEXT REFERENCES gaffer_queues(name)
                 )
                 """,
@@ -125,7 +130,57 @@ ensure_migrations_table() ->
 applied_version() ->
     [{~"SELECT version FROM gaffer_schema_version", []}].
 
+%--- Queue CRUD ---------------------------------------------------------------
+
+-spec queue_insert(map()) -> [{binary(), list()}].
+queue_insert(Conf) ->
+    {Cols, Phs, Vals} = columns_and_values(Conf),
+    SQL = iolist_to_binary([
+        ~"INSERT INTO gaffer_queues (",
+        lists:join(~", ", Cols),
+        ~") VALUES (",
+        lists:join(~", ", Phs),
+        ~") ON CONFLICT (name) DO NOTHING"
+    ]),
+    [{SQL, Vals}].
+
+-spec queue_update(gaffer:queue_name(), map()) -> [{binary(), list()}].
+queue_update(Name, Changes) ->
+    {Cols, Phs, Vals} = columns_and_values(Changes),
+    Sets = lists:join(~", ", [
+        <<C/binary, " = ", P/binary>>
+     || {C, P} <:- lists:zip(Cols, Phs)
+    ]),
+    N = length(Vals) + 1,
+    SQL = iolist_to_binary([
+        ~"UPDATE gaffer_queues SET ",
+        Sets,
+        ~" WHERE name = $",
+        integer_to_binary(N)
+    ]),
+    [{SQL, Vals ++ [atom_to_binary(Name)]}].
+
+-spec queue_get(gaffer:queue_name()) -> [{binary(), list()}].
+queue_get(Name) ->
+    [{~"SELECT * FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
+
+-spec queue_delete(gaffer:queue_name()) -> [{binary(), list()}].
+queue_delete(Name) ->
+    [{~"DELETE FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
+
 %--- Internal -----------------------------------------------------------------
+
+-spec columns_and_values(map()) ->
+    {Columns :: [binary()], Placeholders :: [binary()], Values :: [term()]}.
+columns_and_values(Map) ->
+    Pairs = maps:to_list(Map),
+    Cols = [atom_to_binary(K) || {K, _} <:- Pairs],
+    Vals = [V || {_, V} <:- Pairs],
+    Phs = [
+        iolist_to_binary([~"$", integer_to_binary(I)])
+     || I <:- lists:seq(1, length(Cols))
+    ],
+    {Cols, Phs, Vals}.
 
 queries(SQLs) ->
     [{SQL, []} || SQL <:- SQLs].
