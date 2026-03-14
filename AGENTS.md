@@ -10,10 +10,15 @@ Gaffer is a persistent job queue implemented in Erlang/OTP.
 
 ```sh
 mise run verify             # Run all verification checks
-mise run test               # Run all tests
+mise run test               # Run all tests (requires Docker for CT)
 rebar3 fmt                  # Format code
-elp lint --diagnostic-filter <code> --apply-fix # Apply specific fixes
+rebar3 eunit --module=gaffer_tests  # Run a single eunit module
+rebar3 ct --suite=gaffer_driver_pgo_SUITE  # Run a single CT suite
+elp lint --diagnostic-filter W0023 --apply-fix  # Apply a specific elp fix by code
 ```
+
+CT tests use `docker compose up -d --wait` / `docker compose down` automatically
+via rebar3 hooks — Docker must be running.
 
 ## Architecture
 
@@ -23,7 +28,10 @@ Modules:
 * `gaffer_queue` - Functional queue implementation
 * `gaffer_queue_runner` - Process managing a queue and its jobs (using `gaffer_queue`)
 * `gaffer_driver` - Storage-agnostic driver behaviour
+* `gaffer_driver_pgo` - Postgres driver implementation (using `pgo`, test-only dep)
+* `gaffer_postgres` - Postgres SQL query builder / deserializer
 * `gaffer_worker` - Worker process executing jobs
+* `gaffer_sup` - Top-level supervisor
 
 ### Separation of Concerns / Hierarchy
 
