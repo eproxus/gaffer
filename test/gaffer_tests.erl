@@ -9,20 +9,27 @@
 
 % Tests that run against all drivers (ETS + Postgres)
 gaffer_test_() ->
-    Tests = [
+    Parallel = [
         %% Queue management
         fun create_queue/1,
         fun get_queue/1,
         fun update_queue/1,
         fun delete_queue/1,
         fun list_queues/1,
+        fun create_queue_on_discard/1,
+        fun update_queue_on_discard_not_found/1,
         %% Insert
         fun insert/1,
         fun insert_with_opts/1,
         fun insert_scheduled/1,
+        fun insert_scheduled_microsecond/1,
         %% Get / list
         fun get_job/1,
         fun list_jobs/1,
+        %% Delete
+        fun delete_job/1,
+        %% List filtering
+        fun list_filter_state/1,
         %% Insert validation
         fun insert_invalid_max_attempts/1,
         %% Validation
@@ -30,56 +37,79 @@ gaffer_test_() ->
         fun update_queue_extra_key/1,
         fun update_queue_empty/1
     ],
+    Sequential = [
+        %% Tests that restart gaffer
+        fun create_queue_config_mismatch/1
+    ],
     [
-        harness(gaffer_driver_ets, Tests),
-        harness(gaffer_driver_pgo, Tests)
+        harness(gaffer_driver_ets, Parallel, Sequential),
+        harness(gaffer_driver_pgo, Parallel, Sequential)
     ].
 
 % Tests that run against ETS only (to be migrated into gaffer_test_/0)
 gaffer_ets_test_() ->
-    {setup, fun() -> setup(gaffer_driver_ets) end, fun teardown/1, fun(
-        #{driver := Driver}
-    ) ->
-        {inparallel, [
-            {with, Driver, [T]}
-         || T <:- [
-                %% Get / list (make_ref IDs not supported in PGO)
-                fun get_not_found/1,
-                %% Cancel
-                fun cancel/1,
-                fun cancel_not_found/1,
-                fun cancel_scheduled/1,
-                fun cancel_executing/1,
-                fun cancel_completed_error/1,
-                fun cancel_discarded_error/1,
-                %% Complete
-                fun complete/1,
-                fun complete_not_found/1,
-                fun complete_available_error/1,
-                %% Fail
-                fun fail_retryable/1,
-                fun fail_discarded/1,
-                fun fail_not_found/1,
-                fun fail_error_normalization/1,
-                %% Schedule
-                fun schedule/1,
-                fun schedule_from_failed/1,
-                fun schedule_not_found/1,
-                fun schedule_available_error/1,
-                %% Claim
-                fun claim/1,
-                fun claim_empty/1,
-                %% Prune
-                fun prune/1
-            ]
-        ]}
-    end}.
+    harness(
+        gaffer_driver_ets,
+        [
+            %% Get / list (make_ref IDs not supported in PGO)
+            fun get_not_found/1,
+            %% Cancel
+            fun cancel/1,
+            fun cancel_not_found/1,
+            fun cancel_scheduled/1,
+            fun cancel_executing/1,
+            fun cancel_completed_error/1,
+            fun cancel_discarded_error/1,
+            %% Complete
+            fun complete/1,
+            fun complete_not_found/1,
+            fun complete_available_error/1,
+            %% Fail
+            fun fail_retryable/1,
+            fun fail_discarded/1,
+            fun fail_not_found/1,
+            fun fail_error_normalization/1,
+            %% Schedule
+            fun schedule/1,
+            fun schedule_from_failed/1,
+            fun schedule_not_found/1,
+            fun schedule_available_error/1,
+            %% Claim
+            fun claim/1,
+            fun claim_empty/1,
+            %% Prune
+            fun prune/1
+        ],
+        []
+    ).
 
-harness(DriverMod, Tests) ->
+% PGO-specific tests (driver internals, UUID IDs)
+gaffer_pgo_test_() ->
+    harness(
+        gaffer_driver_pgo,
+        [
+            % Calls driver directly to test upsert behavior
+            fun pgo_idempotent_create/1,
+            % Use <<0:128>> UUID; ETS uses make_ref() IDs
+            fun pgo_get_not_found/1,
+            fun pgo_delete_not_found/1
+        ],
+        [
+            % Driver migration/startup internals (mutate shared schema)
+            fun pgo_migration_idempotent/1,
+            fun pgo_migration_rollback/1,
+            fun pgo_start_with_new_pool/1
+        ]
+    ).
+
+harness(DriverMod, Parallel, Sequential) ->
     {setup, fun() -> setup(DriverMod) end, fun teardown/1, fun(
         #{driver := Driver}
     ) ->
-        {inparallel, [{with, Driver, [T]} || T <:- Tests]}
+        {inorder, [
+            {inparallel, [{with, Driver, [T]} || T <:- Parallel]},
+            [{with, Driver, [T]} || T <:- Sequential]
+        ]}
     end}.
 
 %--- Setup / teardown ---------------------------------------------------------
@@ -117,8 +147,7 @@ teardown_driver({gaffer_driver_pgo, DS}) ->
 %--- PGO helpers --------------------------------------------------------------
 
 pgo_pool_config() ->
-    {ok, [PgConfig]} = file:consult("config/test.config"),
-    {postgres, Props} = PgConfig,
+    {ok, Props} = application:get_env(gaffer, postgres),
     Config = maps:with(
         [host, port, database, user, password],
         maps:from_list(Props)
@@ -199,6 +228,53 @@ list_queues(Driver) ->
     ?assert(lists:member(list_queues_1, Names)),
     ?assert(lists:member(list_queues_2, Names)).
 
+create_queue_on_discard(Driver) ->
+    ok = gaffer:create_queue(
+        #{name => dead_letter, driver => Driver}
+    ),
+    ok = gaffer:create_queue(#{
+        name => on_discard_source,
+        driver => Driver,
+        on_discard => dead_letter
+    }),
+    ?assertMatch(
+        #{on_discard := dead_letter},
+        gaffer:get_queue(on_discard_source)
+    ),
+    ?assertError(
+        {on_discard_queue_not_found, nonexistent},
+        gaffer:create_queue(#{
+            name => bad_queue,
+            driver => Driver,
+            on_discard => nonexistent
+        })
+    ).
+
+update_queue_on_discard_not_found(Driver) ->
+    ok = gaffer:create_queue(
+        #{name => ?FUNCTION_NAME, driver => Driver}
+    ),
+    ?assertError(
+        {on_discard_queue_not_found, nonexistent},
+        gaffer:update_queue(?FUNCTION_NAME, #{on_discard => nonexistent})
+    ).
+
+create_queue_config_mismatch(Driver) ->
+    Q = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(#{
+        name => Q, driver => Driver, max_workers => 3
+    }),
+    % Simulate a second node: restart gaffer to clear persistent_term
+    % while keeping driver state intact
+    application:stop(gaffer),
+    {ok, _} = application:ensure_all_started(gaffer),
+    ?assertError(
+        {queue_config_mismatch, create_queue_config_mismatch, _},
+        gaffer:create_queue(#{
+            name => Q, driver => Driver, max_workers => 99
+        })
+    ).
+
 %--- Insert tests -------------------------------------------------------------
 
 insert(Driver) ->
@@ -239,6 +315,13 @@ insert_scheduled(Driver) ->
     Job = gaffer:insert(Q, #{task => 1}, #{scheduled_at => At}),
     ?assertMatch(#{state := scheduled, scheduled_at := _}, Job).
 
+insert_scheduled_microsecond(Driver) ->
+    Q = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    At = {microsecond, erlang:system_time(microsecond) + 60_000_000},
+    Job = gaffer:insert(Q, #{task => 1}, #{scheduled_at => At}),
+    ?assertMatch(#{state := scheduled, scheduled_at := _}, Job).
+
 %--- Get / list tests ---------------------------------------------------------
 
 get_job(Driver) ->
@@ -266,6 +349,22 @@ list_jobs(Driver) ->
     _ = gaffer:insert(Q, #{task => 2}),
     Jobs = gaffer:list(#{queue => Q}),
     ?assertEqual(2, length(Jobs)).
+
+list_filter_state(Driver) ->
+    Q = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    _ = gaffer:insert(Q, #{task => 1}),
+    ?assertEqual(1, length(gaffer:list(#{queue => Q, state => available}))),
+    ?assertEqual(0, length(gaffer:list(#{queue => Q, state => completed}))).
+
+%--- Delete tests -------------------------------------------------------------
+
+delete_job(Driver) ->
+    Q = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(Q, #{task => 1}),
+    ok = gaffer:delete(Q, Id),
+    ?assertError({unknown_job, _}, gaffer:get(Q, Id)).
 
 %--- Cancel tests -------------------------------------------------------------
 
@@ -447,7 +546,7 @@ schedule_available_error(Driver) ->
         gaffer_queue_runner:schedule(Q, Id, FutureAt)
     ).
 
-%--- Insert validation tests --------------------------------------------------
+%--- Validation tests ---------------------------------------------------------
 
 insert_invalid_max_attempts(Driver) ->
     Q = ?FUNCTION_NAME,
@@ -456,8 +555,6 @@ insert_invalid_max_attempts(Driver) ->
         {invalid_job, invalid_max_attempts},
         gaffer:insert(Q, #{task => 1}, #{max_attempts => 0})
     ).
-
-%--- Validation tests ---------------------------------------------------------
 
 create_queue_extra_key(Driver) ->
     ?assertError(
@@ -511,7 +608,73 @@ prune(Driver) ->
     Count = gaffer_queue_runner:prune(Q, #{states => [cancelled]}),
     ?assert(Count >= 1).
 
+%--- PGO-specific tests -------------------------------------------------------
+
+pgo_migration_idempotent(_Driver) ->
+    State = gaffer_driver_pgo:start(#{pool => test_pool}),
+    State2 = gaffer_driver_pgo:start(#{pool => test_pool}),
+    ?assertMatch(#{pool := test_pool}, State),
+    ?assertMatch(#{pool := test_pool}, State2),
+    ?assert(table_exists(test_pool, ~"gaffer_queues")),
+    ?assert(table_exists(test_pool, ~"gaffer_jobs")).
+
+pgo_migration_rollback(_Driver) ->
+    State = gaffer_driver_pgo:start(#{pool => test_pool}),
+    ?assert(table_exists(test_pool, ~"gaffer_queues")),
+    ?assert(table_exists(test_pool, ~"gaffer_jobs")),
+    ok = gaffer_driver_pgo:rollback(0, State),
+    ?assertNot(table_exists(test_pool, ~"gaffer_queues")),
+    ?assertNot(table_exists(test_pool, ~"gaffer_jobs")),
+    #{rows := Rows} = pgo:query(
+        ~"SELECT version FROM gaffer_schema_version",
+        [],
+        #{pool => test_pool}
+    ),
+    ?assertEqual([{0}], Rows).
+
+pgo_start_with_new_pool(_Driver) ->
+    PoolConfig = pgo_pool_config(),
+    stop_pool(my_started_pool),
+    State = gaffer_driver_pgo:start(#{
+        pool => my_started_pool, start => PoolConfig
+    }),
+    try
+        ?assert(table_exists(my_started_pool, ~"gaffer_queues")),
+        ?assert(table_exists(my_started_pool, ~"gaffer_jobs"))
+    after
+        gaffer_driver_pgo:stop(State)
+    end.
+
+pgo_idempotent_create(Driver) ->
+    Q = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(#{name => Q, driver => Driver, max_workers => 3}),
+    % Bypass persistent_term and insert the same config via driver directly
+    {gaffer_driver_pgo, DS} = Driver,
+    Persisted = gaffer:get_queue(Q),
+    ?assertEqual(ok, gaffer_driver_pgo:queue_insert(Persisted, DS)).
+
+pgo_get_not_found(Driver) ->
+    Q = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ?assertError({unknown_job, _}, gaffer:get(Q, <<0:128>>)).
+
+pgo_delete_not_found(Driver) ->
+    Q = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ?assertError({unknown_job, _}, gaffer:delete(Q, <<0:128>>)).
+
 %--- Helpers ------------------------------------------------------------------
+
+table_exists(Pool, TableName) ->
+    #{rows := Rows} = pgo:query(
+        ~"""
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = $1
+        """,
+        [TableName],
+        #{pool => Pool}
+    ),
+    Rows =/= [].
 
 atomize_keys(Map) when is_map(Map) ->
     maps:fold(

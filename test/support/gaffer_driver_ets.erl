@@ -45,14 +45,27 @@ stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
 -spec queue_insert(gaffer:queue_conf(), state()) ->
     ok.
 queue_insert(#{name := Name} = Conf, #{queues := Tab}) ->
-    true = ets:insert(Tab, {Name, Conf}),
-    ok.
+    validate_on_discard(Conf, Tab),
+    case ets:lookup(Tab, Name) of
+        [] ->
+            true = ets:insert(Tab, {Name, Conf}),
+            ok;
+        [{_, Conf}] ->
+            ok;
+        [{_, Existing}] ->
+            error(
+                {queue_config_mismatch, Name, #{
+                    expected => Conf, stored => Existing
+                }}
+            )
+    end.
 
 -spec queue_update(gaffer:queue_name(), map(), state()) ->
     ok.
 queue_update(Name, Updates, #{queues := Tab}) ->
     [{_, Conf}] = ets:lookup(Tab, Name),
     Merged = maps:merge(Conf, Updates),
+    validate_on_discard(Merged, Tab),
     true = ets:insert(Tab, {Name, Merged}),
     ok.
 
@@ -177,6 +190,14 @@ job_prune(Opts, #{queued := Queued, locked := Locked}) ->
     Count.
 
 %--- Internal -----------------------------------------------------------------
+
+validate_on_discard(#{on_discard := Target}, Tab) ->
+    case ets:member(Tab, Target) of
+        true -> ok;
+        false -> error({on_discard_queue_not_found, Target})
+    end;
+validate_on_discard(_, _Tab) ->
+    ok.
 
 apply_global_max(undefined, Limit, _Locked, _Queues) ->
     Limit;
