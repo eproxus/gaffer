@@ -5,6 +5,8 @@
 %% Tests intentionally pass invalid conf to verify validation
 -eqwalizer({nowarn_function, create_queue_extra_key/1}).
 
+-define(Q, ?FUNCTION_NAME).
+
 %--- Fixtures -----------------------------------------------------------------
 
 % Tests that run against all drivers (ETS + Postgres)
@@ -169,18 +171,18 @@ stop_pool(Pool) ->
 %--- Queue management tests ---------------------------------------------------
 
 create_queue(Driver) ->
-    Conf = #{name => ?FUNCTION_NAME, driver => Driver},
+    Conf = #{name => ?Q, driver => Driver},
     ?assertEqual(ok, gaffer:create_queue(Conf)),
     ?assertMatch(
         #{name := create_queue},
-        gaffer:get_queue(?FUNCTION_NAME)
+        gaffer:get_queue(?Q)
     ),
     ?assertEqual(
         {error, already_exists}, gaffer:create_queue(Conf)
     ).
 
 get_queue(Driver) ->
-    Conf = #{name => ?FUNCTION_NAME, driver => Driver},
+    Conf = #{name => ?Q, driver => Driver},
     ok = gaffer:create_queue(Conf),
     ?assertMatch(
         #{
@@ -189,31 +191,31 @@ get_queue(Driver) ->
             max_workers := 5,
             priority := 0
         },
-        gaffer:get_queue(?FUNCTION_NAME)
+        gaffer:get_queue(?Q)
     ).
 
 update_queue(Driver) ->
     ok = gaffer:create_queue(#{
-        name => ?FUNCTION_NAME,
+        name => ?Q,
         driver => Driver,
         global_max_workers => 5
     }),
-    ok = gaffer:update_queue(?FUNCTION_NAME, #{global_max_workers => 10}),
-    Updated = gaffer:get_queue(?FUNCTION_NAME),
+    ok = gaffer:update_queue(?Q, #{global_max_workers => 10}),
+    Updated = gaffer:get_queue(?Q),
     ?assertEqual(10, maps:get(global_max_workers, Updated)).
 
 delete_queue(Driver) ->
     ok = gaffer:create_queue(
-        #{name => ?FUNCTION_NAME, driver => Driver}
+        #{name => ?Q, driver => Driver}
     ),
-    ?assertEqual(ok, gaffer:delete_queue(?FUNCTION_NAME)),
+    ?assertEqual(ok, gaffer:delete_queue(?Q)),
     ?assertError(
         {unknown_queue, delete_queue},
-        gaffer:get_queue(?FUNCTION_NAME)
+        gaffer:get_queue(?Q)
     ),
     ?assertError(
         {unknown_queue, delete_queue},
-        gaffer:delete_queue(?FUNCTION_NAME)
+        gaffer:delete_queue(?Q)
     ).
 
 list_queues(Driver) ->
@@ -252,17 +254,16 @@ create_queue_on_discard(Driver) ->
 
 update_queue_on_discard_not_found(Driver) ->
     ok = gaffer:create_queue(
-        #{name => ?FUNCTION_NAME, driver => Driver}
+        #{name => ?Q, driver => Driver}
     ),
     ?assertError(
         {on_discard_queue_not_found, nonexistent},
-        gaffer:update_queue(?FUNCTION_NAME, #{on_discard => nonexistent})
+        gaffer:update_queue(?Q, #{on_discard => nonexistent})
     ).
 
 create_queue_config_mismatch(Driver) ->
-    Q = ?FUNCTION_NAME,
     ok = gaffer:create_queue(#{
-        name => Q, driver => Driver, max_workers => 3
+        name => ?Q, driver => Driver, max_workers => 3
     }),
     % Simulate a second node: restart gaffer to clear persistent_term
     % while keeping driver state intact
@@ -271,16 +272,15 @@ create_queue_config_mismatch(Driver) ->
     ?assertError(
         {queue_config_mismatch, create_queue_config_mismatch, _},
         gaffer:create_queue(#{
-            name => Q, driver => Driver, max_workers => 99
+            name => ?Q, driver => Driver, max_workers => 99
         })
     ).
 
 %--- Insert tests -------------------------------------------------------------
 
 insert(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    Job = gaffer:insert(Q, #{task => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    Job = gaffer:insert(?Q, #{task => 1}),
     ?assertMatch(
         #{
             queue := insert,
@@ -294,10 +294,9 @@ insert(Driver) ->
     ).
 
 insert_with_opts(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     Opts = #{priority => 5, max_attempts => 10},
-    Job = gaffer:insert(Q, #{task => 1}, Opts),
+    Job = gaffer:insert(?Q, #{task => 1}, Opts),
     ?assertMatch(
         #{
             queue := insert_with_opts,
@@ -309,157 +308,140 @@ insert_with_opts(Driver) ->
     ).
 
 insert_scheduled(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     At = erlang:system_time() + erlang:convert_time_unit(3600, second, native),
-    Job = gaffer:insert(Q, #{task => 1}, #{scheduled_at => At}),
+    Job = gaffer:insert(?Q, #{task => 1}, #{scheduled_at => At}),
     ?assertMatch(#{state := scheduled, scheduled_at := _}, Job).
 
 insert_scheduled_microsecond(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     At = {microsecond, erlang:system_time(microsecond) + 60_000_000},
-    Job = gaffer:insert(Q, #{task => 1}, #{scheduled_at => At}),
+    Job = gaffer:insert(?Q, #{task => 1}, #{scheduled_at => At}),
     ?assertMatch(#{state := scheduled, scheduled_at := _}, Job).
 
 %--- Get / list tests ---------------------------------------------------------
 
 get_job(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    Job = gaffer:get(Q, Id),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    Job = gaffer:get(?Q, Id),
     ?assertMatch(
         #{id := Id, queue := get_job, payload := #{task := 1}},
         atomize_keys(Job)
     ).
 
 get_not_found(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertError(
         {unknown_job, _},
-        gaffer:get(Q, make_ref())
+        gaffer:get(?Q, make_ref())
     ).
 
 list_jobs(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    _ = gaffer:insert(Q, #{task => 1}),
-    _ = gaffer:insert(Q, #{task => 2}),
-    Jobs = gaffer:list(#{queue => Q}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    _ = gaffer:insert(?Q, #{task => 2}),
+    Jobs = gaffer:list(#{queue => ?Q}),
     ?assertEqual(2, length(Jobs)).
 
 list_filter_state(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    _ = gaffer:insert(Q, #{task => 1}),
-    ?assertEqual(1, length(gaffer:list(#{queue => Q, state => available}))),
-    ?assertEqual(0, length(gaffer:list(#{queue => Q, state => completed}))).
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    ?assertEqual(1, length(gaffer:list(#{queue => ?Q, state => available}))),
+    ?assertEqual(0, length(gaffer:list(#{queue => ?Q, state => completed}))).
 
 %--- Delete tests -------------------------------------------------------------
 
 delete_job(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    ok = gaffer:delete(Q, Id),
-    ?assertError({unknown_job, _}, gaffer:get(Q, Id)).
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    ok = gaffer:delete(?Q, Id),
+    ?assertError({unknown_job, _}, gaffer:get(?Q, Id)).
 
 %--- Cancel tests -------------------------------------------------------------
 
 cancel(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    {ok, Job} = gaffer:cancel(Q, Id),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    {ok, Job} = gaffer:cancel(?Q, Id),
     ?assertMatch(#{state := cancelled, cancelled_at := _, id := Id}, Job).
 
 cancel_not_found(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertError(
         {unknown_job, _},
-        gaffer:cancel(Q, make_ref())
+        gaffer:cancel(?Q, make_ref())
     ).
 
 cancel_scheduled(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     At = erlang:system_time() + erlang:convert_time_unit(3600, second, native),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}, #{scheduled_at => At}),
-    {ok, Cancelled} = gaffer:cancel(Q, Id),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{scheduled_at => At}),
+    {ok, Cancelled} = gaffer:cancel(?Q, Id),
     ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled).
 
 cancel_executing(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
-    {ok, Cancelled} = gaffer:cancel(Q, Id),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    {ok, Cancelled} = gaffer:cancel(?Q, Id),
     ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled).
 
 cancel_completed_error(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
-    {ok, _} = gaffer_queue_runner:complete(Q, Id),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    {ok, _} = gaffer_queue_runner:complete(?Q, Id),
     ?assertMatch(
         {error, {invalid_transition, {completed, cancelled}}},
-        gaffer:cancel(Q, Id)
+        gaffer:cancel(?Q, Id)
     ).
 
 cancel_discarded_error(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}, #{max_attempts => 1}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
     E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(Q, Id, E),
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
     ?assertMatch(
         {error, {invalid_transition, {discarded, cancelled}}},
-        gaffer:cancel(Q, Id)
+        gaffer:cancel(?Q, Id)
     ).
 
 %--- Complete tests -----------------------------------------------------------
 
 complete(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
-    {ok, Completed} = gaffer_queue_runner:complete(Q, Id),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    {ok, Completed} = gaffer_queue_runner:complete(?Q, Id),
     ?assertMatch(
         #{state := completed, attempt := 1, completed_at := _}, Completed
     ).
 
 complete_not_found(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertEqual(
         {error, not_found},
-        gaffer_queue_runner:complete(Q, make_ref())
+        gaffer_queue_runner:complete(?Q, make_ref())
     ).
 
 complete_available_error(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
     ?assertMatch(
         {error, {invalid_transition, {available, completed}}},
-        gaffer_queue_runner:complete(Q, Id)
+        gaffer_queue_runner:complete(?Q, Id)
     ).
 
 %--- Fail tests ---------------------------------------------------------------
 
 fail_retryable(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}, #{max_attempts => 3}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
     E = #{attempt => 1, error => timeout, at => erlang:system_time()},
-    {ok, Failed} = gaffer_queue_runner:fail(Q, Id, E),
+    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
     ?assertMatch(
         #{
             state := failed,
@@ -470,32 +452,29 @@ fail_retryable(Driver) ->
     ).
 
 fail_discarded(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}, #{max_attempts => 1}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
     E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, Discarded} = gaffer_queue_runner:fail(Q, Id, E),
+    {ok, Discarded} = gaffer_queue_runner:fail(?Q, Id, E),
     ?assertMatch(#{state := discarded, discarded_at := _}, Discarded).
 
 fail_not_found(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     E = #{attempt => 1, error => boom, at => erlang:system_time()},
     ?assertEqual(
         {error, not_found},
-        gaffer_queue_runner:fail(Q, make_ref(), E)
+        gaffer_queue_runner:fail(?Q, make_ref(), E)
     ).
 
 fail_error_normalization(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}, #{max_attempts => 3}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
     AtUs = erlang:system_time(microsecond),
     ErrorInfo = [#{reason => {badrpc, nodedown}}],
     E = #{attempt => 1, error => ErrorInfo, at => {microsecond, AtUs}},
-    {ok, Failed} = gaffer_queue_runner:fail(Q, Id, E),
+    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
     ?assertMatch(
         #{errors := [#{attempt := 1, error := ErrorInfo, at := AtUs}]},
         Failed
@@ -504,108 +483,100 @@ fail_error_normalization(Driver) ->
 %--- Schedule tests -----------------------------------------------------------
 
 schedule(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
     FutureAt =
         erlang:system_time() + erlang:convert_time_unit(60, second, native),
-    {ok, Scheduled} = gaffer_queue_runner:schedule(Q, Id, FutureAt),
+    {ok, Scheduled} = gaffer_queue_runner:schedule(?Q, Id, FutureAt),
     ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
 
 schedule_from_failed(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}, #{max_attempts => 3}),
-    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
     E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(Q, Id, E),
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
     FutureAt =
         erlang:system_time() + erlang:convert_time_unit(60, second, native),
-    {ok, Scheduled} = gaffer_queue_runner:schedule(Q, Id, FutureAt),
+    {ok, Scheduled} = gaffer_queue_runner:schedule(?Q, Id, FutureAt),
     ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
 
 schedule_not_found(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     FutureAt =
         erlang:system_time() + erlang:convert_time_unit(60, second, native),
     ?assertEqual(
         {error, not_found},
-        gaffer_queue_runner:schedule(Q, make_ref(), FutureAt)
+        gaffer_queue_runner:schedule(?Q, make_ref(), FutureAt)
     ).
 
 schedule_available_error(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
     FutureAt =
         erlang:system_time() + erlang:convert_time_unit(60, second, native),
     ?assertMatch(
         {error, {invalid_transition, {available, scheduled}}},
-        gaffer_queue_runner:schedule(Q, Id, FutureAt)
+        gaffer_queue_runner:schedule(?Q, Id, FutureAt)
     ).
 
 %--- Validation tests ---------------------------------------------------------
 
 insert_invalid_max_attempts(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertError(
         {invalid_job, invalid_max_attempts},
-        gaffer:insert(Q, #{task => 1}, #{max_attempts => 0})
+        gaffer:insert(?Q, #{task => 1}, #{max_attempts => 0})
     ).
 
 create_queue_extra_key(Driver) ->
     ?assertError(
         {invalid_queue_conf, #{extra := [bogus]}},
         gaffer:create_queue(#{
-            name => ?FUNCTION_NAME, driver => Driver, bogus => 42
+            name => ?Q, driver => Driver, bogus => 42
         })
     ).
 
 update_queue_extra_key(Driver) ->
-    ok = gaffer:create_queue(#{name => ?FUNCTION_NAME, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertError(
         {invalid_queue_conf, _},
-        gaffer:update_queue(?FUNCTION_NAME, #{bogus => 42})
+        gaffer:update_queue(?Q, #{bogus => 42})
     ).
 
 update_queue_empty(Driver) ->
-    ok = gaffer:create_queue(#{name => ?FUNCTION_NAME, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertError(
         {invalid_queue_conf, _},
-        gaffer:update_queue(?FUNCTION_NAME, #{})
+        gaffer:update_queue(?Q, #{})
     ).
 
 %--- Claim tests --------------------------------------------------------------
 
 claim(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    _ = gaffer:insert(Q, #{task => 1}),
-    _ = gaffer:insert(Q, #{task => 2}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    _ = gaffer:insert(?Q, #{task => 2}),
     ?assertMatch(
         [#{state := executing, attempted_at := _}],
-        gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1})
+        gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1})
     ).
 
 claim_empty(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertEqual(
         [],
-        gaffer_queue_runner:claim(Q, #{queue => Q, limit => 5})
+        gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 5})
     ).
 
 %--- Prune tests --------------------------------------------------------------
 
 prune(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    {ok, _} = gaffer:cancel(Q, Id),
-    Count = gaffer_queue_runner:prune(Q, #{states => [cancelled]}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, Id),
+    Count = gaffer_queue_runner:prune(?Q, #{states => [cancelled]}),
     ?assert(Count >= 1).
 
 %--- PGO-specific tests -------------------------------------------------------
@@ -646,22 +617,19 @@ pgo_start_with_new_pool(_Driver) ->
     end.
 
 pgo_idempotent_create(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver, max_workers => 3}),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver, max_workers => 3}),
     % Bypass persistent_term and insert the same config via driver directly
     {gaffer_driver_pgo, DS} = Driver,
-    Persisted = gaffer:get_queue(Q),
+    Persisted = gaffer:get_queue(?Q),
     ?assertEqual(ok, gaffer_driver_pgo:queue_insert(Persisted, DS)).
 
 pgo_get_not_found(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    ?assertError({unknown_job, _}, gaffer:get(Q, <<0:128>>)).
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    ?assertError({unknown_job, _}, gaffer:get(?Q, <<0:128>>)).
 
 pgo_delete_not_found(Driver) ->
-    Q = ?FUNCTION_NAME,
-    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    ?assertError({unknown_job, _}, gaffer:delete(Q, <<0:128>>)).
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    ?assertError({unknown_job, _}, gaffer:delete(?Q, <<0:128>>)).
 
 %--- Helpers ------------------------------------------------------------------
 
