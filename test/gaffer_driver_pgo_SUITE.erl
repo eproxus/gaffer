@@ -222,7 +222,7 @@ insert_and_get_test(_Config) ->
     Payload = #{task => 1, data => ~"hello"},
     Job = gaffer:insert(Queue, Payload),
     ?assertMatch(#{id := _, state := available}, Job),
-    {ok, Got} = gaffer:get(Queue, maps:get(id, Job)),
+    Got = gaffer:get(Queue, maps:get(id, Job)),
     ?assertEqual(maps:get(id, Job), maps:get(id, Got)),
     ?assertEqual(Queue, maps:get(queue, Got)),
     ?assertEqual(available, maps:get(state, Got)),
@@ -241,7 +241,7 @@ insert_with_opts_test(_Config) ->
     Queue = job_opts_q,
     ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
     Job = gaffer:insert(Queue, #{}, #{priority => 5, max_attempts => 10}),
-    {ok, Got} = gaffer:get(Queue, maps:get(id, Job)),
+    Got = gaffer:get(Queue, maps:get(id, Job)),
     ?assertEqual(5, maps:get(priority, Got)),
     ?assertEqual(10, maps:get(max_attempts, Got)).
 
@@ -252,7 +252,7 @@ insert_scheduled_test(_Config) ->
     ScheduledAt = {microsecond, erlang:system_time(microsecond) + 60_000_000},
     Job = gaffer:insert(Queue, #{}, #{scheduled_at => ScheduledAt}),
     ?assertEqual(scheduled, maps:get(state, Job)),
-    {ok, Got} = gaffer:get(Queue, maps:get(id, Job)),
+    Got = gaffer:get(Queue, maps:get(id, Job)),
     ?assertEqual(scheduled, maps:get(state, Got)),
     ?assert(is_map_key(scheduled_at, Got)),
     {microsecond, GotUs} = maps:get(scheduled_at, Got),
@@ -263,7 +263,7 @@ get_not_found_test(_Config) ->
     Driver = driver(),
     Queue = job_nf_q,
     ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
-    ?assertEqual({error, not_found}, gaffer:get(Queue, <<0:128>>)).
+    ?assertError({unknown_job, _}, gaffer:get(Queue, <<0:128>>)).
 
 insert_and_list_test(_Config) ->
     Driver = driver(),
@@ -291,7 +291,7 @@ job_delete_test(_Config) ->
     Job = gaffer:insert(Queue, #{}),
     Id = maps:get(id, Job),
     ok = gaffer:delete(Queue, Id),
-    ?assertEqual({error, not_found}, gaffer:get(Queue, Id)).
+    ?assertError({unknown_job, _}, gaffer:get(Queue, Id)).
 
 job_delete_not_found_test(_Config) ->
     Driver = driver(),

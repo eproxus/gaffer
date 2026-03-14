@@ -186,9 +186,14 @@ insert(Queue, Payload, Opts) ->
 
 %--- Lifecycle ----------------------------------------------------------------
 
--spec cancel(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
+-spec cancel(queue_name(), job_id()) ->
+    {ok, job()} | {error, {invalid_transition, term()}}.
 cancel(Queue, JobId) ->
-    gaffer_queue:cancel_job(Queue, JobId).
+    case gaffer_queue:cancel_job(Queue, JobId) of
+        {error, not_found} -> error({unknown_job, JobId});
+        {error, {invalid_transition, _}} = Err -> Err;
+        {ok, _} = Ok -> Ok
+    end.
 
 -spec drain(queue_name()) -> ok.
 drain(Queue) ->
@@ -214,9 +219,12 @@ flush(_Queue, _Timeout) ->
 
 %--- Querying -----------------------------------------------------------------
 
--spec get(queue_name(), job_id()) -> {ok, job()} | {error, term()}.
+-spec get(queue_name(), job_id()) -> job().
 get(Queue, JobId) ->
-    gaffer_queue:get_job(Queue, JobId).
+    case gaffer_queue:get_job(Queue, JobId) of
+        not_found -> error({unknown_job, JobId});
+        Job -> Job
+    end.
 
 -spec list(list_opts()) -> [job()].
 list(Opts) ->

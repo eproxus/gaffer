@@ -183,7 +183,7 @@ get_job(Driver) ->
     Q = ?FUNCTION_NAME,
     ok = gaffer:create_queue(#{name => Q, driver => Driver}),
     #{id := Id} = gaffer:insert(Q, #{task => 1}),
-    {ok, Job} = gaffer:get(Q, Id),
+    Job = gaffer:get(Q, Id),
     ?assertMatch(
         #{id := Id, queue := get_job, payload := #{task := 1}}, Job
     ).
@@ -191,8 +191,8 @@ get_job(Driver) ->
 get_not_found(Driver) ->
     Q = ?FUNCTION_NAME,
     ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    ?assertEqual(
-        {error, not_found},
+    ?assertError(
+        {unknown_job, _},
         gaffer:get(Q, make_ref())
     ).
 
@@ -216,8 +216,8 @@ cancel(Driver) ->
 cancel_not_found(Driver) ->
     Q = ?FUNCTION_NAME,
     ok = gaffer:create_queue(#{name => Q, driver => Driver}),
-    ?assertEqual(
-        {error, not_found},
+    ?assertError(
+        {unknown_job, _},
         gaffer:cancel(Q, make_ref())
     ).
 

@@ -19,7 +19,7 @@
 -callback queue_update(gaffer:queue_name(), map(), driver_opts()) ->
     ok.
 -callback queue_get(gaffer:queue_name(), driver_opts()) ->
-    gaffer:queue_conf().
+    gaffer:queue_conf() | not_found.
 -callback queue_delete(gaffer:queue_name(), driver_opts()) ->
     ok.
 
@@ -31,7 +31,7 @@
 -callback job_list(gaffer:list_opts(), driver_opts()) ->
     [gaffer:job()].
 -callback job_delete(gaffer:job_id(), driver_opts()) ->
-    ok.
+    ok | not_found.
 
 %% Atomic claim — find matching jobs, apply changes, return them
 -callback job_claim(

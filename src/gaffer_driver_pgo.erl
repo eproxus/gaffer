@@ -104,13 +104,14 @@ queue_update(Name, Updates, #{pool := Pool}) ->
     ),
     ok.
 
--spec queue_get(gaffer:queue_name(), state()) -> gaffer:queue_conf().
+-spec queue_get(gaffer:queue_name(), state()) ->
+    gaffer:queue_conf() | not_found.
 queue_get(Name, #{pool := Pool}) ->
     [#{rows := Rows}] =
         transaction(Pool, gaffer_postgres:queue_get(Name)),
     case Rows of
         [Row] -> row_to_queue_conf(Row);
-        [] -> error({unknown_queue, Name})
+        [] -> not_found
     end.
 
 -spec queue_delete(gaffer:queue_name(), state()) -> ok.
@@ -143,13 +144,13 @@ job_list(Opts, #{pool := Pool}) ->
         transaction(Pool, gaffer_postgres:job_list(Encoded)),
     [row_to_job(R) || R <:- Rows].
 
--spec job_delete(gaffer:job_id(), state()) -> ok.
+-spec job_delete(gaffer:job_id(), state()) -> ok | not_found.
 job_delete(Id, #{pool := Pool}) ->
     [#{num_rows := N}] =
         transaction(Pool, gaffer_postgres:job_delete(Id)),
     case N of
         1 -> ok;
-        0 -> error({unknown_job, Id})
+        0 -> not_found
     end.
 
 -spec job_claim(

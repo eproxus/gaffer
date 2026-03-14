@@ -105,7 +105,10 @@ queue_entry(_) ->
 
 -spec get(gaffer:queue_name()) -> gaffer:queue_conf().
 get(Name) ->
-    call(Name, queue_get, [Name]).
+    case call(Name, queue_get, [Name]) of
+        not_found -> error({unknown_queue, Name});
+        Conf -> Conf
+    end.
 
 -spec update(gaffer:queue_name(), map()) -> ok.
 update(Name, Updates) ->
@@ -124,12 +127,9 @@ insert_job(Queue, Payload, Opts) ->
     Inserted.
 
 -spec get_job(gaffer:queue_name(), gaffer:job_id()) ->
-    {ok, gaffer:job()} | {error, not_found}.
+    gaffer:job() | not_found.
 get_job(Queue, JobId) ->
-    case call(Queue, job_get, [JobId]) of
-        not_found -> {error, not_found};
-        Job -> {ok, Job}
-    end.
+    call(Queue, job_get, [JobId]).
 
 -spec list_jobs(gaffer:list_opts()) ->
     [gaffer:job()].
@@ -138,7 +138,10 @@ list_jobs(#{queue := Queue} = Opts) ->
 
 -spec delete_job(gaffer:queue_name(), gaffer:job_id()) -> ok.
 delete_job(Queue, JobId) ->
-    call(Queue, job_delete, [JobId]).
+    case call(Queue, job_delete, [JobId]) of
+        not_found -> error({unknown_job, JobId});
+        ok -> ok
+    end.
 
 -spec cancel_job(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
