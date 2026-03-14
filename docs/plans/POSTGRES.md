@@ -139,16 +139,19 @@ Pure functional module — no pgo dependency. Contains all SQL query definitions
 ### Exports
 
 ```
-%% Migrations — each migration has an up and down SQL
-migrations/1          -> [{Version, UpSQL, DownSQL}]  % accepts #{uuid_format => v4 | v7}
-migration_versions/1  -> [Version]                    % list applied versions (from query result)
+%% Migrations — returns versioned up/down query lists
+migrations/1              -> [{Version, Up, Down}]      % accepts #{uuid_format => v4 | v7}
+migrate_up/1              -> [{SQL, Params}]             % wrap up queries + version update
+migrate_down/1            -> [{SQL, Params}]             % wrap down queries + version decrement
+ensure_migrations_table() -> [{SQL, Params}]             % CREATE IF NOT EXISTS + seed
+applied_version()         -> [{SQL, Params}]             % SELECT current version
 
-%% Queue config queries — each returns {SQL, Params}
+%% Queue config queries — each returns [{SQL, Params}]
 queue_put/1           (QueueConf)
 queue_get/1           (QueueName)
 queue_delete/1        (QueueName)
 
-%% Job queries — each returns {SQL, Params}
+%% Job queries — each returns [{SQL, Params}]
 job_insert/1          (NewJob)  — INSERT without id, RETURNING * to get driver-generated UUID
 job_get/1             (JobId)
 job_list/1            (ListOpts)
@@ -208,7 +211,7 @@ for SQL and `pgo:query/3` for execution.
 ```erlang
 -type state() :: #{
     pool := atom(),
-    owns_pool := boolean()   % true if we started it, false if external
+    pool_owned := boolean()   % true if we started it, false if external
 }.
 ```
 
@@ -216,7 +219,7 @@ for SQL and `pgo:query/3` for execution.
 
 Accepts:
 - `#{pool => atom()}` — use existing pool
-- `#{pool_config => map()}` — start a dedicated pool via `pgo:start_pool/2`
+- `#{pool => atom(), start => map()}` — start a dedicated pool via `pgo:start_pool/2`
 - `#{uuid_format => v4 | v7}` — optional, defaults to `v4`
 
 After pool is ready, runs migrations (up only) with
@@ -282,6 +285,10 @@ job_insert(Job, #{pool := Pool} = State) ->
 Errors from pgo raise exceptions (project convention: prefer exceptions over
 tagged returns for unrecoverable errors).
 
+`queue_put/2` must catch FK violation on `on_discard` and raise
+`error({on_discard_queue_not_found, Name})` so callers get a clear error when
+referencing a non-existent discard queue.
+
 ## Test Infrastructure
 
 ### `docker-compose.yml` (project root)
@@ -324,12 +331,16 @@ services:
 
 ### CT Suite: `test/gaffer_driver_pgo_SUITE.erl`
 
-- `init_per_suite/1` — start pgo app, create pool from CT config
-- `end_per_suite/1` — stop pool
-- `init_per_testcase/2` — truncate tables, create fresh driver state
-- `end_per_testcase/2` — stop driver
+- `init_per_suite/1` — start pgo app, extract pool config from CT config
+- `end_per_suite/1` — no-op (pool managed per testcase)
+- `init_per_testcase/2` — start pool, reset database (DROP/CREATE schema)
+- `end_per_testcase/2` — reset database, stop pool
 
 **Test cases:**
+- `migration_idempotent` — calling start twice doesn't fail
+- `migration_rollback` — rollback removes tables, resets version
+- `start_with_new_pool` — start with owned pool (`start` key), verify `owns_pool`
+- `queue_put_get_delete` — queue config CRUD
 - `insert_and_get` — round-trip all fields
 - `insert_and_list` — list with queue/state filters
 - `claim_basic` — claim transitions to executing
@@ -341,9 +352,6 @@ services:
 - `complete_and_fail` — lifecycle transitions
 - `update_job` — update and re-read
 - `prune` — delete terminal-state jobs, verify count
-- `queue_put_get_delete` — queue config CRUD
-- `migration_idempotent` — calling start twice doesn't fail
-- `migration_rollback` — rollback removes tables, deletes version rows
 
 ## Changes to Existing Files
 
@@ -376,6 +384,12 @@ Organized as vertical slices — each milestone delivers end-to-end functionalit
 that compiles, passes `mise run verify` and `mise run test`, and can be committed
 cleanly.
 
+Each milestone follows TDD (red-green):
+
+1. **Red** — Write CT test cases first (they must compile but fail)
+2. **Green** — Implement until tests pass
+3. **Verify** — `mise run verify` + `mise run test`
+
 ### Milestone 1: Foundation (migrations + start/stop + test infra)
 
 Everything needed to boot the driver against a real Postgres and verify
@@ -384,45 +398,42 @@ migrations work.
 - [x] `docker-compose.yml`
 - [x] `config/test.config`
 - [x] `rebar.config` — add `pgo` dep, CT pre/post hooks
-- [x] `gaffer_postgres`: `migrations/1`, `migration_versions/1`
+- [x] `gaffer_postgres`: `migrations/1`, `migrate_up/1`, `migrate_down/1`, `ensure_migrations_table/0`, `applied_version/0`
 - [x] `gaffer_driver_pgo`: `start/1`, `stop/1`, `rollback/2`
-- [x] CT: `init_per_suite`, `end_per_suite`, `migration_idempotent`, `migration_rollback`
+- [x] CT: `init_per_suite`, `end_per_suite`, `migration_idempotent`, `migration_rollback`, `start_with_new_pool`
 - [x] Verify: `mise run verify` + `mise run test`
 
 ### Milestone 2: Queue config CRUD
 
-- [ ] `gaffer_postgres`: `queue_put/1`, `queue_get/1`, `queue_delete/1`
-- [ ] `gaffer_driver_pgo`: queue callbacks, `row_to_queue_conf/2`
-- [ ] CT: `queue_put_get_delete`
-- [ ] Verify: `mise run verify` + `mise run test`
+- [ ] **Red**: CT `queue_put_get_delete` (calls driver queue callbacks, asserts round-trip)
+- [ ] **Green**: `gaffer_postgres` `queue_put/1`, `queue_get/1`, `queue_delete/1`
+- [ ] **Green**: `gaffer_driver_pgo` queue callbacks, `row_to_queue_conf/2`
+- [ ] **Verify**: `mise run verify` + `mise run test`
 
 ### Milestone 3: Job basics (insert, get, list, delete)
 
-- [ ] `gaffer_postgres`: `job_insert/1`, `job_get/1`, `job_list/1`, `job_delete/1`
-- [ ] `gaffer_driver_pgo`: job CRUD callbacks, `row_to_job/2`
-- [ ] CT: `insert_and_get`, `insert_and_list`
-- [ ] Verify: `mise run verify` + `mise run test`
+- [ ] **Red**: CT `insert_and_get`, `insert_and_list`, `job_delete` (call driver job callbacks, assert round-trip)
+- [ ] **Green**: `gaffer_postgres` `job_insert/1`, `job_get/1`, `job_list/1`, `job_delete/1`
+- [ ] **Green**: `gaffer_driver_pgo` job CRUD callbacks, `row_to_job/2`
+- [ ] **Verify**: `mise run verify` + `mise run test`
 
 ### Milestone 4: Job lifecycle (claim, update, state transitions)
 
-- [ ] `gaffer_postgres`: `job_claim/2`, `job_update/1`
-- [ ] `gaffer_driver_pgo`: claim + update callbacks
-- [ ] CT: `claim_basic`, `claim_priority_ordering`, `claim_scheduled_filtering`, `claim_skip_locked`, `claim_global_max_workers`, `update_job`, `complete_and_fail`, `cancel_job`
-- [ ] Verify: `mise run verify` + `mise run test`
+- [ ] **Red**: CT `claim_basic`, `claim_priority_ordering`, `claim_scheduled_filtering`, `claim_skip_locked`, `claim_global_max_workers`, `update_job`, `complete_and_fail`, `cancel_job`
+- [ ] **Green**: `gaffer_postgres` `job_claim/2`, `job_update/1`
+- [ ] **Green**: `gaffer_driver_pgo` claim + update callbacks
+- [ ] **Verify**: `mise run verify` + `mise run test`
 
 ### Milestone 5: Pruning + final verification
 
-- [ ] `gaffer_postgres`: `job_prune/1`
-- [ ] `gaffer_driver_pgo`: prune callback
-- [ ] CT: `prune`
-- [ ] Verify: `mise run verify` + `mise run test`
+- [ ] **Red**: CT `prune` (insert terminal jobs, call prune, assert deleted)
+- [ ] **Green**: `gaffer_postgres` `job_prune/1`
+- [ ] **Green**: `gaffer_driver_pgo` prune callback
+- [ ] **Verify**: `mise run verify` + `mise run test`
 
 ## Verification
 
 ```sh
-docker compose up -d --wait    # Start Postgres
-rebar3 ct                      # Runs CT suite (hooks handle docker)
-rebar3 eunit                   # Existing tests still pass
 mise run verify                # Full verification
 mise run test                  # All tests
 ```
