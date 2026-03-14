@@ -170,8 +170,6 @@ queue_delete(Name) ->
 
 %--- Internal -----------------------------------------------------------------
 
--spec columns_and_values(map()) ->
-    {Columns :: [binary()], Placeholders :: [binary()], Values :: [term()]}.
 columns_and_values(Map) ->
     Pairs = maps:to_list(Map),
     Cols = [atom_to_binary(K) || {K, _} <:- Pairs],

@@ -97,7 +97,6 @@ dispatch({claim, Opts}, Driver) ->
 dispatch({prune, Opts}, Driver) ->
     gaffer_queue:prune_jobs(Opts, Driver).
 
--spec proc_name(gaffer:queue_name()) -> atom().
 proc_name(Name) ->
     binary_to_atom(
         <<"gaffer_queue_runner_", (atom_to_binary(Name))/binary>>

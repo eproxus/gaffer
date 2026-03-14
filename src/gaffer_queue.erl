@@ -95,8 +95,6 @@ delete(Name) ->
 list() ->
     lists:filtermap(fun queue_entry/1, persistent_term:get()).
 
--spec queue_entry({term(), term()}) ->
-    {true, {gaffer:queue_name(), gaffer:queue_conf()}} | false.
 queue_entry({{gaffer_queue, Name}, {Mod, _}}) when
     is_atom(Name), is_atom(Mod)
 ->
@@ -277,8 +275,6 @@ apply_defaults(Conf, Template) ->
 
 %--- Job construction (private) -----------------------------------------------
 
--spec build_job(gaffer:queue_name(), term(), gaffer:job_opts()) ->
-    gaffer:new_job().
 build_job(Queue, Payload, Opts) ->
     Now = erlang:system_time(),
     ScheduledAt = maps:get(scheduled_at, Opts, undefined),
@@ -323,8 +319,6 @@ validate_id(#{id := _}) -> ok.
 
 %--- State machine (private) --------------------------------------------------
 
--spec transition(gaffer:job(), gaffer:job_state()) ->
-    {ok, gaffer:job()} | {error, {invalid_transition, term()}}.
 transition(#{state := From} = Job, To) ->
     case valid_transition(From, To) of
         true ->
@@ -334,13 +328,9 @@ transition(#{state := From} = Job, To) ->
             {error, {invalid_transition, {From, To}}}
     end.
 
--spec add_error(gaffer:job(), gaffer:job_error()) ->
-    gaffer:job().
 add_error(#{errors := Errors} = Job, Error) ->
     Job#{errors := [Error | Errors]}.
 
--spec valid_transition(gaffer:job_state(), gaffer:job_state()) ->
-    boolean().
 valid_transition(available, executing) -> true;
 valid_transition(available, cancelled) -> true;
 valid_transition(scheduled, available) -> true;
