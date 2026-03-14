@@ -151,8 +151,7 @@ teardown_driver({gaffer_driver_pgo, DS}) ->
 pgo_pool_config() ->
     {ok, Props} = application:get_env(gaffer, postgres),
     Config = maps:with(
-        [host, port, database, user, password],
-        maps:from_list(Props)
+        [host, port, database, user, password], maps:from_list(Props)
     ),
     Config#{pool_size => 2}.
 
@@ -173,13 +172,8 @@ stop_pool(Pool) ->
 create_queue(Driver) ->
     Conf = #{name => ?Q, driver => Driver},
     ?assertEqual(ok, gaffer:create_queue(Conf)),
-    ?assertMatch(
-        #{name := create_queue},
-        gaffer:get_queue(?Q)
-    ),
-    ?assertEqual(
-        {error, already_exists}, gaffer:create_queue(Conf)
-    ).
+    ?assertMatch(#{name := create_queue}, gaffer:get_queue(?Q)),
+    ?assertEqual({error, already_exists}, gaffer:create_queue(Conf)).
 
 get_queue(Driver) ->
     Conf = #{name => ?Q, driver => Driver},
@@ -196,84 +190,57 @@ get_queue(Driver) ->
 
 update_queue(Driver) ->
     ok = gaffer:create_queue(#{
-        name => ?Q,
-        driver => Driver,
-        global_max_workers => 5
+        name => ?Q, driver => Driver, global_max_workers => 5
     }),
     ok = gaffer:update_queue(?Q, #{global_max_workers => 10}),
     Updated = gaffer:get_queue(?Q),
     ?assertEqual(10, maps:get(global_max_workers, Updated)).
 
 delete_queue(Driver) ->
-    ok = gaffer:create_queue(
-        #{name => ?Q, driver => Driver}
-    ),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertEqual(ok, gaffer:delete_queue(?Q)),
-    ?assertError(
-        {unknown_queue, delete_queue},
-        gaffer:get_queue(?Q)
-    ),
-    ?assertError(
-        {unknown_queue, delete_queue},
-        gaffer:delete_queue(?Q)
-    ).
+    ?assertError({unknown_queue, delete_queue}, gaffer:get_queue(?Q)),
+    ?assertError({unknown_queue, delete_queue}, gaffer:delete_queue(?Q)).
 
 list_queues(Driver) ->
-    ok = gaffer:create_queue(
-        #{name => list_queues_1, driver => Driver}
-    ),
-    ok = gaffer:create_queue(
-        #{name => list_queues_2, driver => Driver}
-    ),
+    ok = gaffer:create_queue(#{name => list_queues_1, driver => Driver}),
+    ok = gaffer:create_queue(#{name => list_queues_2, driver => Driver}),
     Queues = gaffer:list_queues(),
     Names = [Name || {Name, _} <:- Queues],
     ?assert(lists:member(list_queues_1, Names)),
     ?assert(lists:member(list_queues_2, Names)).
 
 create_queue_on_discard(Driver) ->
-    ok = gaffer:create_queue(
-        #{name => dead_letter, driver => Driver}
-    ),
+    ok = gaffer:create_queue(#{name => dead_letter, driver => Driver}),
     ok = gaffer:create_queue(#{
-        name => on_discard_source,
-        driver => Driver,
-        on_discard => dead_letter
+        name => on_discard_source, driver => Driver, on_discard => dead_letter
     }),
     ?assertMatch(
-        #{on_discard := dead_letter},
-        gaffer:get_queue(on_discard_source)
+        #{on_discard := dead_letter}, gaffer:get_queue(on_discard_source)
     ),
     ?assertError(
         {on_discard_queue_not_found, nonexistent},
         gaffer:create_queue(#{
-            name => bad_queue,
-            driver => Driver,
-            on_discard => nonexistent
+            name => bad_queue, driver => Driver, on_discard => nonexistent
         })
     ).
 
 update_queue_on_discard_not_found(Driver) ->
-    ok = gaffer:create_queue(
-        #{name => ?Q, driver => Driver}
-    ),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertError(
         {on_discard_queue_not_found, nonexistent},
         gaffer:update_queue(?Q, #{on_discard => nonexistent})
     ).
 
 create_queue_config_mismatch(Driver) ->
-    ok = gaffer:create_queue(#{
-        name => ?Q, driver => Driver, max_workers => 3
-    }),
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver, max_workers => 3}),
     % Simulate a second node: restart gaffer to clear persistent_term
     % while keeping driver state intact
     application:stop(gaffer),
     {ok, _} = application:ensure_all_started(gaffer),
     ?assertError(
         {queue_config_mismatch, create_queue_config_mismatch, _},
-        gaffer:create_queue(#{
-            name => ?Q, driver => Driver, max_workers => 99
-        })
+        gaffer:create_queue(#{name => ?Q, driver => Driver, max_workers => 99})
     ).
 
 %--- Insert tests -------------------------------------------------------------
@@ -332,10 +299,7 @@ get_job(Driver) ->
 
 get_not_found(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
-    ?assertError(
-        {unknown_job, _},
-        gaffer:get(?Q, make_ref())
-    ).
+    ?assertError({unknown_job, _}, gaffer:get(?Q, make_ref())).
 
 list_jobs(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
@@ -368,10 +332,7 @@ cancel(Driver) ->
 
 cancel_not_found(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
-    ?assertError(
-        {unknown_job, _},
-        gaffer:cancel(?Q, make_ref())
-    ).
+    ?assertError({unknown_job, _}, gaffer:cancel(?Q, make_ref())).
 
 cancel_scheduled(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
@@ -422,8 +383,7 @@ complete(Driver) ->
 complete_not_found(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertEqual(
-        {error, not_found},
-        gaffer_queue_runner:complete(?Q, make_ref())
+        {error, not_found}, gaffer_queue_runner:complete(?Q, make_ref())
     ).
 
 complete_available_error(Driver) ->
@@ -463,8 +423,7 @@ fail_not_found(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     E = #{attempt => 1, error => boom, at => erlang:system_time()},
     ?assertEqual(
-        {error, not_found},
-        gaffer_queue_runner:fail(?Q, make_ref(), E)
+        {error, not_found}, gaffer_queue_runner:fail(?Q, make_ref(), E)
     ).
 
 fail_error_normalization(Driver) ->
@@ -476,8 +435,7 @@ fail_error_normalization(Driver) ->
     E = #{attempt => 1, error => ErrorInfo, at => {microsecond, AtUs}},
     {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
     ?assertMatch(
-        #{errors := [#{attempt := 1, error := ErrorInfo, at := AtUs}]},
-        Failed
+        #{errors := [#{attempt := 1, error := ErrorInfo, at := AtUs}]}, Failed
     ).
 
 %--- Schedule tests -----------------------------------------------------------
@@ -533,24 +491,18 @@ insert_invalid_max_attempts(Driver) ->
 create_queue_extra_key(Driver) ->
     ?assertError(
         {invalid_queue_conf, #{extra := [bogus]}},
-        gaffer:create_queue(#{
-            name => ?Q, driver => Driver, bogus => 42
-        })
+        gaffer:create_queue(#{name => ?Q, driver => Driver, bogus => 42})
     ).
 
 update_queue_extra_key(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertError(
-        {invalid_queue_conf, _},
-        gaffer:update_queue(?Q, #{bogus => 42})
+        {invalid_queue_conf, _}, gaffer:update_queue(?Q, #{bogus => 42})
     ).
 
 update_queue_empty(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
-    ?assertError(
-        {invalid_queue_conf, _},
-        gaffer:update_queue(?Q, #{})
-    ).
+    ?assertError({invalid_queue_conf, _}, gaffer:update_queue(?Q, #{})).
 
 %--- Claim tests --------------------------------------------------------------
 
