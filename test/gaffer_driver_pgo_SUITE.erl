@@ -19,7 +19,15 @@
     queue_on_discard_test/1,
     queue_idempotent_create_test/1,
     queue_config_mismatch_test/1,
-    queue_update_on_discard_fk_test/1
+    queue_update_on_discard_fk_test/1,
+    insert_and_get_test/1,
+    insert_with_opts_test/1,
+    insert_scheduled_test/1,
+    get_not_found_test/1,
+    insert_and_list_test/1,
+    list_filter_state_test/1,
+    job_delete_test/1,
+    job_delete_not_found_test/1
 ]).
 
 all() ->
@@ -33,7 +41,15 @@ all() ->
         queue_on_discard_test,
         queue_idempotent_create_test,
         queue_config_mismatch_test,
-        queue_update_on_discard_fk_test
+        queue_update_on_discard_fk_test,
+        insert_and_get_test,
+        insert_with_opts_test,
+        insert_scheduled_test,
+        get_not_found_test,
+        insert_and_list_test,
+        list_filter_state_test,
+        job_delete_test,
+        job_delete_not_found_test
     ].
 
 %--- Suite setup --------------------------------------------------------------
@@ -196,6 +212,92 @@ queue_update_on_discard_fk_test(_Config) ->
         {on_discard_queue_not_found, nonexistent},
         gaffer:update_queue(fk_update_q, #{on_discard => nonexistent})
     ).
+
+%--- Job CRUD tests -----------------------------------------------------------
+
+insert_and_get_test(_Config) ->
+    Driver = driver(),
+    Queue = job_test_q,
+    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
+    Payload = #{task => 1, data => ~"hello"},
+    Job = gaffer:insert(Queue, Payload),
+    ?assertMatch(#{id := _, state := available}, Job),
+    {ok, Got} = gaffer:get(Queue, maps:get(id, Job)),
+    ?assertEqual(maps:get(id, Job), maps:get(id, Got)),
+    ?assertEqual(Queue, maps:get(queue, Got)),
+    ?assertEqual(available, maps:get(state, Got)),
+    % Payload round-trips with binary keys
+    ?assertEqual(
+        #{~"task" => 1, ~"data" => ~"hello"}, maps:get(payload, Got)
+    ),
+    ?assertEqual(0, maps:get(attempt, Got)),
+    ?assertEqual(3, maps:get(max_attempts, Got)),
+    ?assertEqual(0, maps:get(priority, Got)),
+    ?assertEqual([], maps:get(errors, Got)),
+    ?assert(is_map_key(inserted_at, Got)).
+
+insert_with_opts_test(_Config) ->
+    Driver = driver(),
+    Queue = job_opts_q,
+    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
+    Job = gaffer:insert(Queue, #{}, #{priority => 5, max_attempts => 10}),
+    {ok, Got} = gaffer:get(Queue, maps:get(id, Job)),
+    ?assertEqual(5, maps:get(priority, Got)),
+    ?assertEqual(10, maps:get(max_attempts, Got)).
+
+insert_scheduled_test(_Config) ->
+    Driver = driver(),
+    Queue = job_sched_q,
+    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
+    ScheduledAt = {microsecond, erlang:system_time(microsecond) + 60_000_000},
+    Job = gaffer:insert(Queue, #{}, #{scheduled_at => ScheduledAt}),
+    ?assertEqual(scheduled, maps:get(state, Job)),
+    {ok, Got} = gaffer:get(Queue, maps:get(id, Job)),
+    ?assertEqual(scheduled, maps:get(state, Got)),
+    ?assert(is_map_key(scheduled_at, Got)),
+    {microsecond, GotUs} = maps:get(scheduled_at, Got),
+    {microsecond, ExpUs} = ScheduledAt,
+    ?assert(abs(GotUs - ExpUs) < 2).
+
+get_not_found_test(_Config) ->
+    Driver = driver(),
+    Queue = job_nf_q,
+    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
+    ?assertEqual({error, not_found}, gaffer:get(Queue, <<0:128>>)).
+
+insert_and_list_test(_Config) ->
+    Driver = driver(),
+    Queue = job_list_q,
+    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
+    gaffer:insert(Queue, #{a => 1}),
+    gaffer:insert(Queue, #{a => 2}),
+    Jobs = gaffer:list(#{queue => Queue}),
+    ?assertEqual(2, length(Jobs)).
+
+list_filter_state_test(_Config) ->
+    Driver = driver(),
+    Queue = job_filter_q,
+    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
+    gaffer:insert(Queue, #{}),
+    Available = gaffer:list(#{queue => Queue, state => available}),
+    ?assertEqual(1, length(Available)),
+    Completed = gaffer:list(#{queue => Queue, state => completed}),
+    ?assertEqual(0, length(Completed)).
+
+job_delete_test(_Config) ->
+    Driver = driver(),
+    Queue = job_del_q,
+    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
+    Job = gaffer:insert(Queue, #{}),
+    Id = maps:get(id, Job),
+    ok = gaffer:delete(Queue, Id),
+    ?assertEqual({error, not_found}, gaffer:get(Queue, Id)).
+
+job_delete_not_found_test(_Config) ->
+    Driver = driver(),
+    Queue = job_del_nf_q,
+    ok = gaffer:create_queue(#{name => Queue, driver => Driver}),
+    ?assertError({unknown_job, _}, gaffer:delete(Queue, <<0:128>>)).
 
 %--- Helpers ------------------------------------------------------------------
 

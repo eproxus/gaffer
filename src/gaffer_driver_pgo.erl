@@ -27,10 +27,6 @@
 
 %% Stubs — remove ignore_xref as each callback gets implemented
 -ignore_xref([
-    job_insert/2,
-    job_get/2,
-    job_list/2,
-    job_delete/2,
     job_claim/3,
     job_update/2,
     job_prune/2
@@ -122,19 +118,39 @@ queue_delete(Name, #{pool := Pool}) ->
     transaction(Pool, gaffer_postgres:queue_delete(Name)),
     ok.
 
-%--- Job CRUD (stubs) --------------------------------------------------------
+%--- Job CRUD ----------------------------------------------------------------
 
--spec job_insert(gaffer:new_job(), state()) -> no_return().
-job_insert(_Job, _State) -> error(not_implemented).
+-spec job_insert(gaffer:new_job(), state()) -> gaffer:job().
+job_insert(Job, #{pool := Pool}) ->
+    Encoded = encode_job(Job),
+    [#{rows := [Row]}] =
+        transaction(Pool, gaffer_postgres:job_insert(Encoded)),
+    row_to_job(Row).
 
--spec job_get(gaffer:job_id(), state()) -> no_return().
-job_get(_Id, _State) -> error(not_implemented).
+-spec job_get(gaffer:job_id(), state()) -> gaffer:job() | not_found.
+job_get(Id, #{pool := Pool}) ->
+    [#{rows := Rows}] =
+        transaction(Pool, gaffer_postgres:job_get(Id)),
+    case Rows of
+        [Row] -> row_to_job(Row);
+        [] -> not_found
+    end.
 
--spec job_list(gaffer:list_opts(), state()) -> no_return().
-job_list(_Opts, _State) -> error(not_implemented).
+-spec job_list(gaffer:list_opts(), state()) -> [gaffer:job()].
+job_list(Opts, #{pool := Pool}) ->
+    Encoded = encode_list_opts(Opts),
+    [#{rows := Rows}] =
+        transaction(Pool, gaffer_postgres:job_list(Encoded)),
+    [row_to_job(R) || R <:- Rows].
 
--spec job_delete(gaffer:job_id(), state()) -> no_return().
-job_delete(_Id, _State) -> error(not_implemented).
+-spec job_delete(gaffer:job_id(), state()) -> ok.
+job_delete(Id, #{pool := Pool}) ->
+    [#{num_rows := N}] =
+        transaction(Pool, gaffer_postgres:job_delete(Id)),
+    case N of
+        1 -> ok;
+        0 -> error({unknown_job, Id})
+    end.
 
 -spec job_claim(
     gaffer:claim_opts(), gaffer:job_changes(), state()
@@ -215,6 +231,85 @@ transaction(Pool, Queries) ->
         end,
         #{pool => Pool}
     ).
+
+encode_job(Job) ->
+    maps:map(
+        fun
+            (K, V) when K =:= queue; K =:= state -> atom_to_binary(V);
+            (K, V) when K =:= payload; K =:= errors -> json:encode(V);
+            (K, V) when
+                K =:= inserted_at;
+                K =:= scheduled_at;
+                K =:= attempted_at;
+                K =:= completed_at;
+                K =:= cancelled_at;
+                K =:= discarded_at
+            ->
+                to_microsecond(V);
+            (_K, V) ->
+                V
+        end,
+        Job
+    ).
+
+row_to_job(Row) ->
+    TimestampKeys = [
+        scheduled_at,
+        inserted_at,
+        attempted_at,
+        completed_at,
+        cancelled_at,
+        discarded_at
+    ],
+    maps:filtermap(
+        fun
+            (_K, null) ->
+                false;
+            (queue, V) ->
+                {true, binary_to_existing_atom(V)};
+            (state, V) ->
+                {true, binary_to_existing_atom(V)};
+            (payload, V) ->
+                {true, json:decode(V)};
+            (errors, V) ->
+                {true, normalize_errors(json:decode(V))};
+            (K, V) ->
+                case lists:member(K, TimestampKeys) of
+                    true -> {true, {microsecond, V}};
+                    false -> {true, V}
+                end
+        end,
+        Row
+    ).
+
+normalize_errors(Errors) ->
+    [normalize_error_keys(E) || E <:- Errors].
+
+normalize_error_keys(ErrorMap) ->
+    maps:fold(
+        fun
+            (~"attempt", V, Acc) -> Acc#{attempt => V};
+            (~"error", V, Acc) -> Acc#{error => V};
+            (~"at", V, Acc) -> Acc#{at => {microsecond, V}};
+            (K, V, Acc) -> Acc#{K => V}
+        end,
+        #{},
+        ErrorMap
+    ).
+
+encode_list_opts(Opts) ->
+    maps:map(
+        fun
+            (_K, V) when is_atom(V) -> atom_to_binary(V);
+            (_K, V) -> V
+        end,
+        Opts
+    ).
+
+to_microsecond({Unit, V}) ->
+    erlang:convert_time_unit(V, Unit, microsecond);
+to_microsecond(Native) ->
+    erlang:convert_time_unit(Native, native, microsecond).
 
 encode_conf(Conf) ->
     Template = gaffer_queue:queue_conf_template(),

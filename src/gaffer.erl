@@ -27,6 +27,7 @@
 %% Querying
 -export([get/2]).
 -export([list/1]).
+-export([delete/2]).
 
 -ignore_xref([
     create_queue/1,
@@ -42,7 +43,8 @@
     flush/1,
     flush/2,
     get/2,
-    list/1
+    list/1,
+    delete/2
 ]).
 
 %--- Types --------------------------------------------------------------------
@@ -58,9 +60,9 @@
     | discarded.
 -type queue_name() :: atom().
 
--type timestamp() :: integer().
-%% Erlang native time units (erlang:system_time/0).
-%% Drivers may truncate to the precision they need.
+-type timestamp() :: integer() | {erlang:time_unit(), integer()}.
+%% Native time units (erlang:system_time/0) or `{Unit, Value}`.
+%% Drivers normalize to their own precision.
 
 -type job() :: #{
     id := job_id(),
@@ -219,3 +221,7 @@ get(Queue, JobId) ->
 -spec list(list_opts()) -> [job()].
 list(Opts) ->
     gaffer_queue:list_jobs(Opts).
+
+-spec delete(queue_name(), job_id()) -> ok.
+delete(Queue, JobId) ->
+    gaffer_queue:delete_job(Queue, JobId).

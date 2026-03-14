@@ -44,6 +44,7 @@ gaffer_test_() ->
                 fun fail_retryable/1,
                 fun fail_discarded/1,
                 fun fail_not_found/1,
+                fun fail_error_normalization/1,
                 %% Schedule
                 fun schedule/1,
                 fun schedule_from_failed/1,
@@ -298,7 +299,12 @@ fail_retryable(Driver) ->
     E = #{attempt => 1, error => timeout, at => erlang:system_time()},
     {ok, Failed} = gaffer_queue_runner:fail(Q, Id, E),
     ?assertMatch(
-        #{state := failed, attempt := 1, errors := [E]}, Failed
+        #{
+            state := failed,
+            attempt := 1,
+            errors := [#{attempt := 1, error := timeout}]
+        },
+        Failed
     ).
 
 fail_discarded(Driver) ->
@@ -317,6 +323,20 @@ fail_not_found(Driver) ->
     ?assertEqual(
         {error, not_found},
         gaffer_queue_runner:fail(Q, make_ref(), E)
+    ).
+
+fail_error_normalization(Driver) ->
+    Q = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(#{name => Q, driver => Driver}),
+    #{id := Id} = gaffer:insert(Q, #{task => 1}, #{max_attempts => 3}),
+    [_] = gaffer_queue_runner:claim(Q, #{queue => Q, limit => 1}),
+    AtUs = erlang:system_time(microsecond),
+    ErrorInfo = [#{reason => {badrpc, nodedown}}],
+    E = #{attempt => 1, error => ErrorInfo, at => {microsecond, AtUs}},
+    {ok, Failed} = gaffer_queue_runner:fail(Q, Id, E),
+    ?assertMatch(
+        #{errors := [#{attempt := 1, error := ErrorInfo, at := AtUs}]},
+        Failed
     ).
 
 %--- Schedule tests -----------------------------------------------------------

@@ -22,6 +22,7 @@
 -export([get_job/2]).
 -export([list_jobs/1]).
 -export([cancel_job/2]).
+-export([delete_job/2]).
 
 %% Job operations (driver-explicit, used by gaffer_queue_runner)
 -export([complete_job/2]).
@@ -134,6 +135,10 @@ get_job(Queue, JobId) ->
     [gaffer:job()].
 list_jobs(#{queue := Queue} = Opts) ->
     call(Queue, job_list, [Opts]).
+
+-spec delete_job(gaffer:queue_name(), gaffer:job_id()) -> ok.
+delete_job(Queue, JobId) ->
+    call(Queue, job_delete, [JobId]).
 
 -spec cancel_job(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
@@ -329,7 +334,23 @@ transition(#{state := From} = Job, To) ->
     end.
 
 add_error(#{errors := Errors} = Job, Error) ->
-    Job#{errors := [Error | Errors]}.
+    Normalized = normalize_error(Error),
+    Job#{errors := [Normalized | Errors]}.
+
+normalize_error(#{at := At, error := Err} = Error) ->
+    Error#{
+        at := to_microsecond(At),
+        error := normalize_error_term(Err)
+    }.
+
+normalize_error_term(T) when is_atom(T); is_binary(T); is_number(T) -> T;
+normalize_error_term(T) when is_map(T); is_list(T) -> T;
+normalize_error_term(T) -> iolist_to_binary(io_lib:format(~"~0tp", [T])).
+
+to_microsecond({Unit, V}) ->
+    erlang:convert_time_unit(V, Unit, microsecond);
+to_microsecond(Native) ->
+    erlang:convert_time_unit(Native, native, microsecond).
 
 valid_transition(available, executing) -> true;
 valid_transition(available, cancelled) -> true;

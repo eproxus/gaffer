@@ -18,6 +18,12 @@
 -export([queue_get/1]).
 -export([queue_delete/1]).
 
+%% Job CRUD
+-export([job_insert/1]).
+-export([job_get/1]).
+-export([job_list/1]).
+-export([job_delete/1]).
+
 %--- Migrations ---------------------------------------------------------------
 
 -spec migrations(Opts :: map()) ->
@@ -167,6 +173,92 @@ queue_get(Name) ->
 -spec queue_delete(gaffer:queue_name()) -> [{binary(), list()}].
 queue_delete(Name) ->
     [{~"DELETE FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
+
+%--- Job CRUD ----------------------------------------------------------------
+
+-spec job_insert(map()) -> [{binary(), list()}].
+job_insert(Encoded) ->
+    {Cols, Phs, Vals} = columns_and_values(Encoded),
+    SQL = iolist_to_binary([
+        ~"INSERT INTO gaffer_jobs (",
+        lists:join(~", ", Cols),
+        ~") VALUES (",
+        lists:join(~", ", Phs),
+        ~") RETURNING ",
+        job_columns()
+    ]),
+    [{SQL, Vals}].
+
+-spec job_get(term()) -> [{binary(), list()}].
+job_get(Id) ->
+    SQL = iolist_to_binary([
+        ~"SELECT ", job_columns(), ~" FROM gaffer_jobs WHERE id = $1"
+    ]),
+    [{SQL, [Id]}].
+
+-spec job_list(map()) -> [{binary(), list()}].
+job_list(#{queue := Queue} = Opts) ->
+    {SQL, Params} =
+        case Opts of
+            #{state := State} ->
+                {
+                    iolist_to_binary([
+                        ~"SELECT ",
+                        job_columns(),
+                        ~" FROM gaffer_jobs WHERE queue = $1 AND state = $2"
+                    ]),
+                    [Queue, State]
+                };
+            _ ->
+                {
+                    iolist_to_binary([
+                        ~"SELECT ",
+                        job_columns(),
+                        ~" FROM gaffer_jobs WHERE queue = $1"
+                    ]),
+                    [Queue]
+                }
+        end,
+    [{SQL, Params}].
+
+-spec job_delete(term()) -> [{binary(), list()}].
+job_delete(Id) ->
+    [{~"DELETE FROM gaffer_jobs WHERE id = $1", [Id]}].
+
+job_columns() ->
+    iolist_to_binary(
+        lists:join(~", ", [
+            ~"id",
+            ~"queue",
+            ~"state",
+            ~"payload",
+            ~"attempt",
+            ~"max_attempts",
+            ~"priority",
+            ~"errors"
+            | [ts_column(C) || C <:- ts_column_names()]
+        ])
+    ).
+
+ts_column(Col) ->
+    iolist_to_binary([
+        ~"EXTRACT(EPOCH FROM date_trunc('second', ",
+        Col,
+        ~"))::bigint * 1000000 + MOD(EXTRACT(MICROSECONDS FROM ",
+        Col,
+        ~")::bigint, 1000000) AS ",
+        Col
+    ]).
+
+ts_column_names() ->
+    [
+        ~"scheduled_at",
+        ~"inserted_at",
+        ~"attempted_at",
+        ~"completed_at",
+        ~"cancelled_at",
+        ~"discarded_at"
+    ].
 
 %--- Internal -----------------------------------------------------------------
 
