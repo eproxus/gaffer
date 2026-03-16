@@ -104,7 +104,7 @@ queue_entry(_) ->
 
 -spec get(gaffer:queue_name()) -> gaffer:queue_conf().
 get(Name) ->
-    case call(Name, queue_get, [Name]) of
+    case driver(Name, queue_get, [Name]) of
         not_found -> error({unknown_queue, Name});
         Conf -> Conf
     end.
@@ -112,7 +112,7 @@ get(Name) ->
 -spec update(gaffer:queue_name(), map()) -> ok.
 update(Name, Updates) ->
     Validated = validate_updates(strip_runtime(Updates)),
-    call(Name, queue_update, [Name, Validated]).
+    driver(Name, queue_update, [Name, Validated]).
 
 %--- Job operations (queue-name based) -----------------------------------------
 
@@ -121,21 +121,21 @@ update(Name, Updates) ->
 insert_job(Queue, Payload, Opts) ->
     NewJob = build_job(Queue, Payload, Opts),
     validate(NewJob),
-    call(Queue, job_insert, [NewJob]).
+    driver(Queue, job_insert, [NewJob]).
 
 -spec get_job(gaffer:queue_name(), gaffer:job_id()) ->
     gaffer:job() | not_found.
 get_job(Queue, JobId) ->
-    call(Queue, job_get, [JobId]).
+    driver(Queue, job_get, [JobId]).
 
 -spec list_jobs(gaffer:list_opts()) ->
     [gaffer:job()].
 list_jobs(#{queue := Queue} = Opts) ->
-    call(Queue, job_list, [Opts]).
+    driver(Queue, job_list, [Opts]).
 
 -spec delete_job(gaffer:queue_name(), gaffer:job_id()) -> ok.
 delete_job(Queue, JobId) ->
-    case call(Queue, job_delete, [JobId]) of
+    case driver(Queue, job_delete, [JobId]) of
         not_found -> error({unknown_job, JobId});
         ok -> ok
     end.
@@ -143,13 +143,13 @@ delete_job(Queue, JobId) ->
 -spec cancel_job(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
 cancel_job(Queue, JobId) ->
-    case call(Queue, job_get, [JobId]) of
+    case driver(Queue, job_get, [JobId]) of
         not_found ->
             {error, not_found};
         Job ->
             case transition(Job, cancelled) of
                 {ok, Updated} ->
-                    call(Queue, job_update, [Updated]),
+                    driver(Queue, job_update, [Updated]),
                     {ok, Updated};
                 {error, _} = Err ->
                     Err
@@ -386,7 +386,7 @@ run_checks([{Check, Reason} | Rest]) ->
 
 %--- Driver dispatch (private) ------------------------------------------------
 
-call(Queue, Fun, Args) ->
+driver(Queue, Fun, Args) ->
     {Mod, DS} = lookup(Queue),
     apply(Mod, Fun, Args ++ [DS]).
 
