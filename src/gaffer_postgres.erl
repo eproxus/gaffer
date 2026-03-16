@@ -3,7 +3,7 @@
 % Pure SQL module — no pgo dependency. Contains all SQL and
 % serialization logic for the Postgres driver.
 %
-% All public functions return [{SQL, Params}] — a uniform list
+% All public functions return [{iodata(), list()}] — a uniform list
 % of query tuples. The driver runs these in a transaction.
 
 -export([migrations/1]).
@@ -33,8 +33,8 @@
     [
         {
             Version :: pos_integer(),
-            Up :: [{binary(), list()}],
-            Down :: [{binary(), list()}]
+            Up :: [{iodata(), list()}],
+            Down :: [{iodata(), list()}]
         }
     ].
 migrations(#{}) ->
@@ -102,19 +102,19 @@ migrations(#{}) ->
             queries([~"DROP TABLE gaffer_jobs", ~"DROP TABLE gaffer_queues"])}
     ].
 
--spec migrate_up({pos_integer(), [{binary(), list()}], _}) ->
-    [{binary(), list()}].
+-spec migrate_up({pos_integer(), [{iodata(), list()}], _}) ->
+    [{iodata(), list()}].
 migrate_up({Version, UpQueries, _DownQueries}) ->
     UpQueries ++
         [{~"UPDATE gaffer_schema_version SET version = $1", [Version]}].
 
--spec migrate_down({pos_integer(), _, [{binary(), list()}]}) ->
-    [{binary(), list()}].
+-spec migrate_down({pos_integer(), _, [{iodata(), list()}]}) ->
+    [{iodata(), list()}].
 migrate_down({Version, _UpQueries, DownQueries}) ->
     DownQueries ++
         [{~"UPDATE gaffer_schema_version SET version = $1", [Version - 1]}].
 
--spec ensure_migrations_table() -> [{binary(), list()}].
+-spec ensure_migrations_table() -> [{iodata(), list()}].
 ensure_migrations_table() ->
     queries([
         ~"""
@@ -129,115 +129,113 @@ ensure_migrations_table() ->
     ]).
 
 % Returns a query guaranteed to return a single row with an integer version.
--spec applied_version() -> [{binary(), list()}].
+-spec applied_version() -> [{iodata(), list()}].
 applied_version() ->
     [{~"SELECT version FROM gaffer_schema_version", []}].
 
 %--- Queue CRUD ---------------------------------------------------------------
 
--spec queue_insert(map()) -> [{binary(), list()}].
+-spec queue_insert(map()) -> [{iodata(), list()}].
 queue_insert(Conf) ->
     {Cols, Phs, Vals} = columns_and_values(Conf),
-    SQL = iolist_to_binary([
+    SQL = [
         ~"INSERT INTO gaffer_queues (",
         lists:join(~", ", Cols),
         ~") VALUES (",
         lists:join(~", ", Phs),
         ~") ON CONFLICT (name) DO NOTHING"
-    ]),
+    ],
     [{SQL, Vals}].
 
--spec queue_update(gaffer:queue_name(), map()) -> [{binary(), list()}].
+-spec queue_update(gaffer:queue_name(), map()) -> [{iodata(), list()}].
 queue_update(Name, Changes) ->
     {Sets, Vals} = set_clause(Changes),
     N = length(Vals) + 1,
-    SQL = iolist_to_binary([
+    SQL = [
         ~"UPDATE gaffer_queues SET ",
         Sets,
         ~" WHERE name = $",
         integer_to_binary(N)
-    ]),
+    ],
     [{SQL, Vals ++ [atom_to_binary(Name)]}].
 
--spec queue_get(gaffer:queue_name()) -> [{binary(), list()}].
+-spec queue_get(gaffer:queue_name()) -> [{iodata(), list()}].
 queue_get(Name) ->
     [{~"SELECT * FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
 
--spec queue_delete(gaffer:queue_name()) -> [{binary(), list()}].
+-spec queue_delete(gaffer:queue_name()) -> [{iodata(), list()}].
 queue_delete(Name) ->
     [{~"DELETE FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
 
 %--- Job CRUD ----------------------------------------------------------------
 
--spec job_insert(map()) -> [{binary(), list()}].
+-spec job_insert(map()) -> [{iodata(), list()}].
 job_insert(Encoded) ->
     {Cols, Phs, Vals} = columns_and_values(Encoded),
-    SQL = iolist_to_binary([
+    SQL = [
         ~"INSERT INTO gaffer_jobs (",
         lists:join(~", ", Cols),
         ~") VALUES (",
         lists:join(~", ", Phs),
         ~") RETURNING ",
         job_columns()
-    ]),
+    ],
     [{SQL, Vals}].
 
--spec job_get(term()) -> [{binary(), list()}].
+-spec job_get(term()) -> [{iodata(), list()}].
 job_get(Id) ->
-    SQL = iolist_to_binary([
+    SQL = [
         ~"SELECT ", job_columns(), ~" FROM gaffer_jobs WHERE id = $1"
-    ]),
+    ],
     [{SQL, [Id]}].
 
--spec job_list(map()) -> [{binary(), list()}].
+-spec job_list(map()) -> [{iodata(), list()}].
 job_list(#{queue := Queue} = Opts) ->
     {SQL, Params} =
         case Opts of
             #{state := State} ->
                 {
-                    iolist_to_binary([
+                    [
                         ~"SELECT ",
                         job_columns(),
                         ~" FROM gaffer_jobs WHERE queue = $1 AND state = $2"
-                    ]),
+                    ],
                     [Queue, State]
                 };
             _ ->
                 {
-                    iolist_to_binary([
+                    [
                         ~"SELECT ",
                         job_columns(),
                         ~" FROM gaffer_jobs WHERE queue = $1"
-                    ]),
+                    ],
                     [Queue]
                 }
         end,
     [{SQL, Params}].
 
--spec job_delete(term()) -> [{binary(), list()}].
+-spec job_delete(term()) -> [{iodata(), list()}].
 job_delete(Id) ->
     [{~"DELETE FROM gaffer_jobs WHERE id = $1", [Id]}].
 
 job_columns() ->
-    job_columns(<<>>).
+    job_columns(~"").
 
 job_columns(Prefix) ->
-    iolist_to_binary(
-        lists:join(~", ", [
-            [Prefix, ~"id"],
-            [Prefix, ~"queue"],
-            [Prefix, ~"state"],
-            [Prefix, ~"payload"],
-            [Prefix, ~"attempt"],
-            [Prefix, ~"max_attempts"],
-            [Prefix, ~"priority"],
-            [Prefix, ~"errors"]
-            | [
-                ts_column([Prefix, C], C)
-             || C <:- ts_column_names()
-            ]
-        ])
-    ).
+    lists:join(~", ", [
+        [Prefix, ~"id"],
+        [Prefix, ~"queue"],
+        [Prefix, ~"state"],
+        [Prefix, ~"payload"],
+        [Prefix, ~"attempt"],
+        [Prefix, ~"max_attempts"],
+        [Prefix, ~"priority"],
+        [Prefix, ~"errors"]
+        | [
+            ts_column([Prefix, C], C)
+         || C <:- ts_column_names()
+        ]
+    ]).
 
 ts_column(Expr, Alias) ->
     [
@@ -261,13 +259,13 @@ ts_column_names() ->
 
 %--- Job lifecycle ------------------------------------------------------------
 
--spec job_claim(map(), map()) -> [{binary(), list()}].
+-spec job_claim(map(), map()) -> [{iodata(), list()}].
 job_claim(
     #{queue := Queue, limit := Limit},
     #{state := State, attempted_at := AttemptedAt}
 ) ->
     Now = AttemptedAt,
-    SQL = iolist_to_binary([
+    SQL = [
         ~"""
         WITH queue_config AS (
             SELECT global_max_workers FROM gaffer_queues WHERE name = $1
@@ -305,24 +303,24 @@ job_claim(
         """,
         ~" ",
         job_columns(~"j.")
-    ]),
+    ],
     [{SQL, [Queue, Now, Limit, State, Now]}].
 
--spec job_update(map()) -> [{binary(), list()}].
+-spec job_update(map()) -> [{iodata(), list()}].
 job_update(Encoded) ->
     #{id := Id} = Encoded,
     Fields = maps:remove(id, Encoded),
     {Sets, Vals} = set_clause(Fields),
     N = length(Vals) + 1,
-    SQL = iolist_to_binary([
+    SQL = [
         ~"UPDATE gaffer_jobs SET ",
         Sets,
         ~" WHERE id = $",
         integer_to_binary(N)
-    ]),
+    ],
     [{SQL, Vals ++ [Id]}].
 
--spec job_prune(map()) -> [{binary(), list()}].
+-spec job_prune(map()) -> [{iodata(), list()}].
 job_prune(Opts) ->
     States = maps:get(states, Opts, [completed, discarded]),
     TextArray = [atom_to_binary(S) || S <:- States],
