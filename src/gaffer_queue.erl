@@ -77,7 +77,7 @@ create(#{name := Name, driver := {Mod, DS} = Driver} = Conf) ->
             Persisted = Validated#{name => Name},
             Mod:queue_insert(Persisted, DS),
             persistent_term:put({gaffer_queue, Name}, Driver),
-            {ok, _Pid} = gaffer_sup:start_queue(Name),
+            {ok, _Pid} = gaffer_sup:start_queue(Name, Conf),
             ok;
         _ ->
             {error, already_exists}
@@ -216,12 +216,12 @@ schedule_job(Id, At, {Mod, DS}) ->
             end
     end.
 
--spec claim_jobs(gaffer:claim_opts(), driver()) ->
+-spec claim_jobs(gaffer:queue_name(), gaffer:claim_opts()) ->
     [gaffer:job()].
-claim_jobs(Opts, {Mod, DS}) ->
+claim_jobs(Queue, Opts) ->
     Now = erlang:system_time(),
     Changes = #{state => executing, attempted_at => Now},
-    Mod:job_claim(Opts, Changes, DS).
+    driver(Queue, job_claim, [Opts, Changes]).
 
 -spec prune_jobs(gaffer:prune_opts(), driver()) ->
     non_neg_integer().
@@ -236,7 +236,6 @@ queue_conf_template() ->
     #{
         global_max_workers => #{type => integer, default => 25},
         max_workers        => #{type => integer, default => 5},
-        poll_interval      => #{type => integer, default => 1000},
         shutdown_timeout   => #{type => integer, default => 5000},
         max_attempts       => #{type => integer, default => 3},
         timeout            => #{type => integer, default => 30000},
@@ -263,7 +262,7 @@ check_extra_keys(Map) ->
     end.
 
 strip_runtime(Conf) ->
-    maps:without([name, driver, worker], Conf).
+    maps:without([name, driver, worker, poll_interval], Conf).
 
 apply_defaults(Conf, Template) ->
     maps:fold(

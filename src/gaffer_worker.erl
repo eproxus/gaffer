@@ -1,6 +1,6 @@
 -module(gaffer_worker).
 
--hank([unused_callbacks]).
+-export([perform/2]).
 
 % Worker behaviour for gaffer job queues.
 %
@@ -14,3 +14,12 @@
     | {fail, term()}
     | {cancel, binary()}
     | {schedule, gaffer:timestamp()}.
+
+-spec perform(module(), gaffer:job()) ->
+    complete
+    | {complete, term()}
+    | {fail, term()}
+    | {cancel, binary()}
+    | {schedule, gaffer:timestamp()}.
+perform(Mod, Job) ->
+    Mod:perform(Job).
