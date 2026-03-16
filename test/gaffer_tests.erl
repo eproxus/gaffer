@@ -27,9 +27,11 @@ gaffer_test_() ->
         fun insert_scheduled_microsecond/1,
         % Get / list
         fun get_job/1,
+        fun get_not_found/1,
         fun list_jobs/1,
         % Delete
         fun delete_job/1,
+        fun delete_not_found/1,
         % List filtering
         fun list_filter_state/1,
         % Insert validation
@@ -53,8 +55,6 @@ gaffer_ets_test_() ->
     harness(
         gaffer_driver_ets,
         [
-            % Get / list (make_ref IDs not supported in PGO)
-            fun get_not_found/1,
             % Cancel
             fun cancel/1,
             fun cancel_not_found/1,
@@ -91,10 +91,7 @@ gaffer_pgo_test_() ->
         gaffer_driver_pgo,
         [
             % Calls driver directly to test upsert behavior
-            fun pgo_idempotent_create/1,
-            % Use <<0:128>> UUID; ETS uses make_ref() IDs
-            fun pgo_get_not_found/1,
-            fun pgo_delete_not_found/1
+            fun pgo_idempotent_create/1
         ],
         [
             % Driver migration/startup internals (mutate shared schema)
@@ -299,7 +296,7 @@ get_job(Driver) ->
 
 get_not_found(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
-    ?assertError({unknown_job, _}, gaffer:get(?Q, make_ref())).
+    ?assertError({unknown_job, _}, gaffer:get(?Q, keysmith:uuid(nil, binary))).
 
 list_jobs(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
@@ -322,6 +319,12 @@ delete_job(Driver) ->
     ok = gaffer:delete(?Q, Id),
     ?assertError({unknown_job, _}, gaffer:get(?Q, Id)).
 
+delete_not_found(Driver) ->
+    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
+    ?assertError(
+        {unknown_job, _}, gaffer:delete(?Q, keysmith:uuid(nil, binary))
+    ).
+
 %--- Cancel tests -------------------------------------------------------------
 
 cancel(Driver) ->
@@ -332,7 +335,9 @@ cancel(Driver) ->
 
 cancel_not_found(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
-    ?assertError({unknown_job, _}, gaffer:cancel(?Q, make_ref())).
+    ?assertError(
+        {unknown_job, _}, gaffer:cancel(?Q, keysmith:uuid(nil, binary))
+    ).
 
 cancel_scheduled(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
@@ -383,7 +388,8 @@ complete(Driver) ->
 complete_not_found(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     ?assertEqual(
-        {error, not_found}, gaffer_queue_runner:complete(?Q, make_ref())
+        {error, not_found},
+        gaffer_queue_runner:complete(?Q, keysmith:uuid(nil, binary))
     ).
 
 complete_available_error(Driver) ->
@@ -423,7 +429,8 @@ fail_not_found(Driver) ->
     ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
     E = #{attempt => 1, error => boom, at => erlang:system_time()},
     ?assertEqual(
-        {error, not_found}, gaffer_queue_runner:fail(?Q, make_ref(), E)
+        {error, not_found},
+        gaffer_queue_runner:fail(?Q, keysmith:uuid(nil, binary), E)
     ).
 
 fail_error_normalization(Driver) ->
@@ -466,7 +473,7 @@ schedule_not_found(Driver) ->
         erlang:system_time() + erlang:convert_time_unit(60, second, native),
     ?assertEqual(
         {error, not_found},
-        gaffer_queue_runner:schedule(?Q, make_ref(), FutureAt)
+        gaffer_queue_runner:schedule(?Q, keysmith:uuid(nil, binary), FutureAt)
     ).
 
 schedule_available_error(Driver) ->
@@ -574,14 +581,6 @@ pgo_idempotent_create(Driver) ->
     {gaffer_driver_pgo, DS} = Driver,
     Persisted = gaffer:get_queue(?Q),
     ?assertEqual(ok, gaffer_driver_pgo:queue_insert(Persisted, DS)).
-
-pgo_get_not_found(Driver) ->
-    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
-    ?assertError({unknown_job, _}, gaffer:get(?Q, <<0:128>>)).
-
-pgo_delete_not_found(Driver) ->
-    ok = gaffer:create_queue(#{name => ?Q, driver => Driver}),
-    ?assertError({unknown_job, _}, gaffer:delete(?Q, <<0:128>>)).
 
 %--- Helpers ------------------------------------------------------------------
 

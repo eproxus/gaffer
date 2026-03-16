@@ -88,7 +88,7 @@ queue_delete(Name, #{queues := Tab}) ->
 -spec job_insert(gaffer:new_job(), state()) ->
     gaffer:job().
 job_insert(Job, #{queued := Tab}) ->
-    Id = make_ref(),
+    Id = keysmith:uuid(7, binary),
     Job1 = Job#{id => Id},
     true = ets:insert(Tab, {Id, Job1}),
     Job1.
