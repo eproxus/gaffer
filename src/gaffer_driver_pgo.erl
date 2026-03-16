@@ -25,11 +25,6 @@
 % rollback/2 is an operational tool (shell use), not called from app code
 -ignore_xref([rollback/2]).
 
-% Stubs — remove ignore_xref as each callback gets implemented
--ignore_xref([
-    job_prune/2
-]).
-
 -type pool_owner() :: driver | user.
 -type state() :: #{
     pool := atom(),
@@ -167,8 +162,11 @@ job_update(Job, #{pool := Pool}) ->
     transaction(Pool, gaffer_postgres:job_update(Encoded)),
     ok.
 
--spec job_prune(gaffer:prune_opts(), state()) -> no_return().
-job_prune(_Opts, _State) -> error(not_implemented).
+-spec job_prune(gaffer:prune_opts(), state()) -> non_neg_integer().
+job_prune(Opts, #{pool := Pool}) ->
+    [#{num_rows := Count}] =
+        transaction(Pool, gaffer_postgres:job_prune(Opts)),
+    Count.
 
 %--- Internal -----------------------------------------------------------------
 

@@ -25,6 +25,7 @@
 -export([job_delete/1]).
 -export([job_claim/2]).
 -export([job_update/1]).
+-export([job_prune/1]).
 
 %--- Migrations ---------------------------------------------------------------
 
@@ -320,6 +321,17 @@ job_update(Encoded) ->
         integer_to_binary(N)
     ]),
     [{SQL, Vals ++ [Id]}].
+
+-spec job_prune(map()) -> [{binary(), list()}].
+job_prune(Opts) ->
+    States = maps:get(states, Opts, [completed, discarded]),
+    TextArray = [atom_to_binary(S) || S <:- States],
+    [
+        {
+            ~"DELETE FROM gaffer_jobs WHERE state = ANY($1::text[]) RETURNING id",
+            [TextArray]
+        }
+    ].
 
 %--- Internal -----------------------------------------------------------------
 

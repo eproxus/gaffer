@@ -64,7 +64,9 @@ gaffer_test_() ->
         fun schedule_available_error/1,
         % Claim
         fun claim/1,
-        fun claim_empty/1
+        fun claim_empty/1,
+        % Prune
+        fun prune/1
     ],
     Sequential = [
         % Tests that restart gaffer
@@ -74,17 +76,6 @@ gaffer_test_() ->
         harness(gaffer_driver_ets, Parallel, Sequential),
         harness(gaffer_driver_pgo, Parallel, Sequential)
     ].
-
-% Tests that run against ETS only (to be migrated into gaffer_test_/0)
-gaffer_ets_test_() ->
-    harness(
-        gaffer_driver_ets,
-        [
-            % Prune
-            fun prune/1
-        ],
-        []
-    ).
 
 % PGO-specific tests (driver internals, UUID IDs)
 gaffer_pgo_test_() ->
