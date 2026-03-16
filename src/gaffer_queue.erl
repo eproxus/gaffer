@@ -30,20 +30,7 @@
 
 -type driver() :: {module(), gaffer_driver:driver_opts()}.
 
--type queue_conf() :: #{
-    name := gaffer:queue_name(),
-    driver => {module(), gaffer_driver:driver_opts()},
-    worker => module(),
-    global_max_workers => pos_integer(),
-    max_workers => pos_integer(),
-    poll_interval => pos_integer() | infinity,
-    shutdown_timeout => pos_integer(),
-    max_attempts => pos_integer(),
-    timeout => pos_integer(),
-    backoff => pos_integer(),
-    priority => non_neg_integer(),
-    on_discard => gaffer:queue_name()
-}.
+-type queue_conf() :: gaffer:queue_conf().
 
 % elp:ignore W0048 - dialyzer over-constrains types from internal call sites
 -dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).

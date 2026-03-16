@@ -58,7 +58,7 @@
 -type queue_name() :: atom().
 
 -type timestamp() :: integer() | {erlang:time_unit(), integer()}.
-% Native time units (erlang:system_time/0) or `{Unit, Value}`.
+% Native time units (erlang:system_time/0) or {Unit, Value}.
 % Drivers normalize to their own precision.
 
 -type job() :: #{
@@ -104,7 +104,20 @@
     at := timestamp()
 }.
 
--type queue_conf() :: gaffer_queue:queue_conf().
+-type queue_conf() :: #{
+    name := queue_name(),
+    driver => {module(), gaffer_driver:driver_opts()},
+    worker => module(),
+    global_max_workers => pos_integer(),
+    max_workers => pos_integer(),
+    poll_interval => pos_integer() | infinity,
+    shutdown_timeout => pos_integer(),
+    max_attempts => pos_integer(),
+    timeout => pos_integer(),
+    backoff => pos_integer(),
+    priority => non_neg_integer(),
+    on_discard => queue_name()
+}.
 
 -type list_opts() :: #{
     queue => queue_name(),
