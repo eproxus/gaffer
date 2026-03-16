@@ -2,8 +2,8 @@
 
 ## Context
 
-Gaffer needs a production-grade persistent storage backend. The current drivers
-(mock and ETS) are for testing only. A Postgres driver enables durable job
+Gaffer needs a production-grade persistent storage backend. The ETS driver is
+officially supported but single-node only. A Postgres driver enables durable job
 storage, atomic claiming via `FOR UPDATE SKIP LOCKED`, and cluster-wide
 coordination through shared state.
 
@@ -26,7 +26,7 @@ thin execution wrapper.
 | Migrations | Up/down style, `gaffer_schema_version` table (single row) |
 | Docker in eunit | Rebar3 pre/post hooks for `docker compose` |
 | JSON library | OTP 27+ built-in `json` module |
-| UUID format | Configurable: `v4` (default) or `v7` (PG 18+) |
+| UUID format | `v4` (`gen_random_uuid()`) — hardcoded in migration DDL |
 
 ## Schema
 
@@ -116,21 +116,8 @@ CREATE INDEX idx_gaffer_jobs_scheduled
 
 ## UUID Format
 
-The job ID default is configurable via the `uuid_format` option passed to
-`gaffer_postgres:migrations/1`:
-
-| Value | SQL default | Requires |
-|---|---|---|
-| `v4` (default) | `gen_random_uuid()` | Postgres 13+ |
-| `v7` | `uuidv7()` | Postgres 18+ |
-
-UUIDv7 encodes a millisecond timestamp, making IDs roughly time-ordered. This
-improves B-tree locality on the primary key and makes `inserted_at`-based
-ordering nearly free. It is recommended for new deployments on Postgres 18+.
-
-The format is baked into the migration DDL at `start/1` time — it is not a
-runtime toggle. Changing the format after initial migration requires a manual
-`ALTER TABLE` to update the column default.
+Job IDs use `gen_random_uuid()` (v4), hardcoded in the migration DDL. Requires
+Postgres 13+.
 
 ## Module: `gaffer_postgres` (`src/gaffer_postgres.erl`)
 
@@ -140,14 +127,15 @@ Pure functional module — no pgo dependency. Contains all SQL query definitions
 
 ```
 % Migrations — returns versioned up/down query lists
-migrations/1              -> [{Version, Up, Down}]      % accepts #{uuid_format => v4 | v7}
+migrations/1              -> [{Version, Up, Down}]      % accepts #{} (options reserved for future use)
 migrate_up/1              -> [{SQL, Params}]             % wrap up queries + version update
 migrate_down/1            -> [{SQL, Params}]             % wrap down queries + version decrement
 ensure_migrations_table() -> [{SQL, Params}]             % CREATE IF NOT EXISTS + seed
 applied_version()         -> [{SQL, Params}]             % SELECT current version
 
 % Queue config queries — each returns [{SQL, Params}]
-queue_put/1           (QueueConf)
+queue_insert/1        (QueueConf)
+queue_update/2        (QueueName, Changes)
 queue_get/1           (QueueName)
 queue_delete/1        (QueueName)
 
@@ -199,7 +187,8 @@ WHERE j.id = c.id
 RETURNING <JOB_COLUMNS>
 ```
 
-- `queue_put/1` uses `INSERT ... ON CONFLICT (name) DO UPDATE SET ...` (upsert).
+- `queue_insert/1` uses `INSERT`. `queue_update/2` uses `UPDATE ... SET`.
+- `pgo_idempotent_create` test exercises upsert-like behavior via the driver.
 
 ## Module: `gaffer_driver_pgo` (`src/gaffer_driver_pgo.erl`)
 
@@ -220,17 +209,12 @@ for SQL and `pgo:query/3` for execution.
 Accepts:
 - `#{pool => atom()}` — use existing pool
 - `#{pool => atom(), start => map()}` — start a dedicated pool via `pgo:start_pool/2`
-- `#{uuid_format => v4 | v7}` — optional, defaults to `v4`
-
 After pool is ready, runs migrations (up only) with
-`gaffer_postgres:migrations(Opts)`:
+`gaffer_postgres:migrations(#{})`:
 1. `CREATE TABLE IF NOT EXISTS gaffer_schema_version ...` (seeds version 0)
 2. Read current version
 3. Apply pending migrations in order (each in a transaction)
 4. Update version in `gaffer_schema_version` after each successful up
-
-The `uuid_format` option from `start/1` is forwarded to `migrations/1` so the
-correct UUID default is embedded in the `CREATE TABLE` DDL.
 
 ### `rollback/2`
 
@@ -285,9 +269,9 @@ job_insert(Job, #{pool := Pool} = State) ->
 Errors from pgo raise exceptions (project convention: prefer exceptions over
 tagged returns for unrecoverable errors).
 
-`queue_put/2` must catch FK violation on `on_discard` and raise
-`error({on_discard_queue_not_found, Name})` so callers get a clear error when
-referencing a non-existent discard queue.
+`queue_insert/2` and `queue_update/3` must catch FK violation on `on_discard`
+and raise `error({on_discard_queue_not_found, Name})` so callers get a clear
+error when referencing a non-existent discard queue.
 
 ## Test Infrastructure
 
@@ -331,8 +315,8 @@ Three test fixtures:
   filtering, validation, and config mismatch detection.
 
 - **`gaffer_ets_test_/0`** — ETS-only tests for functionality not yet ported to
-  pgo (cancel, complete, fail, schedule, claim, prune). These move into
-  `gaffer_test_/0` as the pgo driver gains the corresponding callbacks.
+  pgo (prune). These move into `gaffer_test_/0` as the pgo driver gains the
+  corresponding callbacks.
 
 - **`gaffer_pgo_test_/0`** — pgo-specific tests that exercise driver internals
   (migration idempotency, rollback, owned-pool startup, upsert behavior,
@@ -343,7 +327,7 @@ Three test fixtures:
 | File | Change |
 |---|---|
 | `rebar.config` | Add `pgo` dep, add eunit pre/post hooks |
-| `hank` ignore | Add `gaffer_driver_pgo.erl` unused_callbacks if needed |
+| `gaffer_driver_ets.erl` | Moved from `test/support/` to `src/` (officially supported) |
 
 `pgo` is an optional/user-supplied dep — not a gaffer dep. It is added as a
 test-only dep in the test profile so eunit can run. Users who want the pgo
@@ -387,8 +371,8 @@ migrations work.
 
 ### Milestone 2: Queue config CRUD
 
-- [x] **Red**: EUnit `queue_put_get_delete` via shared harness + `pgo_idempotent_create`
-- [x] **Green**: `gaffer_postgres` `queue_put/1`, `queue_get/1`, `queue_delete/1`
+- [x] **Red**: EUnit queue CRUD via shared harness + `pgo_idempotent_create`
+- [x] **Green**: `gaffer_postgres` `queue_insert/1`, `queue_update/2`, `queue_get/1`, `queue_delete/1`
 - [x] **Green**: `gaffer_driver_pgo` queue callbacks, `row_to_queue_conf/2`
 - [x] **Verify**: `mise run verify` + `mise run test`
 
@@ -401,10 +385,10 @@ migrations work.
 
 ### Milestone 4: Job lifecycle (claim, update, state transitions)
 
-- [ ] **Red**: Move `claim`, `cancel`, `complete`, `fail` from `gaffer_ets_test_/0` into `gaffer_test_/0` (shared harness)
-- [ ] **Green**: `gaffer_postgres` `job_claim/2`, `job_update/1`
-- [ ] **Green**: `gaffer_driver_pgo` claim + update callbacks
-- [ ] **Verify**: `mise run verify` + `mise run test`
+- [x] **Red**: Move `claim`, `cancel`, `complete`, `fail` from `gaffer_ets_test_/0` into `gaffer_test_/0` (shared harness)
+- [x] **Green**: `gaffer_postgres` `job_claim/2`, `job_update/1`
+- [x] **Green**: `gaffer_driver_pgo` claim + update callbacks
+- [x] **Verify**: `mise run verify` + `mise run test`
 
 ### Milestone 5: Pruning + final verification
 

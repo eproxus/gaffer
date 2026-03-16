@@ -23,6 +23,8 @@
 -export([job_get/1]).
 -export([job_list/1]).
 -export([job_delete/1]).
+-export([job_claim/2]).
+-export([job_update/1]).
 
 %--- Migrations ---------------------------------------------------------------
 
@@ -146,11 +148,7 @@ queue_insert(Conf) ->
 
 -spec queue_update(gaffer:queue_name(), map()) -> [{binary(), list()}].
 queue_update(Name, Changes) ->
-    {Cols, Phs, Vals} = columns_and_values(Changes),
-    Sets = lists:join(~", ", [
-        <<C/binary, " = ", P/binary>>
-     || {C, P} <:- lists:zip(Cols, Phs)
-    ]),
+    {Sets, Vals} = set_clause(Changes),
     N = length(Vals) + 1,
     SQL = iolist_to_binary([
         ~"UPDATE gaffer_queues SET ",
@@ -220,29 +218,35 @@ job_delete(Id) ->
     [{~"DELETE FROM gaffer_jobs WHERE id = $1", [Id]}].
 
 job_columns() ->
+    job_columns(<<>>).
+
+job_columns(Prefix) ->
     iolist_to_binary(
         lists:join(~", ", [
-            ~"id",
-            ~"queue",
-            ~"state",
-            ~"payload",
-            ~"attempt",
-            ~"max_attempts",
-            ~"priority",
-            ~"errors"
-            | [ts_column(C) || C <:- ts_column_names()]
+            [Prefix, ~"id"],
+            [Prefix, ~"queue"],
+            [Prefix, ~"state"],
+            [Prefix, ~"payload"],
+            [Prefix, ~"attempt"],
+            [Prefix, ~"max_attempts"],
+            [Prefix, ~"priority"],
+            [Prefix, ~"errors"]
+            | [
+                ts_column([Prefix, C], C)
+             || C <:- ts_column_names()
+            ]
         ])
     ).
 
-ts_column(Col) ->
-    iolist_to_binary([
+ts_column(Expr, Alias) ->
+    [
         ~"EXTRACT(EPOCH FROM date_trunc('second', ",
-        Col,
+        Expr,
         ~"))::bigint * 1000000 + MOD(EXTRACT(MICROSECONDS FROM ",
-        Col,
+        Expr,
         ~")::bigint, 1000000) AS ",
-        Col
-    ]).
+        Alias
+    ].
 
 ts_column_names() ->
     [
@@ -254,14 +258,82 @@ ts_column_names() ->
         ~"discarded_at"
     ].
 
+%--- Job lifecycle ------------------------------------------------------------
+
+-spec job_claim(map(), map()) -> [{binary(), list()}].
+job_claim(
+    #{queue := Queue, limit := Limit},
+    #{state := State, attempted_at := AttemptedAt}
+) ->
+    Now = AttemptedAt,
+    SQL = iolist_to_binary([
+        ~"""
+        WITH queue_config AS (
+            SELECT global_max_workers FROM gaffer_queues WHERE name = $1
+        ),
+        executing_count AS (
+            SELECT count(*) AS cnt FROM gaffer_jobs
+            WHERE queue = $1 AND state = 'executing'
+        ),
+        effective_limit AS (
+            SELECT LEAST(
+                $3,
+                COALESCE(
+                    (SELECT global_max_workers FROM queue_config)
+                        - (SELECT cnt FROM executing_count),
+                    $3
+                )
+            ) AS lim
+        ),
+        candidates AS (
+            SELECT id FROM gaffer_jobs
+            WHERE queue = $1
+              AND state = 'available'
+              AND (scheduled_at IS NULL
+                   OR scheduled_at <= to_timestamp($2::bigint / 1000000.0))
+            ORDER BY priority ASC, inserted_at ASC
+            LIMIT GREATEST(0, (SELECT lim FROM effective_limit))
+            FOR UPDATE SKIP LOCKED
+        )
+        UPDATE gaffer_jobs j
+        SET state = $4,
+            attempted_at = to_timestamp($5::bigint / 1000000.0)
+        FROM candidates c
+        WHERE j.id = c.id
+        RETURNING
+        """,
+        ~" ",
+        job_columns(~"j.")
+    ]),
+    [{SQL, [Queue, Now, Limit, State, Now]}].
+
+-spec job_update(map()) -> [{binary(), list()}].
+job_update(Encoded) ->
+    #{id := Id} = Encoded,
+    Fields = maps:remove(id, Encoded),
+    {Sets, Vals} = set_clause(Fields),
+    N = length(Vals) + 1,
+    SQL = iolist_to_binary([
+        ~"UPDATE gaffer_jobs SET ",
+        Sets,
+        ~" WHERE id = $",
+        integer_to_binary(N)
+    ]),
+    [{SQL, Vals ++ [Id]}].
+
 %--- Internal -----------------------------------------------------------------
+
+set_clause(Map) ->
+    {Cols, Phs, Vals} = columns_and_values(Map),
+    Sets = lists:join(~", ", [[C, ~" = ", P] || {C, P} <:- lists:zip(Cols, Phs)]),
+    {Sets, Vals}.
 
 columns_and_values(Map) ->
     Pairs = maps:to_list(Map),
     Cols = [atom_to_binary(K) || {K, _} <:- Pairs],
     Vals = [V || {_, V} <:- Pairs],
     Phs = [
-        iolist_to_binary([~"$", integer_to_binary(I)])
+        [~"$", integer_to_binary(I)]
      || I <:- lists:seq(1, length(Cols))
     ],
     {Cols, Phs, Vals}.

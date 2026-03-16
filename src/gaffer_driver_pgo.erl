@@ -27,8 +27,6 @@
 
 % Stubs — remove ignore_xref as each callback gets implemented
 -ignore_xref([
-    job_claim/3,
-    job_update/2,
     job_prune/2
 ]).
 
@@ -154,11 +152,20 @@ job_delete(Id, #{pool := Pool}) ->
 
 -spec job_claim(
     gaffer:claim_opts(), gaffer:job_changes(), state()
-) -> no_return().
-job_claim(_Opts, _Changes, _State) -> error(not_implemented).
+) -> [gaffer:job()].
+job_claim(Opts, Changes, #{pool := Pool}) ->
+    {EncodedOpts, EncodedChanges} = encode_claim(Opts, Changes),
+    [#{rows := Rows}] =
+        transaction(
+            Pool, gaffer_postgres:job_claim(EncodedOpts, EncodedChanges)
+        ),
+    [row_to_job(R) || R <:- Rows].
 
--spec job_update(gaffer:job(), state()) -> no_return().
-job_update(_Job, _State) -> error(not_implemented).
+-spec job_update(gaffer:job(), state()) -> ok.
+job_update(Job, #{pool := Pool}) ->
+    Encoded = encode_job(Job),
+    transaction(Pool, gaffer_postgres:job_update(Encoded)),
+    ok.
 
 -spec job_prune(gaffer:prune_opts(), state()) -> no_return().
 job_prune(_Opts, _State) -> error(not_implemented).
@@ -236,7 +243,10 @@ encode_job(Job) ->
     maps:map(
         fun
             (K, V) when K =:= queue; K =:= state -> atom_to_binary(V);
-            (K, V) when K =:= payload; K =:= errors -> json:encode(V);
+            (payload, V) ->
+                json:encode(V);
+            (errors, V) ->
+                json:encode(encode_errors(V));
             (K, V) when
                 K =:= inserted_at;
                 K =:= scheduled_at;
@@ -296,6 +306,30 @@ normalize_error_keys(ErrorMap) ->
         #{},
         ErrorMap
     ).
+
+encode_errors(Errors) ->
+    [encode_error_entry(E) || E <:- Errors].
+
+encode_error_entry(Entry) ->
+    maps:map(
+        fun
+            (at, V) -> to_microsecond(V);
+            (error, V) -> iolist_to_binary(io_lib:format(~"~0tp", [V]));
+            (_K, V) -> V
+        end,
+        Entry
+    ).
+
+encode_claim(Opts, Changes) ->
+    #{queue := Queue, limit := Limit} = Opts,
+    #{state := State, attempted_at := AttemptedAt} = Changes,
+    {
+        #{queue => atom_to_binary(Queue), limit => Limit},
+        #{
+            state => atom_to_binary(State),
+            attempted_at => to_microsecond(AttemptedAt)
+        }
+    }.
 
 encode_list_opts(Opts) ->
     maps:map(
