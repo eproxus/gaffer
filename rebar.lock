@@ -1,5 +1,13 @@
+{"1.2.0",
 [{<<"eqwalizer_support">>,
   {git_subdir,"https://github.com/whatsapp/eqwalizer.git",
               {ref,"c75115d75192c66737010a47f8f8eb0056b78ea7"},
               "eqwalizer_support"},
-  0}].
+  0},
+ {<<"keysmith">>,{pkg,<<"keysmith">>,<<"0.6.1">>},0}]}.
+[
+{pkg_hash,[
+ {<<"keysmith">>, <<"E99A23227A310BD2755F96B083DF74A2D0B91F0D4DD6947CC55A7DF09302E293">>}]},
+{pkg_hash_ext,[
+ {<<"keysmith">>, <<"64B8E4C229934CF6540301F1C44BBE89A168AAB9162DB11F0406D020046B847F">>}]}
+].

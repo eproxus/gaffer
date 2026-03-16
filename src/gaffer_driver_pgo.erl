@@ -46,10 +46,9 @@
 start(Opts) ->
     State = start_pool(Opts),
     #{pool := Pool} = State,
-    MigrationOpts = maps:with([uuid_format], Opts),
     ensure_migrations_table(Pool),
     Current = applied_version(Pool),
-    Migrations = gaffer_postgres:migrations(MigrationOpts),
+    Migrations = gaffer_postgres:migrations(#{}),
     Pending = [M || {V, _, _} = M <:- Migrations, V > Current],
     run_migrations(Pool, fun gaffer_postgres:migrate_up/1, Pending),
     State.

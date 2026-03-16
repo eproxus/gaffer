@@ -122,9 +122,7 @@ update(Name, Updates) ->
 insert_job(Queue, Payload, Opts) ->
     NewJob = build_job(Queue, Payload, Opts),
     validate(NewJob),
-    Inserted = call(Queue, job_insert, [NewJob]),
-    validate_id(Inserted),
-    Inserted.
+    call(Queue, job_insert, [NewJob]).
 
 -spec get_job(gaffer:queue_name(), gaffer:job_id()) ->
     gaffer:job() | not_found.
@@ -292,6 +290,7 @@ build_job(Queue, Payload, Opts) ->
             _ -> scheduled
         end,
     Job = #{
+        id => keysmith:uuid(7, binary),
         queue => Queue,
         payload => Payload,
         state => State,
@@ -322,8 +321,6 @@ validate(#{queue := Queue} = Job) ->
         }
     ],
     run_checks(Checks).
-
-validate_id(#{id := _}) -> ok.
 
 %--- State machine (private) --------------------------------------------------
 

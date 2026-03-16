@@ -34,8 +34,7 @@
             Down :: [{binary(), list()}]
         }
     ].
-migrations(Opts) ->
-    UUIDDefault = uuid_column_default(maps:get(uuid_format, Opts, v4)),
+migrations(#{}) ->
     [
         {1,
             queries([
@@ -55,32 +54,27 @@ migrations(Opts) ->
                 )
                 """,
                 % Jobs
-                iolist_to_binary([
-                    ~"""
-                    CREATE TABLE gaffer_jobs (
-                        id             UUID PRIMARY KEY DEFAULT
-                    """,
-                    [~" ", UUIDDefault, ~","],
-                    ~"""
-                        queue          TEXT NOT NULL,
-                        state          TEXT NOT NULL DEFAULT 'available'
-                                           CHECK (state IN ('available', 'scheduled', 'executing',
-                                                            'completed', 'failed', 'cancelled',
-                                                            'discarded')),
-                        payload        JSONB NOT NULL DEFAULT '{}',
-                        attempt        INTEGER NOT NULL DEFAULT 0,
-                        max_attempts   INTEGER NOT NULL DEFAULT 3,
-                        priority       INTEGER NOT NULL DEFAULT 0,
-                        errors         JSONB NOT NULL DEFAULT '[]',
-                        scheduled_at   TIMESTAMPTZ,
-                        inserted_at    TIMESTAMPTZ NOT NULL,
-                        attempted_at   TIMESTAMPTZ,
-                        completed_at   TIMESTAMPTZ,
-                        cancelled_at   TIMESTAMPTZ,
-                        discarded_at   TIMESTAMPTZ
-                    )
-                    """
-                ]),
+                ~"""
+                CREATE TABLE gaffer_jobs (
+                    id             UUID PRIMARY KEY,
+                    queue          TEXT NOT NULL,
+                    state          TEXT NOT NULL
+                                       CHECK (state IN ('available', 'scheduled', 'executing',
+                                                        'completed', 'failed', 'cancelled',
+                                                        'discarded')),
+                    payload        JSONB NOT NULL,
+                    attempt        INTEGER NOT NULL,
+                    max_attempts   INTEGER NOT NULL,
+                    priority       INTEGER NOT NULL,
+                    errors         JSONB NOT NULL,
+                    scheduled_at   TIMESTAMPTZ,
+                    inserted_at    TIMESTAMPTZ NOT NULL,
+                    attempted_at   TIMESTAMPTZ,
+                    completed_at   TIMESTAMPTZ,
+                    cancelled_at   TIMESTAMPTZ,
+                    discarded_at   TIMESTAMPTZ
+                )
+                """,
                 % Query indexes
                 ~"""
                 CREATE INDEX idx_gaffer_jobs_claimable
@@ -274,6 +268,3 @@ columns_and_values(Map) ->
 
 queries(SQLs) ->
     [{SQL, []} || SQL <:- SQLs].
-
-uuid_column_default(v4) -> ~"gen_random_uuid()";
-uuid_column_default(v7) -> ~"uuidv7()".

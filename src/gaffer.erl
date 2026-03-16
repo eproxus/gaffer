@@ -49,7 +49,7 @@
 
 %--- Types --------------------------------------------------------------------
 
--type job_id() :: term().
+-type job_id() :: binary().
 -type job_state() ::
     available
     | scheduled
@@ -82,6 +82,7 @@
 }.
 
 -type new_job() :: #{
+    id := job_id(),
     queue := queue_name(),
     payload := term(),
     state := job_state(),

@@ -4,7 +4,8 @@
     {mod, {gaffer, []}},
     {applications, [
         kernel,
-        stdlib
+        stdlib,
+        keysmith
     ]},
     {licenses, ["MIT"]},
     {links, [
