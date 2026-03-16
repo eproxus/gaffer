@@ -24,7 +24,7 @@ thin execution wrapper.
 | Atomic claim | Single CTE with `FOR UPDATE SKIP LOCKED` |
 | pgo pool | Accept pool name or pool config |
 | Migrations | Up/down style, `gaffer_schema_version` table (single row) |
-| Docker in CT | Rebar3 pre/post hooks for `docker compose` |
+| Docker in eunit | Rebar3 pre/post hooks for `docker compose` |
 | JSON library | OTP 27+ built-in `json` module |
 | UUID format | Configurable: `v4` (default) or `v7` (PG 18+) |
 
@@ -313,56 +313,41 @@ services:
 ### Rebar3 Hooks (`rebar.config` test profile)
 
 ```erlang
-{pre_hooks, [{ct, "docker compose up -d --wait"}]},
-{post_hooks, [{ct, "docker compose down"}]}
+{pre_hooks, [{eunit, "docker compose up -d --wait"}]},
+{post_hooks, [{eunit, "docker compose down"}]}
 ```
 
-### CT Config (`config/test.config`)
+### Shared EUnit Harness: `test/gaffer_tests.erl`
 
-```erlang
-{postgres, [
-    {host, "localhost"},
-    {port, 54320},
-    {database, "gaffer_test"},
-    {user, "gaffer"},
-    {password, "gaffer"}
-]}.
-```
+All tests live in a single shared eunit module. The `harness/3` helper runs the
+same test list against multiple drivers (ETS and Postgres). Each driver gets its
+own `setup`/`teardown` that starts the necessary applications, creates a pool,
+runs migrations, and resets the database (DROP/CREATE schema) between tests.
 
-### CT Suite: `test/gaffer_driver_pgo_SUITE.erl`
+Three test fixtures:
 
-- `init_per_suite/1` — start pgo app, extract pool config from CT config
-- `end_per_suite/1` — no-op (pool managed per testcase)
-- `init_per_testcase/2` — start pool, reset database (DROP/CREATE schema)
-- `end_per_testcase/2` — reset database, stop pool
+- **`gaffer_test_/0`** — cross-driver tests (run against both ETS and pgo).
+  Uses the public `gaffer` API. Covers queue CRUD, job insert/get/list/delete,
+  filtering, validation, and config mismatch detection.
 
-**Test cases:**
-- `migration_idempotent` — calling start twice doesn't fail
-- `migration_rollback` — rollback removes tables, resets version
-- `start_with_new_pool` — start with owned pool (`start` key), verify `owns_pool`
-- `queue_put_get_delete` — queue config CRUD
-- `insert_and_get` — round-trip all fields
-- `insert_and_list` — list with queue/state filters
-- `claim_basic` — claim transitions to executing
-- `claim_priority_ordering` — lower priority claimed first
-- `claim_scheduled_filtering` — future-scheduled jobs skipped
-- `claim_skip_locked` — concurrent claims don't double-claim
-- `claim_global_max_workers` — respects limit from queue config
-- `cancel_job` — state transition
-- `complete_and_fail` — lifecycle transitions
-- `update_job` — update and re-read
-- `prune` — delete terminal-state jobs, verify count
+- **`gaffer_ets_test_/0`** — ETS-only tests for functionality not yet ported to
+  pgo (cancel, complete, fail, schedule, claim, prune). These move into
+  `gaffer_test_/0` as the pgo driver gains the corresponding callbacks.
+
+- **`gaffer_pgo_test_/0`** — pgo-specific tests that exercise driver internals
+  (migration idempotency, rollback, owned-pool startup, upsert behavior,
+  UUID-based not-found lookups).
 
 ## Changes to Existing Files
 
 | File | Change |
 |---|---|
-| `rebar.config` | Add `pgo` dep, add CT pre/post hooks, add `config/test.config` |
+| `rebar.config` | Add `pgo` dep, add eunit pre/post hooks |
 | `hank` ignore | Add `gaffer_driver_pgo.erl` unused_callbacks if needed |
 
 `pgo` is an optional/user-supplied dep — not a gaffer dep. It is added as a
-test-only dep in the test profile so CT can run. Users who want the pgo driver
-add `{pgo, "0.14.0"}` to their own deps.
+test-only dep in the test profile so eunit can run. Users who want the pgo
+driver add `{pgo, "0.14.0"}` to their own deps.
 
 All `gaffer_postgres` functions return `[{SQL, Params}]` — a uniform list of
 query tuples. The driver always runs these in a transaction. Migrations also
@@ -374,8 +359,6 @@ use `[{SQL, Params}]` tuples (with `[]` params for DDL).
 |---|---|
 | `src/gaffer_postgres.erl` | SQL query definitions |
 | `src/gaffer_driver_pgo.erl` | pgo-based driver (behaviour impl) |
-| `test/gaffer_driver_pgo_SUITE.erl` | CT test suite |
-| `config/test.config` | Postgres connection config for CT |
 | `docker-compose.yml` | Test Postgres container |
 
 ## Implementation Order
@@ -386,7 +369,7 @@ cleanly.
 
 Each milestone follows TDD (red-green):
 
-1. **Red** — Write CT test cases first (they must compile but fail)
+1. **Red** — Write eunit test cases first (they must compile but fail)
 2. **Green** — Implement until tests pass
 3. **Verify** — `mise run verify` + `mise run test`
 
@@ -396,37 +379,36 @@ Everything needed to boot the driver against a real Postgres and verify
 migrations work.
 
 - [x] `docker-compose.yml`
-- [x] `config/test.config`
-- [x] `rebar.config` — add `pgo` dep, CT pre/post hooks
+- [x] `rebar.config` — add `pgo` dep, eunit pre/post hooks
 - [x] `gaffer_postgres`: `migrations/1`, `migrate_up/1`, `migrate_down/1`, `ensure_migrations_table/0`, `applied_version/0`
 - [x] `gaffer_driver_pgo`: `start/1`, `stop/1`, `rollback/2`
-- [x] CT: `init_per_suite`, `end_per_suite`, `migration_idempotent`, `migration_rollback`, `start_with_new_pool`
+- [x] EUnit: `pgo_migration_idempotent`, `pgo_migration_rollback`, `pgo_start_with_new_pool`
 - [x] Verify: `mise run verify` + `mise run test`
 
 ### Milestone 2: Queue config CRUD
 
-- [x] **Red**: CT `queue_put_get_delete` (calls driver queue callbacks, asserts round-trip)
+- [x] **Red**: EUnit `queue_put_get_delete` via shared harness + `pgo_idempotent_create`
 - [x] **Green**: `gaffer_postgres` `queue_put/1`, `queue_get/1`, `queue_delete/1`
 - [x] **Green**: `gaffer_driver_pgo` queue callbacks, `row_to_queue_conf/2`
 - [x] **Verify**: `mise run verify` + `mise run test`
 
 ### Milestone 3: Job basics (insert, get, list, delete)
 
-- [ ] **Red**: CT `insert_and_get`, `insert_and_list`, `job_delete` (call driver job callbacks, assert round-trip)
-- [ ] **Green**: `gaffer_postgres` `job_insert/1`, `job_get/1`, `job_list/1`, `job_delete/1`
-- [ ] **Green**: `gaffer_driver_pgo` job CRUD callbacks, `row_to_job/2`
-- [ ] **Verify**: `mise run verify` + `mise run test`
+- [x] **Red**: EUnit `insert`, `get_job`, `list_jobs`, `delete_job` via shared harness + `pgo_get_not_found`, `pgo_delete_not_found`
+- [x] **Green**: `gaffer_postgres` `job_insert/1`, `job_get/1`, `job_list/1`, `job_delete/1`
+- [x] **Green**: `gaffer_driver_pgo` job CRUD callbacks, `row_to_job/2`
+- [x] **Verify**: `mise run verify` + `mise run test`
 
 ### Milestone 4: Job lifecycle (claim, update, state transitions)
 
-- [ ] **Red**: CT `claim_basic`, `claim_priority_ordering`, `claim_scheduled_filtering`, `claim_skip_locked`, `claim_global_max_workers`, `update_job`, `complete_and_fail`, `cancel_job`
+- [ ] **Red**: Move `claim`, `cancel`, `complete`, `fail` from `gaffer_ets_test_/0` into `gaffer_test_/0` (shared harness)
 - [ ] **Green**: `gaffer_postgres` `job_claim/2`, `job_update/1`
 - [ ] **Green**: `gaffer_driver_pgo` claim + update callbacks
 - [ ] **Verify**: `mise run verify` + `mise run test`
 
 ### Milestone 5: Pruning + final verification
 
-- [ ] **Red**: CT `prune` (insert terminal jobs, call prune, assert deleted)
+- [ ] **Red**: Move `prune` from `gaffer_ets_test_/0` into `gaffer_test_/0` (shared harness)
 - [ ] **Green**: `gaffer_postgres` `job_prune/1`
 - [ ] **Green**: `gaffer_driver_pgo` prune callback
 - [ ] **Verify**: `mise run verify` + `mise run test`
