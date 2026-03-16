@@ -72,10 +72,7 @@ queue_update(Name, Updates, #{queues := Tab}) ->
 -spec queue_get(gaffer:queue_name(), state()) ->
     gaffer:queue_conf() | not_found.
 queue_get(Name, #{queues := Tab}) ->
-    case ets:lookup(Tab, Name) of
-        [{_, Conf}] -> Conf;
-        [] -> not_found
-    end.
+    ets:lookup_element(Tab, Name, 2, not_found).
 
 -spec queue_delete(gaffer:queue_name(), state()) ->
     ok.
@@ -98,10 +95,7 @@ job_get(Id, #{queued := Queued, locked := Locked}) ->
         [{_, Job}] ->
             Job;
         [] ->
-            case ets:lookup(Queued, Id) of
-                [{_, Job}] -> Job;
-                [] -> not_found
-            end
+            ets:lookup_element(Queued, Id, 2, not_found)
     end.
 
 -spec job_list(gaffer:list_opts(), state()) ->

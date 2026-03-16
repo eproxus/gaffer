@@ -98,6 +98,7 @@ dispatch({prune, Opts}, Driver) ->
     gaffer_queue:prune_jobs(Opts, Driver).
 
 proc_name(Name) ->
+    % elp:ignore W0023 - bounded by queue count, not user input
     binary_to_atom(
         <<"gaffer_queue_runner_", (atom_to_binary(Name))/binary>>
     ).

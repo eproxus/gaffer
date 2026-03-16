@@ -50,8 +50,7 @@
     on_discard => gaffer:queue_name()
 }.
 
-% Dialyzer over-constrains types from internal call sites, making exhaustive
-% clauses in the state machine appear unreachable.
+% elp:ignore W0048 - dialyzer over-constrains types from internal call sites
 -dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).
 -export_type([driver/0, queue_conf/0]).
 
@@ -304,7 +303,7 @@ build_job(Queue, Payload, Opts) ->
 
 %--- Validation (private) -----------------------------------------------------
 
--spec validate(map()) -> ok.
+-spec validate(gaffer:job()) -> ok.
 validate(#{queue := Queue} = Job) ->
     Checks = [
         {
@@ -352,6 +351,7 @@ to_microsecond({Unit, V}) ->
 to_microsecond(Native) ->
     erlang:convert_time_unit(Native, native, microsecond).
 
+-spec valid_transition(gaffer:job_state(), gaffer:job_state()) -> boolean().
 valid_transition(available, executing) -> true;
 valid_transition(available, cancelled) -> true;
 valid_transition(scheduled, available) -> true;
@@ -364,6 +364,8 @@ valid_transition(failed, discarded) -> true;
 valid_transition(failed, scheduled) -> true;
 valid_transition(_, _) -> false.
 
+-spec set_timestamp(gaffer:job_state(), integer(), gaffer:job()) ->
+    gaffer:job().
 set_timestamp(scheduled, TS, Job) -> Job#{scheduled_at => TS};
 set_timestamp(executing, TS, Job) -> Job#{attempted_at => TS};
 set_timestamp(completed, TS, Job) -> Job#{completed_at => TS};

@@ -201,6 +201,7 @@ drain(Queue) ->
     drain(Queue, 5000).
 
 -spec drain(queue_name(), timeout()) -> ok.
+% elp:ignore W0048 - stubs (see TODO below)
 -dialyzer([
     {no_return, [drain/1, drain/2, flush/1, flush/2]},
     {no_contracts, [drain/1, drain/2, flush/1, flush/2]}
