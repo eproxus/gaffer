@@ -1,10 +1,7 @@
 -module(gaffer_queue).
 
-% Functional API for managing a queue and its jobs.
-%
-% This is the only module that calls driver callbacks.
-
-% Queue management
+% API
+% Queues
 -export([init/0]).
 -export([teardown/0]).
 -export([create/1]).
@@ -13,18 +10,14 @@
 -export([update/2]).
 -export([list/0]).
 -export([lookup/1]).
-
-% Queue conf
 -export([queue_conf_template/0]).
-
-% Job operations (queue-name based)
+% Jobs (user)
 -export([insert_job/3]).
 -export([get_job/2]).
 -export([list_jobs/1]).
 -export([cancel_job/2]).
 -export([delete_job/2]).
-
-% Job operations (driver-explicit, used by gaffer_queue_runner)
+% Jobs (runner)
 -export([complete_job/2]).
 -export([fail_job/3]).
 -export([schedule_job/3]).
@@ -32,6 +25,8 @@
 -export([prune_jobs/2]).
 
 -compile({no_auto_import, [get/1]}).
+
+%--- Types ---------------------------------------------------------------------
 
 -type driver() :: {module(), gaffer_driver:driver_opts()}.
 
@@ -52,9 +47,12 @@
 
 % elp:ignore W0048 - dialyzer over-constrains types from internal call sites
 -dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).
+
 -export_type([driver/0, queue_conf/0]).
 
-%--- Queue management ----------------------------------------------------------
+%--- API -----------------------------------------------------------------------
+
+% Queues
 
 -spec init() -> ok.
 init() ->
@@ -64,8 +62,7 @@ init() ->
 teardown() ->
     _ = [
         persistent_term:erase(Key)
-     || {Key, _} <:- persistent_term:get(),
-        is_gaffer_key(Key)
+     || {Key, _} <:- persistent_term:get(), is_gaffer_key(Key)
     ],
     ok.
 
@@ -114,7 +111,21 @@ update(Name, Updates) ->
     Validated = validate_updates(strip_runtime(Updates)),
     driver(Name, queue_update, [Name, Validated]).
 
-%--- Job operations (queue-name based) -----------------------------------------
+-spec queue_conf_template() -> map().
+% erlfmt-ignore
+queue_conf_template() ->
+    #{
+        global_max_workers => #{type => integer, default => 25},
+        max_workers        => #{type => integer, default => 5},
+        shutdown_timeout   => #{type => integer, default => 5000},
+        max_attempts       => #{type => integer, default => 3},
+        timeout            => #{type => integer, default => 30000},
+        backoff            => #{type => integer, default => 1000},
+        priority           => #{type => integer, default => 0},
+        on_discard         => #{type => atom}
+    }.
+
+% Job (user)
 
 -spec insert_job(gaffer:queue_name(), term(), gaffer:job_opts()) ->
     gaffer:job().
@@ -156,7 +167,7 @@ cancel_job(Queue, JobId) ->
             end
     end.
 
-%--- Job operations (driver-explicit) ------------------------------------------
+% Job (runner)
 
 -spec complete_job(gaffer:job_id(), driver()) ->
     {ok, gaffer:job()} | {error, term()}.
@@ -228,21 +239,12 @@ claim_jobs(Queue, Opts) ->
 prune_jobs(Opts, {Mod, DS}) ->
     Mod:job_prune(Opts, DS).
 
-%--- Queue conf template & validation (exported) ------------------------------
+%--- Internal ------------------------------------------------------------------
 
--spec queue_conf_template() -> map().
-% erlfmt-ignore
-queue_conf_template() ->
-    #{
-        global_max_workers => #{type => integer, default => 25},
-        max_workers        => #{type => integer, default => 5},
-        shutdown_timeout   => #{type => integer, default => 5000},
-        max_attempts       => #{type => integer, default => 3},
-        timeout            => #{type => integer, default => 30000},
-        backoff            => #{type => integer, default => 1000},
-        priority           => #{type => integer, default => 0},
-        on_discard         => #{type => atom}
-    }.
+is_gaffer_key({gaffer_queue, _}) -> true;
+is_gaffer_key(_) -> false.
+
+% Config validation
 
 validate_conf(Conf) ->
     check_extra_keys(Conf),
@@ -277,7 +279,7 @@ apply_defaults(Conf, Template) ->
         Template
     ).
 
-%--- Job construction (private) -----------------------------------------------
+% Job construction
 
 build_job(Queue, Payload, Opts) ->
     Now = erlang:system_time(),
@@ -300,8 +302,6 @@ build_job(Queue, Payload, Opts) ->
     },
     maybe_put(scheduled_at, ScheduledAt, Job).
 
-%--- Validation (private) -----------------------------------------------------
-
 -spec validate(gaffer:job()) -> ok.
 validate(#{queue := Queue} = Job) ->
     Checks = [
@@ -320,7 +320,15 @@ validate(#{queue := Queue} = Job) ->
     ],
     run_checks(Checks).
 
-%--- State machine (private) --------------------------------------------------
+run_checks([]) ->
+    ok;
+run_checks([{Check, Reason} | Rest]) ->
+    case Check() of
+        true -> run_checks(Rest);
+        false -> error({invalid_job, Reason})
+    end.
+
+% Job state machine
 
 transition(#{state := From} = Job, To) ->
     case valid_transition(From, To) of
@@ -375,15 +383,7 @@ set_timestamp(_State, _TS, Job) -> Job.
 maybe_put(_Key, undefined, Map) -> Map;
 maybe_put(Key, Value, Map) -> Map#{Key => Value}.
 
-run_checks([]) ->
-    ok;
-run_checks([{Check, Reason} | Rest]) ->
-    case Check() of
-        true -> run_checks(Rest);
-        false -> error({invalid_job, Reason})
-    end.
-
-%--- Driver dispatch (private) ------------------------------------------------
+% Driver dispatch
 
 driver(Queue, Fun, Args) ->
     {Mod, DS} = lookup(Queue),
@@ -395,6 +395,3 @@ lookup(Name) ->
         undefined -> error({unknown_queue, Name});
         Driver -> Driver
     end.
-
-is_gaffer_key({gaffer_queue, _}) -> true;
-is_gaffer_key(_) -> false.

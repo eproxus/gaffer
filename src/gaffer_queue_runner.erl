@@ -2,31 +2,27 @@
 
 -behaviour(gen_statem).
 
-% Public API
+% API
+-ignore_xref(start_link/2).
 -export([start_link/2]).
+-ignore_xref(poll/1).
 -export([poll/1]).
+-ignore_xref(complete/2).
 -export([complete/2]).
+-ignore_xref(fail/3).
 -export([fail/3]).
+-ignore_xref(schedule/3).
 -export([schedule/3]).
+-ignore_xref(claim/2).
 -export([claim/2]).
+-ignore_xref(prune/2).
 -export([prune/2]).
-
-% gen_statem callbacks
+% gen_statem Callbacks
 -export([callback_mode/0]).
 -export([init/1]).
 -export([handle_event/4]).
 
--ignore_xref([
-    start_link/2,
-    poll/1,
-    complete/2,
-    fail/3,
-    schedule/3,
-    claim/2,
-    prune/2
-]).
-
-%--- Public API ---------------------------------------------------------------
+%--- API -----------------------------------------------------------------------
 
 -spec start_link(gaffer:queue_name(), gaffer_queue:queue_conf()) ->
     gen_statem:start_ret().
@@ -75,7 +71,7 @@ claim(Name, Opts) ->
 prune(Name, Opts) ->
     gen_statem:call(proc_name(Name), {prune, Opts}).
 
-%--- gen_statem callbacks -----------------------------------------------------
+%--- gen_statem Callbacks ------------------------------------------------------
 
 callback_mode() -> handle_event_function.
 
@@ -120,7 +116,7 @@ handle_event(
             {keep_state, Data}
     end.
 
-%--- Internal -----------------------------------------------------------------
+%--- Internal ------------------------------------------------------------------
 
 do_poll(
     Name,

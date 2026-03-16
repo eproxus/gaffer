@@ -6,19 +6,19 @@
 % All public functions return [{iodata(), list()}] — a uniform list
 % of query tuples. The driver runs these in a transaction.
 
+% API
+% Migrations
 -export([migrations/1]).
 -export([migrate_up/1]).
 -export([migrate_down/1]).
 -export([ensure_migrations_table/0]).
 -export([applied_version/0]).
-
-% Queue CRUD
+% Queues
 -export([queue_insert/1]).
 -export([queue_update/2]).
 -export([queue_get/1]).
 -export([queue_delete/1]).
-
-% Job CRUD
+% Jobs
 -export([job_insert/1]).
 -export([job_get/1]).
 -export([job_list/1]).
@@ -27,7 +27,9 @@
 -export([job_update/1]).
 -export([job_prune/1]).
 
-%--- Migrations ---------------------------------------------------------------
+%--- API -----------------------------------------------------------------------
+
+% Migrations
 
 -spec migrations(Opts :: map()) ->
     [
@@ -133,7 +135,7 @@ ensure_migrations_table() ->
 applied_version() ->
     [{~"SELECT version FROM gaffer_schema_version", []}].
 
-%--- Queue CRUD ---------------------------------------------------------------
+% Queues
 
 -spec queue_insert(map()) -> [{iodata(), list()}].
 queue_insert(Conf) ->
@@ -167,7 +169,7 @@ queue_get(Name) ->
 queue_delete(Name) ->
     [{~"DELETE FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
 
-%--- Job CRUD ----------------------------------------------------------------
+% Jobs
 
 -spec job_insert(map()) -> [{iodata(), list()}].
 job_insert(Encoded) ->
@@ -257,7 +259,7 @@ ts_column_names() ->
         ~"discarded_at"
     ].
 
-%--- Job lifecycle ------------------------------------------------------------
+% Job lifecycle
 
 -spec job_claim(map(), map()) -> [{iodata(), list()}].
 job_claim(
@@ -331,7 +333,7 @@ job_prune(Opts) ->
         }
     ].
 
-%--- Internal -----------------------------------------------------------------
+%--- Internal ------------------------------------------------------------------
 
 set_clause(Map) ->
     {Cols, Phs, Vals} = columns_and_values(Map),

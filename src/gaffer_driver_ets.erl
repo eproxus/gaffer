@@ -2,12 +2,16 @@
 
 -behaviour(gaffer_driver).
 
+% gaffer_driver Callbacks
+% Lifecycle
 -export([start/1]).
 -export([stop/1]).
+% Queues
 -export([queue_insert/2]).
 -export([queue_update/3]).
 -export([queue_get/2]).
 -export([queue_delete/2]).
+% Jobs
 -export([job_insert/2]).
 -export([job_get/2]).
 -export([job_list/2]).
@@ -24,7 +28,9 @@
     queues := ets:table()
 }.
 
-%--- Lifecycle ----------------------------------------------------------------
+%--- gaffer_driver Callbacks ---------------------------------------------------
+
+% Lifecycle
 
 -spec start(map()) -> state().
 start(_Opts) ->
@@ -40,7 +46,7 @@ stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
     ets:delete(Queues),
     ok.
 
-%--- Queue config -------------------------------------------------------------
+% Queues
 
 -spec queue_insert(gaffer:queue_conf(), state()) ->
     ok.
@@ -80,7 +86,7 @@ queue_delete(Name, #{queues := Tab}) ->
     true = ets:delete(Tab, Name),
     ok.
 
-%--- Jobs ---------------------------------------------------------------------
+% Jobs
 
 -spec job_insert(gaffer:new_job(), state()) ->
     gaffer:job().
@@ -181,7 +187,7 @@ job_prune(Opts, #{queued := Queued, locked := Locked}) ->
     _ = [ets:delete(Locked, Id) || {Id, _} <:- AllL],
     Count.
 
-%--- Internal -----------------------------------------------------------------
+%--- Internal ------------------------------------------------------------------
 
 validate_on_discard(#{on_discard := Target}, Tab) ->
     case ets:member(Tab, Target) of

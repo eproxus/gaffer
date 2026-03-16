@@ -4,52 +4,47 @@
 
 -behaviour(application).
 
-% Application callbacks
+% Application Callbacks
 -export([start/2]).
 -export([stop/1]).
 
+% API
 % Queue management
+-ignore_xref(create_queue/1).
 -export([create_queue/1]).
+-ignore_xref(get_queue/1).
 -export([get_queue/1]).
+-ignore_xref(update_queue/2).
 -export([update_queue/2]).
+-ignore_xref(delete_queue/1).
 -export([delete_queue/1]).
+-ignore_xref(list_queues/0).
 -export([list_queues/0]).
-
 % Enqueueing
+-ignore_xref(insert/2).
 -export([insert/2]).
+-ignore_xref(insert/3).
 -export([insert/3]).
-
 % Lifecycle
+-ignore_xref(cancel/2).
 -export([cancel/2]).
+-ignore_xref(drain/1).
 -export([drain/1]).
+-ignore_xref(drain/2).
 -export([drain/2]).
+-ignore_xref(flush/1).
 -export([flush/1]).
+-ignore_xref(flush/2).
 -export([flush/2]).
-
 % Querying
+-ignore_xref(get/2).
 -export([get/2]).
+-ignore_xref(list/1).
 -export([list/1]).
+-ignore_xref(delete/2).
 -export([delete/2]).
 
--ignore_xref([
-    create_queue/1,
-    get_queue/1,
-    update_queue/2,
-    delete_queue/1,
-    list_queues/0,
-    insert/2,
-    insert/3,
-    cancel/2,
-    drain/1,
-    drain/2,
-    flush/1,
-    flush/2,
-    get/2,
-    list/1,
-    delete/2
-]).
-
-%--- Types --------------------------------------------------------------------
+%--- Types ---------------------------------------------------------------------
 
 -type job_id() :: binary().
 -type job_state() ::
@@ -146,7 +141,7 @@
     prune_opts/0
 ]).
 
-%--- Application callbacks ----------------------------------------------------
+%--- Application Callbacks -----------------------------------------------------
 
 start(_StartType, _StartArgs) ->
     gaffer_queue:init(),
@@ -155,7 +150,9 @@ start(_StartType, _StartArgs) ->
 stop(_State) ->
     gaffer_queue:teardown().
 
-%--- Queue management ---------------------------------------------------------
+%--- API -----------------------------------------------------------------------
+
+% Queue management
 
 -spec create_queue(queue_conf()) -> ok | {error, already_exists}.
 create_queue(Conf) ->
@@ -177,7 +174,7 @@ delete_queue(Name) ->
 list_queues() ->
     gaffer_queue:list().
 
-%--- Enqueueing ---------------------------------------------------------------
+% Enqueueing
 
 -spec insert(queue_name(), term()) -> job().
 insert(Queue, Payload) ->
@@ -187,7 +184,7 @@ insert(Queue, Payload) ->
 insert(Queue, Payload, Opts) ->
     gaffer_queue:insert_job(Queue, Payload, Opts).
 
-%--- Lifecycle ----------------------------------------------------------------
+% Lifecycle
 
 -spec cancel(queue_name(), job_id()) ->
     {ok, job()} | {error, {invalid_transition, term()}}.
@@ -221,7 +218,7 @@ flush(_Queue, _Timeout) ->
     % TODO: process all remaining items in the queue until empty
     error(not_implemented).
 
-%--- Querying -----------------------------------------------------------------
+% Querying
 
 -spec get(queue_name(), job_id()) -> job().
 get(Queue, JobId) ->

@@ -2,18 +2,18 @@
 
 -behaviour(gaffer_driver).
 
+% gaffer_driver Callbacks
 % Lifecycle
 -export([start/1]).
 -export([stop/1]).
+-ignore_xref(rollback/2).
 -export([rollback/2]).
-
-% Queue config
+% Queues
 -export([queue_insert/2]).
 -export([queue_update/3]).
 -export([queue_get/2]).
 -export([queue_delete/2]).
-
-% Job CRUD
+% Jobs
 -export([job_insert/2]).
 -export([job_get/2]).
 -export([job_list/2]).
@@ -21,9 +21,6 @@
 -export([job_claim/3]).
 -export([job_update/2]).
 -export([job_prune/2]).
-
-% rollback/2 is an operational tool (shell use), not called from app code
--ignore_xref([rollback/2]).
 
 -type pool_owner() :: driver | user.
 -type state() :: #{
@@ -33,7 +30,9 @@
 
 -export_type([state/0]).
 
-%--- Lifecycle ----------------------------------------------------------------
+%--- gaffer_driver Callbacks ---------------------------------------------------
+
+% Lifecycle
 
 -spec start(map()) -> state().
 start(Opts) ->
@@ -61,7 +60,7 @@ rollback(TargetVersion, #{pool := Pool}) ->
     run_migrations(Pool, fun gaffer_postgres:migrate_down/1, ToRollback),
     ok.
 
-%--- Queue config -------------------------------------------------------------
+% Queues
 
 -spec queue_insert(gaffer:queue_conf(), state()) -> ok.
 queue_insert(Conf, #{pool := Pool} = State) ->
@@ -111,7 +110,7 @@ queue_delete(Name, #{pool := Pool}) ->
     transaction(Pool, gaffer_postgres:queue_delete(Name)),
     ok.
 
-%--- Job CRUD ----------------------------------------------------------------
+% Jobs
 
 -spec job_insert(gaffer:new_job(), state()) -> gaffer:job().
 job_insert(Job, #{pool := Pool}) ->
@@ -168,7 +167,7 @@ job_prune(Opts, #{pool := Pool}) ->
         transaction(Pool, gaffer_postgres:job_prune(Opts)),
     Count.
 
-%--- Internal -----------------------------------------------------------------
+%--- Internal ------------------------------------------------------------------
 
 queue_transaction(Pool, Queries, Conf) ->
     try

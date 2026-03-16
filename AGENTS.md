@@ -43,6 +43,12 @@ Modules:
 * Prefer map pattern matching over `maps:find/2`
 * Keep JSON payloads with binary keys, don't convert to atoms
 * Never chain shell commands with `&&`
+* Use `gaffer` and `gaffer_queue` as templates for module layouts (comments,
+  sections etc.)
+* Exported functions at the top under API heading
+    * Sorted under relevant sections if needed
+* Private functions below under the Internal heading
+    * Here functions should be sorted in the order of appearance in the module
 
 ## Changes
 
