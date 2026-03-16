@@ -28,6 +28,7 @@ Modules:
 * `gaffer_queue` - Functional queue implementation
 * `gaffer_queue_runner` - Process managing a queue and its jobs (using `gaffer_queue`)
 * `gaffer_driver` - Storage-agnostic driver behaviour
+* `gaffer_driver_ets` - ETS driver implementation (in-memory, for testing/dev)
 * `gaffer_driver_pgo` - Postgres driver implementation (using `pgo`, test-only dep)
 * `gaffer_postgres` - Postgres SQL query builder / deserializer
 * `gaffer_worker` - Worker process executing jobs
@@ -38,10 +39,15 @@ Modules:
 * Prefer exceptions over tagged return values. If the caller cannot meaningfully
   act on the return value at the call site, an exception should be used.
 * Always comment using single comment characters (%)
+* Use binary sigils (`~"bin"`) over old-style binaries (`<<"bin">>`)
+* Prefer map pattern matching over `maps:find/2`
+* Keep JSON payloads with binary keys, don't convert to atoms
+* Never chain shell commands with `&&`
 
 ## Changes
 
 After every change
-* Format the code (`rebar3 fmt`)
-* Verify and test the codebase
-* Check that all modified code is covered by tests
+* Format the code: `rebar3 fmt`
+* Lint: `mise run verify`
+* Test: `mise run test`
+* Ensure all modified code is covered by tests
