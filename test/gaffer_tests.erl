@@ -1,5 +1,13 @@
 -module(gaffer_tests).
 
+-hank([
+    {unnecessary_function_arguments, [
+        pgo_migration_idempotent,
+        pgo_migration_rollback,
+        pgo_start_with_new_pool
+    ]}
+]).
+
 -include_lib("eunit/include/eunit.hrl").
 
 % Tests intentionally pass invalid conf to verify validation

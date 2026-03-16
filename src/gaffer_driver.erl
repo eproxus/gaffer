@@ -1,5 +1,7 @@
 -module(gaffer_driver).
 
+-hank([unused_callbacks]).
+
 % Persistence driver behaviour for gaffer.
 %
 % Stateful drivers — each driver manages its own internal state

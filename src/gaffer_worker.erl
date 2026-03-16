@@ -1,5 +1,7 @@
 -module(gaffer_worker).
 
+-hank([unused_callbacks]).
+
 % Worker behaviour for gaffer job queues.
 %
 % Implement the `perform/1` callback to define how a job executes.

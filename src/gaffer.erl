@@ -1,5 +1,7 @@
 -module(gaffer).
 
+-hank([{unnecessary_function_arguments, [drain, flush]}]).
+
 -behaviour(application).
 
 % Application callbacks
