@@ -93,8 +93,7 @@ handle_event(
 handle_event(
     {call, From}, Cmd, _State, #{name := Name} = Data
 ) ->
-    Driver = gaffer_queue:lookup(Name),
-    Reply = dispatch(Cmd, Driver),
+    Reply = dispatch(Cmd, Name),
     {keep_state, Data, [{reply, From, Reply}]};
 handle_event(
     state_timeout, poll, _State, #{name := Name} = Data
@@ -109,8 +108,7 @@ handle_event(
 ) ->
     case maps:take(Pid, Workers) of
         {{JobId, Queue}, Workers1} ->
-            Driver = gaffer_queue:lookup(Name),
-            _ = handle_worker_result(JobId, Queue, Reason, Driver),
+            _ = handle_worker_result(JobId, Queue, Reason, Name),
             {keep_state, Data#{workers := Workers1}};
         error ->
             {keep_state, Data}
@@ -147,10 +145,10 @@ spawn_workers(
     end),
     spawn_workers(WorkerMod, Rest, Workers#{Pid => {JobId, Queue}}).
 
-handle_worker_result(JobId, Queue, {gaffer_result, Result}, Driver) ->
-    dispatch(worker_cmd(JobId, Queue, Result), Driver);
-handle_worker_result(JobId, _Queue, CrashReason, Driver) ->
-    dispatch(fail_cmd(JobId, CrashReason), Driver).
+handle_worker_result(JobId, Queue, {gaffer_result, Result}, Name) ->
+    dispatch(worker_cmd(JobId, Queue, Result), Name);
+handle_worker_result(JobId, _Queue, CrashReason, Name) ->
+    dispatch(fail_cmd(JobId, CrashReason), Name).
 
 worker_cmd(JobId, _Queue, complete) -> {complete, JobId};
 worker_cmd(JobId, _Queue, {complete, _}) -> {complete, JobId};
@@ -166,18 +164,18 @@ poll_timeout(#{poll_interval := infinity}) ->
 poll_timeout(#{poll_interval := Interval}) ->
     {state_timeout, Interval, poll}.
 
-dispatch({complete, Id}, Driver) ->
-    gaffer_queue:complete_job(Id, Driver);
-dispatch({fail, Id, Error}, Driver) ->
-    gaffer_queue:fail_job(Id, Error, Driver);
-dispatch({schedule, Id, At}, Driver) ->
-    gaffer_queue:schedule_job(Id, At, Driver);
-dispatch({cancel, Queue, Id}, _Driver) ->
+dispatch({complete, Id}, Name) ->
+    gaffer_queue:complete_job(Name, Id);
+dispatch({fail, Id, Error}, Name) ->
+    gaffer_queue:fail_job(Name, Id, Error);
+dispatch({schedule, Id, At}, Name) ->
+    gaffer_queue:schedule_job(Name, Id, At);
+dispatch({cancel, Queue, Id}, _Name) ->
     gaffer_queue:cancel_job(Queue, Id);
-dispatch({claim, #{queue := Queue} = Opts}, _Driver) ->
+dispatch({claim, #{queue := Queue} = Opts}, _Name) ->
     gaffer_queue:claim_jobs(Queue, Opts);
-dispatch({prune, Opts}, Driver) ->
-    gaffer_queue:prune_jobs(Opts, Driver).
+dispatch({prune, Opts}, Name) ->
+    gaffer_queue:prune_jobs(Name, Opts).
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input

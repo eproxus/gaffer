@@ -116,7 +116,8 @@
     timeout => pos_integer(),
     backoff => pos_integer(),
     priority => non_neg_integer(),
-    on_discard => queue_name()
+    on_discard => queue_name(),
+    hooks => hooks()
 }.
 
 -type list_opts() :: #{
@@ -138,6 +139,10 @@
     states => [job_state()]
 }.
 
+-type event() :: [atom()].
+-type hook() :: module() | fun((pre | post, event(), term()) -> term()).
+-type hooks() :: [hook()].
+
 -export_type([
     job_id/0,
     job_state/0,
@@ -151,7 +156,10 @@
     list_opts/0,
     claim_opts/0,
     job_changes/0,
-    prune_opts/0
+    prune_opts/0,
+    event/0,
+    hook/0,
+    hooks/0
 ]).
 
 %--- Application Callbacks -----------------------------------------------------

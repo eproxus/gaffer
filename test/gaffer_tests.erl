@@ -1,5 +1,7 @@
 -module(gaffer_tests).
 
+-behaviour(gaffer_hooks).
+
 -hank([
     {unnecessary_function_arguments, [
         pgo_migration_idempotent,
@@ -7,6 +9,8 @@
         pgo_start_with_new_pool
     ]}
 ]).
+
+-export([gaffer_hook/3]).
 
 -include_lib("eunit/include/eunit.hrl").
 
@@ -79,11 +83,22 @@ gaffer_test_() ->
         fun poll_worker_completes_job/1,
         fun poll_worker_crash_fails_job/1,
         fun poll_max_workers_limits/1,
-        fun poll_auto_executes/1
+        fun poll_auto_executes/1,
+        % --- Hooks ---
+        fun hook_cancel/1,
+        fun hook_complete/1,
+        fun hook_fail/1,
+        fun hook_schedule/1,
+        fun hook_delete/1,
+        fun hook_order/1,
+        fun hook_data_passthrough/1
     ],
     Sequential = [
         % Tests that restart gaffer
-        fun create_queue_config_mismatch/1
+        fun create_queue_config_mismatch/1,
+        % Hook tests that affect global state
+        fun hook_module/1,
+        fun hook_global_queue/1
     ],
     [
         harness(gaffer_driver_ets, Parallel, Sequential),
@@ -119,6 +134,7 @@ harness(DriverMod, Parallel, Sequential) ->
 %--- Setup / teardown ---------------------------------------------------------
 
 setup(DriverMod) ->
+    error_logger:tty(false),
     {Driver, Apps0} = setup_driver(DriverMod),
     {ok, Apps1} = application:ensure_all_started(gaffer),
     #{driver => Driver, gaffer_apps => Apps1, driver_apps => Apps0}.
@@ -128,7 +144,8 @@ teardown(#{
 }) ->
     [application:stop(A) || A <:- lists:reverse(GafferApps)],
     teardown_driver(Driver),
-    [application:stop(A) || A <:- lists:reverse(DriverApps)].
+    [application:stop(A) || A <:- lists:reverse(DriverApps)],
+    error_logger:tty(true).
 
 setup_driver(gaffer_driver_ets) ->
     DS = gaffer_driver_ets:start(#{}),
@@ -682,6 +699,210 @@ pgo_idempotent_create(Driver) ->
     Persisted = gaffer:get_queue(?Q),
     ?assertEqual(ok, gaffer_driver_pgo:queue_insert(Persisted, DS)).
 
+%--- Hook tests ---------------------------------------------------------------
+
+hook_cancel(Driver) ->
+    CrashHook = fun(_Phase, _Event, _Data) -> error(boom) end,
+    Hook = make_hook(),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [CrashHook, Hook]})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, Id),
+    ?assertEqual(
+        [
+            {hook, pre, [gaffer, queue, create]},
+            {hook, post, [gaffer, queue, create]},
+            {hook, pre, [gaffer, job, insert]},
+            {hook, post, [gaffer, job, insert]},
+            {hook, pre, [gaffer, job, cancel]},
+            {hook, post, [gaffer, job, cancel]}
+        ],
+        flush_events()
+    ).
+
+hook_complete(Driver) ->
+    Hook = make_hook(),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    {ok, _} = gaffer_queue_runner:complete(?Q, Id),
+    ?assertEqual(
+        [
+            {hook, pre, [gaffer, queue, create]},
+            {hook, post, [gaffer, queue, create]},
+            {hook, pre, [gaffer, job, insert]},
+            {hook, post, [gaffer, job, insert]},
+            {hook, pre, [gaffer, job, claim]},
+            {hook, post, [gaffer, job, claim]},
+            {hook, pre, [gaffer, job, complete]},
+            {hook, post, [gaffer, job, complete]}
+        ],
+        flush_events()
+    ).
+
+hook_fail(Driver) ->
+    Hook = make_hook(),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    E = #{attempt => 1, error => boom, at => erlang:system_time()},
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
+    ?assertEqual(
+        [
+            {hook, pre, [gaffer, queue, create]},
+            {hook, post, [gaffer, queue, create]},
+            {hook, pre, [gaffer, job, insert]},
+            {hook, post, [gaffer, job, insert]},
+            {hook, pre, [gaffer, job, claim]},
+            {hook, post, [gaffer, job, claim]},
+            {hook, pre, [gaffer, job, fail]},
+            {hook, post, [gaffer, job, fail]}
+        ],
+        flush_events()
+    ).
+
+hook_schedule(Driver) ->
+    Hook = make_hook(),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    FutureAt =
+        erlang:system_time() + erlang:convert_time_unit(60, second, native),
+    {ok, _} = gaffer_queue_runner:schedule(?Q, Id, FutureAt),
+    ?assertEqual(
+        [
+            {hook, pre, [gaffer, queue, create]},
+            {hook, post, [gaffer, queue, create]},
+            {hook, pre, [gaffer, job, insert]},
+            {hook, post, [gaffer, job, insert]},
+            {hook, pre, [gaffer, job, claim]},
+            {hook, post, [gaffer, job, claim]},
+            {hook, pre, [gaffer, job, schedule]},
+            {hook, post, [gaffer, job, schedule]}
+        ],
+        flush_events()
+    ).
+
+hook_delete(Driver) ->
+    Hook = make_hook(),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    ok = gaffer:delete(?Q, Id),
+    ?assertEqual(
+        [
+            {hook, pre, [gaffer, queue, create]},
+            {hook, post, [gaffer, queue, create]},
+            {hook, pre, [gaffer, job, insert]},
+            {hook, post, [gaffer, job, insert]},
+            {hook, pre, [gaffer, job, delete]},
+            {hook, post, [gaffer, job, delete]}
+        ],
+        flush_events()
+    ).
+
+hook_order(Driver) ->
+    Hook1 = make_hook(first),
+    Hook2 = make_hook(second),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook1, Hook2]})),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    ?assertEqual(
+        [
+            {first, pre, [gaffer, queue, create]},
+            {second, pre, [gaffer, queue, create]},
+            {first, post, [gaffer, queue, create]},
+            {second, post, [gaffer, queue, create]},
+            {first, pre, [gaffer, job, insert]},
+            {second, pre, [gaffer, job, insert]},
+            {first, post, [gaffer, job, insert]},
+            {second, post, [gaffer, job, insert]}
+        ],
+        flush_events()
+    ).
+
+hook_module(Driver) ->
+    register(hook_test_proc, self()),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [gaffer_tests]})),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    unregister(hook_test_proc),
+    ?assertEqual(
+        [
+            {hook, pre, [gaffer, queue, create]},
+            {hook, post, [gaffer, queue, create]},
+            {hook, pre, [gaffer, job, insert]},
+            {hook, post, [gaffer, job, insert]}
+        ],
+        flush_events()
+    ).
+
+hook_data_passthrough(Driver) ->
+    Path = [payload, ~"hook_log"],
+    Annotate = fun
+        (Phase, Event, #{payload := _} = Job) ->
+            Entry = [atom_to_binary(A) || A <:- [Phase | Event]],
+            Prepend = fun(Log) -> [Entry | Log] end,
+            mapz:deep_update_with(Path, Prepend, [Entry], Job);
+        (_Phase, _Event, Data) ->
+            Data
+    end,
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Annotate]})),
+    Inserted = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
+    ?assertEqual(
+        [
+            [~"pre", ~"gaffer", ~"job", ~"insert"],
+            [~"post", ~"gaffer", ~"job", ~"insert"]
+        ],
+        % eqwalizer:ignore - we know mapz:deep_get returns a list
+        lists:reverse(mapz:deep_get(Path, Inserted)),
+        "Return job should have all hook transformation"
+    ),
+    #{id := Id} = Inserted,
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    E = #{attempt => 1, error => boom, at => erlang:system_time()},
+    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
+    ?assertEqual(
+        [
+            [~"pre", ~"gaffer", ~"job", ~"insert"],
+            [~"pre", ~"gaffer", ~"job", ~"fail"],
+            [~"post", ~"gaffer", ~"job", ~"fail"]
+        ],
+        % eqwalizer:ignore - we know mapz:deep_get returns a list
+        lists:reverse(mapz:deep_get(Path, Failed)),
+        "Persisted job has only the pre-modified data"
+    ),
+    Stored = gaffer:get(?Q, Id),
+    ?assertEqual(
+        [
+            [~"pre", ~"gaffer", ~"job", ~"insert"],
+            [~"pre", ~"gaffer", ~"job", ~"fail"]
+        ],
+        % eqwalizer:ignore - we know mapz:deep_get returns a list
+        lists:reverse(mapz:deep_get(Path, Stored)),
+        "Stored job has pre-events only (post events are ephemeral)"
+    ).
+
+hook_global_queue(Driver) ->
+    GlobalHook = make_hook(global),
+    QueueHook = make_hook(queue),
+    application:set_env(gaffer, hooks, [GlobalHook]),
+    try
+        ok = gaffer:create_queue(?CONF(Driver, #{hooks => [QueueHook]})),
+        _ = gaffer:insert(?Q, #{task => 1}),
+        ?assertEqual(
+            [
+                {global, pre, [gaffer, queue, create]},
+                {queue, pre, [gaffer, queue, create]},
+                {global, post, [gaffer, queue, create]},
+                {queue, post, [gaffer, queue, create]},
+                {global, pre, [gaffer, job, insert]},
+                {queue, pre, [gaffer, job, insert]},
+                {global, post, [gaffer, job, insert]},
+                {queue, post, [gaffer, job, insert]}
+            ],
+            flush_events()
+        )
+    after
+        application:unset_env(gaffer, hooks)
+    end.
+
 %--- Helpers ------------------------------------------------------------------
 
 table_exists(Pool, TableName) ->
@@ -708,3 +929,31 @@ atomize_keys(Map) when is_map(Map) ->
     );
 atomize_keys(Other) ->
     Other.
+
+make_hook() -> make_hook(hook).
+make_hook(Tag) ->
+    Self = self(),
+    fun(Phase, Event, Data) ->
+        Self ! {Tag, Phase, Event, Data},
+        Data
+    end.
+
+flush() -> flush([]).
+flush(Acc) ->
+    receive
+        {Tag, Phase, Event, Data} when Phase =:= pre; Phase =:= post ->
+            flush([{Tag, Phase, Event, Data} | Acc])
+    after 0 ->
+        lists:reverse(Acc)
+    end.
+
+flush_events() ->
+    [{Tag, Phase, Event} || {Tag, Phase, Event, _} <:- flush()].
+
+% gaffer_hooks behaviour callback
+gaffer_hook(Phase, Event, Data) ->
+    case whereis(hook_test_proc) of
+        undefined -> ok;
+        Pid -> Pid ! {hook, Phase, Event, Data}
+    end,
+    Data.
