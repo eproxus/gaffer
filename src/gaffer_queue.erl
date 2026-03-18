@@ -211,10 +211,8 @@ fail_job(Queue, Id, Error) ->
         Job2 = add_error(Job1, Error),
         {ok, Job3} = transition(Job2, failed),
         case Attempt >= MaxAttempts of
-            true ->
-                transition(Job3, discarded);
-            false ->
-                {ok, Job3}
+            true -> transition(Job3, discarded);
+            false -> {ok, Job3}
         end
     end).
 
