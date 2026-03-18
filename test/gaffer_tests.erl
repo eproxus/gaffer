@@ -62,7 +62,6 @@ gaffer_test_() ->
         % Complete
         fun complete/1,
         fun complete_not_found/1,
-        fun complete_available_error/1,
         % Fail
         fun fail_retryable/1,
         fun fail_discarded/1,
@@ -72,7 +71,6 @@ gaffer_test_() ->
         fun schedule/1,
         fun schedule_from_failed/1,
         fun schedule_not_found/1,
-        fun schedule_available_error/1,
         % Claim
         fun claim/1,
         fun claim_empty/1,
@@ -412,14 +410,6 @@ complete_not_found(Driver) ->
         gaffer_queue_runner:complete(?Q, keysmith:uuid(nil, binary))
     ).
 
-complete_available_error(Driver) ->
-    ok = gaffer:create_queue(?CONF(Driver)),
-    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
-    ?assertMatch(
-        {error, {invalid_transition, {available, completed}}},
-        gaffer_queue_runner:complete(?Q, Id)
-    ).
-
 %--- Fail tests ---------------------------------------------------------------
 
 fail_retryable(Driver) ->
@@ -494,16 +484,6 @@ schedule_not_found(Driver) ->
     ?assertEqual(
         {error, not_found},
         gaffer_queue_runner:schedule(?Q, keysmith:uuid(nil, binary), FutureAt)
-    ).
-
-schedule_available_error(Driver) ->
-    ok = gaffer:create_queue(?CONF(Driver)),
-    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
-    FutureAt =
-        erlang:system_time() + erlang:convert_time_unit(60, second, native),
-    ?assertMatch(
-        {error, {invalid_transition, {available, scheduled}}},
-        gaffer_queue_runner:schedule(?Q, Id, FutureAt)
     ).
 
 %--- Validation tests ---------------------------------------------------------

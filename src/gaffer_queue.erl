@@ -167,16 +167,7 @@ cancel_job(Queue, JobId) ->
     with_job(Queue, JobId, fun(Job) ->
         case transition(Job, cancelled) of
             {ok, Updated} ->
-                Result = with_queue(
-                    Queue,
-                    [gaffer, job, cancel],
-                    Updated,
-                    fun(J, Mod, DS) ->
-                        Mod:job_update(J, DS),
-                        J
-                    end
-                ),
-                {ok, Result};
+                {ok, update_job(Queue, [gaffer, job, cancel], Updated)};
             {error, _} = Err ->
                 Err
         end
@@ -185,29 +176,18 @@ cancel_job(Queue, JobId) ->
 % Job (runner)
 
 -spec complete_job(gaffer:queue_name(), gaffer:job_id()) ->
-    {ok, gaffer:job()} | {error, term()}.
+    {ok, gaffer:job()} | {error, not_found}.
 complete_job(Queue, Id) ->
     with_job(Queue, Id, fun(#{attempt := Attempt} = Job) ->
-        case transition(Job, completed) of
-            {ok, Updated} ->
-                Completed = Updated#{attempt := Attempt + 1},
-                Result = with_queue(
-                    Queue,
-                    [gaffer, job, complete],
-                    Completed,
-                    fun(J, Mod, DS) ->
-                        Mod:job_update(J, DS),
-                        J
-                    end
-                ),
-                {ok, Result};
-            {error, _} = Err ->
-                Err
-        end
+        {ok, Completed} = transition(Job, completed),
+        {ok,
+            update_job(Queue, [gaffer, job, complete], Completed#{
+                attempt := Attempt + 1
+            })}
     end).
 
 -spec fail_job(gaffer:queue_name(), gaffer:job_id(), gaffer:job_error()) ->
-    {ok, gaffer:job()} | {error, term()}.
+    {ok, gaffer:job()} | {error, not_found}.
 fail_job(Queue, Id, Error) ->
     with_job(Queue, Id, fun(Job) ->
         Attempt = maps:get(attempt, Job) + 1,
@@ -223,38 +203,18 @@ fail_job(Queue, Id, Error) ->
                 false ->
                     Job3
             end,
-        Result = with_queue(
-            Queue,
-            [gaffer, job, fail],
-            Job4,
-            fun(J, Mod, DS) ->
-                Mod:job_update(J, DS),
-                J
-            end
-        ),
-        {ok, Result}
+        {ok, update_job(Queue, [gaffer, job, fail], Job4)}
     end).
 
 -spec schedule_job(gaffer:queue_name(), gaffer:job_id(), gaffer:timestamp()) ->
-    {ok, gaffer:job()} | {error, term()}.
+    {ok, gaffer:job()} | {error, not_found}.
 schedule_job(Queue, Id, At) ->
     with_job(Queue, Id, fun(Job) ->
-        case transition(Job, scheduled) of
-            {ok, Updated} ->
-                Scheduled = Updated#{scheduled_at => At},
-                Result = with_queue(
-                    Queue,
-                    [gaffer, job, schedule],
-                    Scheduled,
-                    fun(J, Mod, DS) ->
-                        Mod:job_update(J, DS),
-                        J
-                    end
-                ),
-                {ok, Result};
-            {error, _} = Err ->
-                Err
-        end
+        {ok, Scheduled} = transition(Job, scheduled),
+        {ok,
+            update_job(Queue, [gaffer, job, schedule], Scheduled#{
+                scheduled_at => At
+            })}
     end).
 
 -spec claim_jobs(gaffer:queue_name(), gaffer:claim_opts()) ->
@@ -423,6 +383,12 @@ with_job(Queue, JobId, Fun) ->
         not_found -> {error, not_found};
         Job -> Fun(Job)
     end.
+
+update_job(Queue, Event, Job) ->
+    with_queue(Queue, Event, Job, fun(J, Mod, DS) ->
+        Mod:job_update(J, DS),
+        J
+    end).
 
 with_queue(Queue, Event, Data, Fun) ->
     {{Mod, DS}, Hooks} = lookup(Queue),
