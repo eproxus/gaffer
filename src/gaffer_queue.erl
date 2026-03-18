@@ -80,11 +80,17 @@ create(#{name := Name, driver := {Mod, DS} = Driver} = Conf) ->
 -spec delete(gaffer:queue_name()) -> ok.
 delete(Name) ->
     ok = gaffer_sup:stop_queue(Name),
-    _ = with_queue(Name, [gaffer, queue, delete], Name, fun(N, Mod, DS) ->
-        persistent_term:erase({gaffer_queue, Name}),
-        Mod:queue_delete(Name, DS),
-        N
-    end),
+    {{Mod, DS}, Hooks} = lookup(Name),
+    _ = gaffer_hooks:with_hooks(
+        Hooks,
+        [gaffer, queue, delete],
+        Name,
+        fun(N) ->
+            persistent_term:erase({gaffer_queue, Name}),
+            Mod:queue_delete(Name, DS),
+            N
+        end
+    ),
     ok.
 
 -spec list() -> [{gaffer:queue_name(), gaffer:queue_conf()}].
@@ -100,7 +106,8 @@ queue_entry(_) ->
 
 -spec get(gaffer:queue_name()) -> gaffer:queue_conf().
 get(Name) ->
-    case driver(Name, queue_get, [Name]) of
+    {{Mod, DS}, _} = lookup(Name),
+    case Mod:queue_get(Name, DS) of
         not_found -> error({unknown_queue, Name});
         Conf -> Conf
     end.
@@ -108,10 +115,16 @@ get(Name) ->
 -spec update(gaffer:queue_name(), map()) -> ok.
 update(Name, Updates) ->
     Validated = validate_updates(strip_runtime(Updates)),
-    _ = with_queue(Name, [gaffer, queue, update], Updates, fun(U, Mod, DS) ->
-        Mod:queue_update(Name, Validated, DS),
-        U
-    end),
+    {{Mod, DS}, Hooks} = lookup(Name),
+    _ = gaffer_hooks:with_hooks(
+        Hooks,
+        [gaffer, queue, update],
+        Updates,
+        fun(U) ->
+            Mod:queue_update(Name, Validated, DS),
+            U
+        end
+    ),
     ok.
 
 -spec queue_conf_template() -> map().
@@ -135,42 +148,47 @@ queue_conf_template() ->
 insert_job(Queue, Payload, Opts) ->
     NewJob = build_job(Queue, Payload, Opts),
     validate(NewJob),
-    with_queue(Queue, [gaffer, job, insert], NewJob, fun(Job, Mod, DS) ->
-        Mod:job_insert(Job, DS)
-    end).
+    {{Mod, DS}, Hooks} = lookup(Queue),
+    gaffer_hooks:with_hooks(
+        Hooks,
+        [gaffer, job, insert],
+        NewJob,
+        fun(Job) -> Mod:job_insert(Job, DS) end
+    ).
 
 -spec get_job(gaffer:queue_name(), gaffer:job_id()) ->
     gaffer:job() | not_found.
 get_job(Queue, JobId) ->
-    driver(Queue, job_get, [JobId]).
+    {{Mod, DS}, _} = lookup(Queue),
+    Mod:job_get(JobId, DS).
 
 -spec list_jobs(gaffer:list_opts()) ->
     [gaffer:job()].
 list_jobs(#{queue := Queue} = Opts) ->
-    driver(Queue, job_list, [Opts]).
+    {{Mod, DS}, _} = lookup(Queue),
+    Mod:job_list(Opts, DS).
 
 -spec delete_job(gaffer:queue_name(), gaffer:job_id()) -> ok.
 delete_job(Queue, JobId) ->
-    case driver(Queue, job_delete, [JobId]) of
-        not_found ->
-            error({unknown_job, JobId});
-        ok ->
-            _ = with_queue(Queue, [gaffer, job, delete], JobId, fun(Id, _, _) ->
-                Id
-            end),
-            ok
-    end.
+    {{Mod, DS}, Hooks} = lookup(Queue),
+    _ = gaffer_hooks:with_hooks(
+        Hooks,
+        [gaffer, job, delete],
+        JobId,
+        fun(Id) ->
+            case Mod:job_delete(Id, DS) of
+                not_found -> error({unknown_job, Id});
+                ok -> Id
+            end
+        end
+    ),
+    ok.
 
 -spec cancel_job(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
 cancel_job(Queue, JobId) ->
-    with_job(Queue, JobId, fun(Job) ->
-        case transition(Job, cancelled) of
-            {ok, Updated} ->
-                {ok, update_job(Queue, [gaffer, job, cancel], Updated)};
-            {error, _} = Err ->
-                Err
-        end
+    modify_job(Queue, JobId, [gaffer, job, cancel], fun(Job) ->
+        transition(Job, cancelled)
     end).
 
 % Job (runner)
@@ -178,43 +196,34 @@ cancel_job(Queue, JobId) ->
 -spec complete_job(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, not_found}.
 complete_job(Queue, Id) ->
-    with_job(Queue, Id, fun(#{attempt := Attempt} = Job) ->
-        {ok, Completed} = transition(Job, completed),
-        {ok,
-            update_job(Queue, [gaffer, job, complete], Completed#{
-                attempt := Attempt + 1
-            })}
+    modify_job(Queue, Id, [gaffer, job, complete], fun(#{attempt := A} = Job) ->
+        {ok, C} = transition(Job, completed),
+        {ok, C#{attempt := A + 1}}
     end).
 
 -spec fail_job(gaffer:queue_name(), gaffer:job_id(), gaffer:job_error()) ->
     {ok, gaffer:job()} | {error, not_found}.
 fail_job(Queue, Id, Error) ->
-    with_job(Queue, Id, fun(Job) ->
+    modify_job(Queue, Id, [gaffer, job, fail], fun(Job) ->
         Attempt = maps:get(attempt, Job) + 1,
         MaxAttempts = maps:get(max_attempts, Job, 3),
         Job1 = Job#{attempt := Attempt},
         Job2 = add_error(Job1, Error),
         {ok, Job3} = transition(Job2, failed),
-        Job4 =
-            case Attempt >= MaxAttempts of
-                true ->
-                    {ok, J} = transition(Job3, discarded),
-                    J;
-                false ->
-                    Job3
-            end,
-        {ok, update_job(Queue, [gaffer, job, fail], Job4)}
+        case Attempt >= MaxAttempts of
+            true ->
+                transition(Job3, discarded);
+            false ->
+                {ok, Job3}
+        end
     end).
 
 -spec schedule_job(gaffer:queue_name(), gaffer:job_id(), gaffer:timestamp()) ->
     {ok, gaffer:job()} | {error, not_found}.
 schedule_job(Queue, Id, At) ->
-    with_job(Queue, Id, fun(Job) ->
+    modify_job(Queue, Id, [gaffer, job, schedule], fun(Job) ->
         {ok, Scheduled} = transition(Job, scheduled),
-        {ok,
-            update_job(Queue, [gaffer, job, schedule], Scheduled#{
-                scheduled_at => At
-            })}
+        {ok, Scheduled#{scheduled_at => At}}
     end).
 
 -spec claim_jobs(gaffer:queue_name(), gaffer:claim_opts()) ->
@@ -222,9 +231,13 @@ schedule_job(Queue, Id, At) ->
 claim_jobs(Queue, Opts) ->
     Now = erlang:system_time(),
     Changes = #{state => executing, attempted_at => Now},
-    with_queue(Queue, [gaffer, job, claim], Opts, fun(_, Mod, DS) ->
-        Mod:job_claim(Opts, Changes, DS)
-    end).
+    {{Mod, DS}, Hooks} = lookup(Queue),
+    gaffer_hooks:with_hooks(
+        Hooks,
+        [gaffer, job, claim],
+        Opts,
+        fun(_) -> Mod:job_claim(Opts, Changes, DS) end
+    ).
 
 -spec prune_jobs(gaffer:queue_name(), gaffer:prune_opts()) ->
     non_neg_integer().
@@ -378,27 +391,28 @@ maybe_put(Key, Value, Map) -> Map#{Key => Value}.
 
 % Driver dispatch
 
-with_job(Queue, JobId, Fun) ->
-    case driver(Queue, job_get, [JobId]) of
-        not_found -> {error, not_found};
-        Job -> Fun(Job)
-    end.
-
-update_job(Queue, Event, Job) ->
-    with_queue(Queue, Event, Job, fun(J, Mod, DS) ->
-        Mod:job_update(J, DS),
-        J
-    end).
-
-with_queue(Queue, Event, Data, Fun) ->
+modify_job(Queue, JobId, Event, Fun) ->
     {{Mod, DS}, Hooks} = lookup(Queue),
-    gaffer_hooks:with_hooks(Hooks, Event, Data, fun(D) ->
-        Fun(D, Mod, DS)
-    end).
-
-driver(Queue, Fun, Args) ->
-    {{Mod, DS}, _} = lookup(Queue),
-    apply(Mod, Fun, Args ++ [DS]).
+    case Mod:job_get(JobId, DS) of
+        not_found ->
+            {error, not_found};
+        Job ->
+            case Fun(Job) of
+                {ok, Updated} ->
+                    {ok,
+                        gaffer_hooks:with_hooks(
+                            Hooks,
+                            Event,
+                            Updated,
+                            fun(J) ->
+                                Mod:job_update(J, DS),
+                                J
+                            end
+                        )};
+                {error, _} = Err ->
+                    Err
+            end
+    end.
 
 -spec lookup(gaffer:queue_name()) -> {driver(), gaffer:hooks()}.
 lookup(Name) ->

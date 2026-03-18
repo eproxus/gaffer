@@ -87,7 +87,9 @@ gaffer_test_() ->
         fun hook_complete/1,
         fun hook_fail/1,
         fun hook_schedule/1,
+        fun hook_insert_pre_before_persist/1,
         fun hook_delete/1,
+        fun hook_delete_pre_sees_job/1,
         fun hook_order/1,
         fun hook_data_passthrough/1
     ],
@@ -778,6 +780,51 @@ hook_delete(Driver) ->
         ],
         flush_events()
     ).
+
+hook_insert_pre_before_persist(Driver) ->
+    Self = self(),
+    Hook = fun
+        (pre, [gaffer, job, insert], #{id := JobId} = Job) ->
+            try gaffer:get(?Q, JobId) of
+                _ -> Self ! {pre_job, found}
+            catch
+                _:_ -> Self ! {pre_job, missing}
+            end,
+            Job;
+        (_Phase, _Event, Data) ->
+            Data
+    end,
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    receive
+        {pre_job, missing} -> ok;
+        {pre_job, found} -> error(job_persisted_before_pre_hook)
+    after 1000 ->
+        error(timeout)
+    end.
+
+hook_delete_pre_sees_job(Driver) ->
+    Self = self(),
+    Hook = fun
+        (pre, [gaffer, job, delete], JobId) ->
+            try gaffer:get(?Q, JobId) of
+                _ -> Self ! {pre_job, found}
+            catch
+                _:_ -> Self ! {pre_job, missing}
+            end,
+            JobId;
+        (_Phase, _Event, Data) ->
+            Data
+    end,
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    ok = gaffer:delete(?Q, Id),
+    receive
+        {pre_job, found} -> ok;
+        {pre_job, missing} -> error(job_missing_in_pre_hook)
+    after 1000 ->
+        error(timeout)
+    end.
 
 hook_order(Driver) ->
     Hook1 = make_hook(first),

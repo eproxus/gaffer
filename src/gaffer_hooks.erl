@@ -14,7 +14,7 @@
     term(),
     fun((term()) -> term())
 ) ->
-    term().
+    dynamic().
 with_hooks(QueueHooks, Event, Data, Fun) ->
     case resolve(QueueHooks) of
         [] ->
