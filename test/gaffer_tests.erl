@@ -91,7 +91,12 @@ gaffer_test_() ->
         fun hook_delete/1,
         fun hook_delete_pre_sees_job/1,
         fun hook_order/1,
-        fun hook_data_passthrough/1
+        fun hook_data_passthrough/1,
+        % --- Forwarding ---
+        fun forward_on_discard/1,
+        fun forward_on_discard_chain/1,
+        fun forward_on_discard_retryable/1,
+        fun forward_on_discard_fresh/1
     ],
     Sequential = [
         % Tests that restart gaffer
@@ -637,6 +642,108 @@ poll_auto_executes(Driver) ->
     Job = gaffer:get(?Q, Id),
     ?assertMatch(#{state := completed}, Job).
 
+%--- Forwarding tests ---------------------------------------------------------
+
+% FIXME: Merge forward_on_discard, forward_on_discard_retryable, and
+% forward_on_discard_fresh into a single multi-attempt test once the
+% scheduled state is removed (scheduled is just available with a future
+% scheduled_at). Currently we can't chain claim-fail cycles because
+% failed→scheduled jobs have no path back to available for re-claiming.
+
+forward_on_discard(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_dlq})),
+    ok = gaffer:create_queue(?CONF(Driver, #{on_discard => fwd_dlq})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    E = #{attempt => 1, error => boom, at => erlang:system_time()},
+    {ok, Discarded} = gaffer_queue_runner:fail(?Q, Id, E),
+    ?assertMatch(#{state := discarded}, Discarded),
+    Wrapped = atomize_keys(
+        maps:get(payload, hd(gaffer:list(#{queue => fwd_dlq})))
+    ),
+    ?assertMatch(
+        #{
+            payload := #{task := 1},
+            attempt := 1,
+            errors := [_],
+            discarded_at := _
+        },
+        Wrapped
+    ),
+    ?assertEqual(forward_on_discard, to_atom(maps:get(queue, Wrapped))).
+
+forward_on_discard_chain(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_chain_q3})),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            name => fwd_chain_q2, on_discard => fwd_chain_q3, max_attempts => 1
+        })
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{on_discard => fwd_chain_q2})
+    ),
+    #{id := Id1} = gaffer:insert(?Q, #{task => original}, #{max_attempts => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    E1 = #{attempt => 1, error => boom, at => erlang:system_time()},
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id1, E1),
+    % Job should now be in Q2 with max_attempts=1 from Q2's queue config
+    [Q2Job] = gaffer:list(#{queue => fwd_chain_q2}),
+    #{id := Id2} = Q2Job,
+    [_] = gaffer_queue_runner:claim(fwd_chain_q2, #{
+        queue => fwd_chain_q2, limit => 1
+    }),
+    E2 = #{attempt => 1, error => crash, at => erlang:system_time()},
+    {ok, _} = gaffer_queue_runner:fail(fwd_chain_q2, Id2, E2),
+    % Job should now be in Q3 with nested wrapping
+    Outer = atomize_keys(
+        maps:get(payload, hd(gaffer:list(#{queue => fwd_chain_q3})))
+    ),
+    ?assertMatch(
+        #{
+            attempt := 1,
+            errors := [_],
+            discarded_at := _
+        },
+        Outer
+    ),
+    ?assertNot(is_map_key(task, Outer), "Wrapped payload has no task"),
+    ?assertEqual(fwd_chain_q2, to_atom(maps:get(queue, Outer))),
+    Inner = maps:get(payload, Outer),
+    ?assertMatch(
+        #{
+            attempt := 1,
+            errors := [_],
+            discarded_at := _,
+            payload := #{task := _}
+        },
+        Inner
+    ),
+    ?assertEqual(forward_on_discard_chain, to_atom(maps:get(queue, Inner))).
+
+forward_on_discard_retryable(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_retry_dlq})),
+    ok = gaffer:create_queue(?CONF(Driver, #{on_discard => fwd_retry_dlq})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    E = #{attempt => 1, error => boom, at => erlang:system_time()},
+    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
+    ?assertMatch(#{state := failed}, Failed),
+    ?assertEqual([], gaffer:list(#{queue => fwd_retry_dlq})).
+
+forward_on_discard_fresh(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_fresh_dlq})),
+    ok = gaffer:create_queue(?CONF(Driver, #{on_discard => fwd_fresh_dlq})),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    E = #{attempt => 1, error => boom, at => erlang:system_time()},
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
+    Forwarded = atomize_keys(hd(gaffer:list(#{queue => fwd_fresh_dlq}))),
+    ?assertMatch(
+        #{state := available, attempt := 0, errors := []},
+        Forwarded
+    ),
+    ?assertEqual(#{task => 1}, mapz:deep_get([payload, payload], Forwarded)).
+
 %--- PGO-specific tests -------------------------------------------------------
 
 pgo_migration_idempotent(_Driver) ->
@@ -945,17 +1052,15 @@ table_exists(Pool, TableName) ->
 
 atomize_keys(Map) when is_map(Map) ->
     maps:fold(
-        fun
-            (K, V, Acc) when is_binary(K) ->
-                Acc#{binary_to_existing_atom(K) => atomize_keys(V)};
-            (K, V, Acc) ->
-                Acc#{K => atomize_keys(V)}
-        end,
+        fun(K, V, Acc) -> Acc#{to_atom(K) => atomize_keys(V)} end,
         #{},
         Map
     );
 atomize_keys(Other) ->
     Other.
+
+to_atom(A) when is_atom(A) -> A;
+to_atom(B) when is_binary(B) -> binary_to_existing_atom(B).
 
 make_hook() -> make_hook(hook).
 make_hook(Tag) ->
