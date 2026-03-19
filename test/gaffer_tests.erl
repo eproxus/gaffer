@@ -464,7 +464,12 @@ fail_error_normalization(Driver) ->
     E = #{attempt => 1, error => ErrorInfo, at => {microsecond, AtUs}},
     {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
     ?assertMatch(
-        #{errors := [#{attempt := 1, error := ErrorInfo, at := AtUs}]}, Failed
+        #{
+            errors := [
+                #{attempt := 1, error := ErrorInfo, at := {microsecond, AtUs}}
+            ]
+        },
+        Failed
     ).
 
 %--- Schedule tests -----------------------------------------------------------

@@ -358,18 +358,13 @@ add_error(#{errors := Errors} = Job, Error) ->
 
 normalize_error(#{at := At, error := Err} = Error) ->
     Error#{
-        at := to_microsecond(At),
+        at := At,
         error := normalize_error_term(Err)
     }.
 
 normalize_error_term(T) when is_atom(T); is_binary(T); is_number(T) -> T;
 normalize_error_term(T) when is_map(T); is_list(T) -> T;
 normalize_error_term(T) -> iolist_to_binary(io_lib:format(~"~0tp", [T])).
-
-to_microsecond({Unit, V}) ->
-    erlang:convert_time_unit(V, Unit, microsecond);
-to_microsecond(Native) ->
-    erlang:convert_time_unit(Native, native, microsecond).
 
 -spec valid_transition(gaffer:job_state(), gaffer:job_state()) -> boolean().
 valid_transition(available, executing) -> true;
