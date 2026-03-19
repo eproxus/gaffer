@@ -61,14 +61,24 @@
 % Native time units (erlang:system_time/0) or {Unit, Value}.
 % Drivers normalize to their own precision.
 
+% Shared value types for job-overridable properties
+-type max_attempts() :: pos_integer().
+-type priority() :: non_neg_integer().
+-type timeout_ms() :: pos_integer().
+-type backoff() :: [non_neg_integer()].
+-type shutdown_timeout() :: pos_integer().
+
 -type job() :: #{
     id := job_id(),
     queue := queue_name(),
     payload := term(),
     state := job_state(),
     attempt := non_neg_integer(),
-    max_attempts := pos_integer(),
-    priority := non_neg_integer(),
+    max_attempts := max_attempts(),
+    priority := priority(),
+    timeout := timeout_ms(),
+    backoff := backoff(),
+    shutdown_timeout := shutdown_timeout(),
     scheduled_at => timestamp(),
     inserted_at := timestamp(),
     attempted_at => timestamp(),
@@ -78,23 +88,13 @@
     errors := [job_error()]
 }.
 
--type new_job() :: #{
-    id := job_id(),
-    queue := queue_name(),
-    payload := term(),
-    state := job_state(),
-    attempt := non_neg_integer(),
-    max_attempts := pos_integer(),
-    priority := non_neg_integer(),
-    scheduled_at => timestamp(),
-    inserted_at := timestamp(),
-    errors := [job_error()]
-}.
-
 -type job_opts() :: #{
     queue => queue_name(),
-    max_attempts => pos_integer(),
-    priority => non_neg_integer(),
+    max_attempts => max_attempts(),
+    priority => priority(),
+    timeout => timeout_ms(),
+    backoff => backoff(),
+    shutdown_timeout => shutdown_timeout(),
     scheduled_at => timestamp()
 }.
 
@@ -111,11 +111,11 @@
     global_max_workers => pos_integer(),
     max_workers => pos_integer(),
     poll_interval => pos_integer() | infinity,
-    shutdown_timeout => pos_integer(),
-    max_attempts => pos_integer(),
-    timeout => pos_integer(),
-    backoff => pos_integer(),
-    priority => non_neg_integer(),
+    shutdown_timeout => shutdown_timeout(),
+    max_attempts => max_attempts(),
+    timeout => timeout_ms(),
+    backoff => backoff(),
+    priority => priority(),
     on_discard => queue_name(),
     hooks => hooks()
 }.
@@ -148,8 +148,12 @@
     job_state/0,
     queue_name/0,
     timestamp/0,
+    max_attempts/0,
+    priority/0,
+    timeout_ms/0,
+    backoff/0,
+    shutdown_timeout/0,
     job/0,
-    new_job/0,
     job_opts/0,
     job_error/0,
     queue_conf/0,

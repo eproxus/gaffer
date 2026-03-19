@@ -27,7 +27,7 @@
 -callback queue_delete(gaffer:queue_name(), driver_opts()) -> ok.
 
 % Jobs
--callback job_insert(gaffer:new_job(), driver_opts()) -> gaffer:job().
+-callback job_insert(gaffer:job(), driver_opts()) -> gaffer:job().
 -callback job_get(gaffer:job_id(), driver_opts()) -> gaffer:job() | not_found.
 -callback job_list(gaffer:list_opts(), driver_opts()) -> [gaffer:job()].
 -callback job_delete(gaffer:job_id(), driver_opts()) -> ok | not_found.

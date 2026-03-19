@@ -92,6 +92,11 @@ gaffer_test_() ->
         fun hook_delete_pre_sees_job/1,
         fun hook_order/1,
         fun hook_data_passthrough/1,
+        % --- Defaults ---
+        fun job_inherits_queue_defaults/1,
+        fun forwarded_job_inherits_target_defaults/1,
+        fun job_overrides_timeout_backoff_shutdown/1,
+        fun backoff_is_array/1,
         % --- Forwarding ---
         fun forward_on_discard/1,
         fun forward_on_discard_chain/1,
@@ -641,6 +646,57 @@ poll_auto_executes(Driver) ->
     timer:sleep(50),
     Job = gaffer:get(?Q, Id),
     ?assertMatch(#{state := completed}, Job).
+
+%--- Defaults tests -----------------------------------------------------------
+
+job_inherits_queue_defaults(Driver) ->
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{max_attempts => 7, priority => 5})
+    ),
+    Job = gaffer:insert(?Q, #{task => 1}),
+    ?assertMatch(#{max_attempts := 7, priority := 5}, Job).
+
+forwarded_job_inherits_target_defaults(Driver) ->
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            name => fwd_target_defaults,
+            max_attempts => 10,
+            priority => 3
+        })
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{on_discard => fwd_target_defaults, max_attempts => 1})
+    ),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    E = #{attempt => 1, error => boom, at => erlang:system_time()},
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
+    [Forwarded] = gaffer:list(#{queue => fwd_target_defaults}),
+    ?assertMatch(#{max_attempts := 10, priority := 3}, Forwarded).
+
+job_overrides_timeout_backoff_shutdown(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    Opts = #{
+        timeout => 60000,
+        backoff => [1000, 5000],
+        shutdown_timeout => 10000
+    },
+    Job = gaffer:insert(?Q, #{task => 1}, Opts),
+    ?assertMatch(
+        #{
+            timeout := 60000,
+            backoff := [1000, 5000],
+            shutdown_timeout := 10000
+        },
+        Job
+    ).
+
+backoff_is_array(Driver) ->
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{backoff => [1000, 2000, 4000]})
+    ),
+    Job = gaffer:insert(?Q, #{task => 1}),
+    ?assertMatch(#{backoff := [1000, 2000, 4000]}, Job).
 
 %--- Forwarding tests ---------------------------------------------------------
 

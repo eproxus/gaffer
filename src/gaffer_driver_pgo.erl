@@ -112,7 +112,7 @@ queue_delete(Name, #{pool := Pool}) ->
 
 % Jobs
 
--spec job_insert(gaffer:new_job(), state()) -> gaffer:job().
+-spec job_insert(gaffer:job(), state()) -> gaffer:job().
 job_insert(Job, #{pool := Pool}) ->
     Encoded = encode_job(Job),
     [#{rows := [Row]}] =
@@ -242,6 +242,8 @@ encode_job(Job) ->
             (K, V) when K =:= queue; K =:= state -> atom_to_binary(V);
             (payload, V) ->
                 json:encode(V);
+            (backoff, V) ->
+                json:encode(V);
             (errors, V) ->
                 json:encode(encode_errors(V));
             (K, V) when
@@ -277,6 +279,8 @@ row_to_job(Row) ->
             (state, V) ->
                 {true, binary_to_existing_atom(V)};
             (payload, V) ->
+                {true, json:decode(V)};
+            (backoff, V) ->
                 {true, json:decode(V)};
             (errors, V) ->
                 {true, normalize_errors(json:decode(V))};
@@ -348,6 +352,7 @@ encode_conf(Conf) ->
         fun(K, V) ->
             case maps:find(K, Template) of
                 {ok, #{type := atom}} -> atom_to_binary(V);
+                {ok, #{type := json}} -> json:encode(V);
                 {ok, _} -> V;
                 error when is_atom(V) -> atom_to_binary(V);
                 error -> V
@@ -369,6 +374,7 @@ row_to_queue_conf(Row) ->
 decode_conf_field(K, V, Template) ->
     case maps:find(K, Template) of
         {ok, #{type := atom}} -> binary_to_existing_atom(V);
+        {ok, #{type := json}} -> json:decode(V);
         {ok, _} -> V;
         error when is_binary(V) -> binary_to_existing_atom(V);
         error -> V

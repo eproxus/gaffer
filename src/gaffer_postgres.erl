@@ -53,7 +53,7 @@ migrations(#{}) ->
                     shutdown_timeout   INTEGER,
                     max_attempts       INTEGER,
                     timeout            INTEGER,
-                    backoff            INTEGER,
+                    backoff            JSONB,
                     priority           INTEGER,
                     on_discard         TEXT REFERENCES gaffer_queues(name)
                 )
@@ -61,23 +61,26 @@ migrations(#{}) ->
                 % Jobs
                 ~"""
                 CREATE TABLE gaffer_jobs (
-                    id             UUID PRIMARY KEY,
-                    queue          TEXT NOT NULL,
-                    state          TEXT NOT NULL
-                                       CHECK (state IN ('available', 'scheduled', 'executing',
-                                                        'completed', 'failed', 'cancelled',
-                                                        'discarded')),
-                    payload        JSONB NOT NULL,
-                    attempt        INTEGER NOT NULL,
-                    max_attempts   INTEGER NOT NULL,
-                    priority       INTEGER NOT NULL,
-                    errors         JSONB NOT NULL,
-                    scheduled_at   TIMESTAMPTZ,
-                    inserted_at    TIMESTAMPTZ NOT NULL,
-                    attempted_at   TIMESTAMPTZ,
-                    completed_at   TIMESTAMPTZ,
-                    cancelled_at   TIMESTAMPTZ,
-                    discarded_at   TIMESTAMPTZ
+                    id               UUID PRIMARY KEY,
+                    queue            TEXT NOT NULL,
+                    state            TEXT NOT NULL
+                                         CHECK (state IN ('available', 'scheduled', 'executing',
+                                                          'completed', 'failed', 'cancelled',
+                                                          'discarded')),
+                    payload          JSONB NOT NULL,
+                    attempt          INTEGER NOT NULL,
+                    max_attempts     INTEGER NOT NULL,
+                    priority         INTEGER NOT NULL,
+                    timeout          INTEGER,
+                    backoff          JSONB,
+                    shutdown_timeout INTEGER,
+                    errors           JSONB NOT NULL,
+                    scheduled_at     TIMESTAMPTZ,
+                    inserted_at      TIMESTAMPTZ NOT NULL,
+                    attempted_at     TIMESTAMPTZ,
+                    completed_at     TIMESTAMPTZ,
+                    cancelled_at     TIMESTAMPTZ,
+                    discarded_at     TIMESTAMPTZ
                 )
                 """,
                 % Query indexes
@@ -232,6 +235,9 @@ job_columns(Prefix) ->
         [Prefix, ~"attempt"],
         [Prefix, ~"max_attempts"],
         [Prefix, ~"priority"],
+        [Prefix, ~"timeout"],
+        [Prefix, ~"backoff"],
+        [Prefix, ~"shutdown_timeout"],
         [Prefix, ~"errors"]
         | [
             ts_column([Prefix, C], C)

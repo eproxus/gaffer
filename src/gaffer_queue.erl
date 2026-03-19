@@ -140,7 +140,7 @@ queue_conf_template() ->
         shutdown_timeout   => #{type => integer, default => 5000},
         max_attempts       => #{type => integer, default => 3},
         timeout            => #{type => integer, default => 30000},
-        backoff            => #{type => integer, default => 1000},
+        backoff            => #{type => json, default => [1000]},
         priority           => #{type => integer, default => 0},
         on_discard         => #{type => atom}
     }.
@@ -150,9 +150,9 @@ queue_conf_template() ->
 -spec insert_job(gaffer:queue_name(), term(), gaffer:job_opts()) ->
     gaffer:job().
 insert_job(Queue, Payload, Opts) ->
-    NewJob = build_job(Queue, Payload, Opts),
+    #{driver := {Mod, DS}, hooks := Hooks} = Conf = lookup(Queue),
+    NewJob = build_job(Conf, Payload, Opts),
     validate(NewJob),
-    #{driver := {Mod, DS}, hooks := Hooks} = lookup(Queue),
     gaffer_hooks:with_hooks(
         Hooks,
         [gaffer, job, insert],
@@ -191,7 +191,8 @@ delete_job(Queue, JobId) ->
 -spec cancel_job(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
 cancel_job(Queue, JobId) ->
-    modify_job(Queue, JobId, [gaffer, job, cancel], fun(Job) ->
+    Conf = lookup(Queue),
+    modify_job(Conf, JobId, [gaffer, job, cancel], fun(Job) ->
         transition(Job, cancelled)
     end).
 
@@ -200,7 +201,8 @@ cancel_job(Queue, JobId) ->
 -spec complete_job(gaffer:queue_name(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, not_found}.
 complete_job(Queue, Id) ->
-    modify_job(Queue, Id, [gaffer, job, complete], fun(#{attempt := A} = Job) ->
+    Conf = lookup(Queue),
+    modify_job(Conf, Id, [gaffer, job, complete], fun(#{attempt := A} = Job) ->
         {ok, C} = transition(Job, completed),
         {ok, C#{attempt := A + 1}}
     end).
@@ -208,9 +210,10 @@ complete_job(Queue, Id) ->
 -spec fail_job(gaffer:queue_name(), gaffer:job_id(), gaffer:job_error()) ->
     {ok, gaffer:job()} | {error, not_found}.
 fail_job(Queue, Id, Error) ->
-    Result = modify_job(Queue, Id, [gaffer, job, fail], fun(Job) ->
+    Conf = lookup(Queue),
+    Result = modify_job(Conf, Id, [gaffer, job, fail], fun(Job) ->
         Attempt = maps:get(attempt, Job) + 1,
-        MaxAttempts = maps:get(max_attempts, Job, 3),
+        MaxAttempts = maps:get(max_attempts, Job),
         Job1 = Job#{attempt := Attempt},
         Job2 = add_error(Job1, Error),
         {ok, Job3} = transition(Job2, failed),
@@ -220,7 +223,7 @@ fail_job(Queue, Id, Error) ->
         end
     end),
     case Result of
-        {ok, Job} -> maybe_forward(lookup(Queue), Job);
+        {ok, Job} -> maybe_forward(Conf, Job);
         _ -> ok
     end,
     Result.
@@ -228,7 +231,8 @@ fail_job(Queue, Id, Error) ->
 -spec schedule_job(gaffer:queue_name(), gaffer:job_id(), gaffer:timestamp()) ->
     {ok, gaffer:job()} | {error, not_found}.
 schedule_job(Queue, Id, At) ->
-    modify_job(Queue, Id, [gaffer, job, schedule], fun(Job) ->
+    Conf = lookup(Queue),
+    modify_job(Conf, Id, [gaffer, job, schedule], fun(Job) ->
         {ok, Scheduled} = transition(Job, scheduled),
         {ok, Scheduled#{scheduled_at => At}}
     end).
@@ -294,7 +298,7 @@ apply_defaults(Conf, Template) ->
 
 % Job construction
 
-build_job(Queue, Payload, Opts) ->
+build_job(#{name := Queue} = Conf, Payload, Opts) ->
     Now = erlang:system_time(),
     ScheduledAt = maps:get(scheduled_at, Opts, undefined),
     State =
@@ -302,17 +306,18 @@ build_job(Queue, Payload, Opts) ->
             undefined -> available;
             _ -> scheduled
         end,
-    Job = #{
+    JobKeys = [max_attempts, priority, timeout, backoff, shutdown_timeout],
+    Defaults = maps:with(JobKeys, Conf),
+    JobOpts = maps:merge(Defaults, maps:without([scheduled_at], Opts)),
+    Job = maps:merge(JobOpts, #{
         id => keysmith:uuid(7, binary),
         queue => Queue,
         payload => Payload,
         state => State,
         attempt => 0,
-        max_attempts => maps:get(max_attempts, Opts, 3),
-        priority => maps:get(priority, Opts, 0),
         inserted_at => Now,
         errors => []
-    },
+    }),
     maybe_put(scheduled_at, ScheduledAt, Job).
 
 -spec validate(gaffer:job()) -> ok.
@@ -398,8 +403,7 @@ maybe_put(Key, Value, Map) -> Map#{Key => Value}.
 
 % Driver dispatch
 
-modify_job(Queue, JobId, Event, Fun) ->
-    #{driver := {Mod, DS}, hooks := Hooks} = lookup(Queue),
+modify_job(#{driver := {Mod, DS}, hooks := Hooks}, JobId, Event, Fun) ->
     case Mod:job_get(JobId, DS) of
         not_found ->
             {error, not_found};
@@ -426,9 +430,7 @@ modify_job(Queue, JobId, Event, Fun) ->
 maybe_forward(#{on_discard := Target}, #{state := discarded} = Job) ->
     MetaKeys = [payload, queue, attempt, errors, discarded_at],
     WrappedPayload = maps:with(MetaKeys, Job),
-    % FIXME: build_job should pick up max_attempts from queue conf as default
-    #{max_attempts := MaxAttempts} = lookup(Target),
-    _ = insert_job(Target, WrappedPayload, #{max_attempts => MaxAttempts}),
+    _ = insert_job(Target, WrappedPayload, #{}),
     ok;
 maybe_forward(_, _) ->
     ok.
