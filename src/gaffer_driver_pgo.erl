@@ -30,6 +30,15 @@
 
 -export_type([state/0]).
 
+-define(IS_TIMESTAMP(K),
+    K =:= inserted_at;
+    K =:= scheduled_at;
+    K =:= attempted_at;
+    K =:= completed_at;
+    K =:= cancelled_at;
+    K =:= discarded_at
+).
+
 %--- gaffer_driver Callbacks ---------------------------------------------------
 
 % Lifecycle
@@ -101,7 +110,7 @@ queue_get(Name, #{pool := Pool}) ->
     [#{rows := Rows}] =
         transaction(Pool, gaffer_postgres:queue_get(Name)),
     case Rows of
-        [Row] -> row_to_queue_conf(Row);
+        [Row] -> decode_conf(Row);
         [] -> not_found
     end.
 
@@ -117,14 +126,14 @@ job_insert(Job, #{pool := Pool}) ->
     Encoded = encode_job(Job),
     [#{rows := [Row]}] =
         transaction(Pool, gaffer_postgres:job_insert(Encoded)),
-    row_to_job(Row).
+    decode_job(Row).
 
 -spec job_get(gaffer:job_id(), state()) -> gaffer:job() | not_found.
 job_get(Id, #{pool := Pool}) ->
     [#{rows := Rows}] =
         transaction(Pool, gaffer_postgres:job_get(Id)),
     case Rows of
-        [Row] -> row_to_job(Row);
+        [Row] -> decode_job(Row);
         [] -> not_found
     end.
 
@@ -133,7 +142,7 @@ job_list(Opts, #{pool := Pool}) ->
     Encoded = encode_list_opts(Opts),
     [#{rows := Rows}] =
         transaction(Pool, gaffer_postgres:job_list(Encoded)),
-    [row_to_job(R) || R <:- Rows].
+    [decode_job(R) || R <:- Rows].
 
 -spec job_delete(gaffer:job_id(), state()) -> ok | not_found.
 job_delete(Id, #{pool := Pool}) ->
@@ -153,7 +162,7 @@ job_claim(Opts, Changes, #{pool := Pool}) ->
         transaction(
             Pool, gaffer_postgres:job_claim(EncodedOpts, EncodedChanges)
         ),
-    [row_to_job(R) || R <:- Rows].
+    [decode_job(R) || R <:- Rows].
 
 -spec job_update(gaffer:job(), state()) -> ok.
 job_update(Job, #{pool := Pool}) ->
@@ -236,116 +245,6 @@ transaction(Pool, Queries) ->
         #{pool => Pool}
     ).
 
-encode_job(Job) ->
-    maps:map(
-        fun
-            (K, V) when K =:= queue; K =:= state -> atom_to_binary(V);
-            (payload, V) ->
-                json:encode(V);
-            (backoff, V) ->
-                json:encode(V);
-            (errors, V) ->
-                json:encode(encode_errors(V));
-            (K, V) when
-                K =:= inserted_at;
-                K =:= scheduled_at;
-                K =:= attempted_at;
-                K =:= completed_at;
-                K =:= cancelled_at;
-                K =:= discarded_at
-            ->
-                to_microsecond(V);
-            (_K, V) ->
-                V
-        end,
-        Job
-    ).
-
-row_to_job(Row) ->
-    TimestampKeys = [
-        scheduled_at,
-        inserted_at,
-        attempted_at,
-        completed_at,
-        cancelled_at,
-        discarded_at
-    ],
-    maps:filtermap(
-        fun
-            (_K, null) ->
-                false;
-            (queue, V) ->
-                {true, binary_to_existing_atom(V)};
-            (state, V) ->
-                {true, binary_to_existing_atom(V)};
-            (payload, V) ->
-                {true, json:decode(V)};
-            (backoff, V) ->
-                {true, json:decode(V)};
-            (errors, V) ->
-                {true, normalize_errors(json:decode(V))};
-            (K, V) ->
-                case lists:member(K, TimestampKeys) of
-                    true -> {true, {microsecond, V}};
-                    false -> {true, V}
-                end
-        end,
-        Row
-    ).
-
-normalize_errors(Errors) ->
-    [normalize_error_keys(E) || E <:- Errors].
-
-normalize_error_keys(ErrorMap) ->
-    maps:fold(
-        fun
-            (~"attempt", V, Acc) -> Acc#{attempt => V};
-            (~"error", V, Acc) -> Acc#{error => V};
-            (~"at", V, Acc) -> Acc#{at => {microsecond, V}};
-            (K, V, Acc) -> Acc#{K => V}
-        end,
-        #{},
-        ErrorMap
-    ).
-
-encode_errors(Errors) ->
-    [encode_error_entry(E) || E <:- Errors].
-
-encode_error_entry(Entry) ->
-    maps:map(
-        fun
-            (at, V) -> to_microsecond(V);
-            (error, V) -> iolist_to_binary(io_lib:format(~"~0tp", [V]));
-            (_K, V) -> V
-        end,
-        Entry
-    ).
-
-encode_claim(Opts, Changes) ->
-    #{queue := Queue, limit := Limit} = Opts,
-    #{state := State, attempted_at := AttemptedAt} = Changes,
-    {
-        #{queue => atom_to_binary(Queue), limit => Limit},
-        #{
-            state => atom_to_binary(State),
-            attempted_at => to_microsecond(AttemptedAt)
-        }
-    }.
-
-encode_list_opts(Opts) ->
-    maps:map(
-        fun
-            (_K, V) when is_atom(V) -> atom_to_binary(V);
-            (_K, V) -> V
-        end,
-        Opts
-    ).
-
-to_microsecond({Unit, V}) ->
-    erlang:convert_time_unit(V, Unit, microsecond);
-to_microsecond(Native) ->
-    erlang:convert_time_unit(Native, native, microsecond).
-
 encode_conf(Conf) ->
     Template = gaffer_queue:queue_conf_template(),
     maps:map(
@@ -361,7 +260,7 @@ encode_conf(Conf) ->
         Conf
     ).
 
-row_to_queue_conf(Row) ->
+decode_conf(Row) ->
     Template = gaffer_queue:queue_conf_template(),
     maps:filtermap(
         fun
@@ -379,3 +278,84 @@ decode_conf_field(K, V, Template) ->
         error when is_binary(V) -> binary_to_existing_atom(V);
         error -> V
     end.
+
+encode_job(Job) ->
+    maps:map(
+        fun
+            (K, V) when K =:= queue; K =:= state -> atom_to_binary(V);
+            (payload, V) -> json:encode(V);
+            (backoff, V) -> json:encode(V);
+            (errors, V) -> json:encode(encode_errors(V));
+            (K, V) when ?IS_TIMESTAMP(K) -> encode_timestamp(V);
+            (_K, V) -> V
+        end,
+        Job
+    ).
+
+encode_errors(Errors) ->
+    [encode_error_entry(E) || E <:- Errors].
+
+encode_error_entry(Entry) ->
+    maps:map(
+        fun
+            (at, V) -> encode_timestamp(V);
+            (error, V) -> iolist_to_binary(io_lib:format(~"~0tp", [V]));
+            (_K, V) -> V
+        end,
+        Entry
+    ).
+
+encode_claim(Opts, Changes) ->
+    #{queue := Queue, limit := Limit} = Opts,
+    #{state := State, attempted_at := AttemptedAt} = Changes,
+    {
+        #{queue => atom_to_binary(Queue), limit => Limit},
+        #{
+            state => atom_to_binary(State),
+            attempted_at => encode_timestamp(AttemptedAt)
+        }
+    }.
+
+encode_list_opts(Opts) ->
+    maps:map(
+        fun
+            (_K, V) when is_atom(V) -> atom_to_binary(V);
+            (_K, V) -> V
+        end,
+        Opts
+    ).
+
+encode_timestamp({Unit, V}) ->
+    erlang:convert_time_unit(V, Unit, microsecond);
+encode_timestamp(Native) ->
+    erlang:convert_time_unit(Native, native, microsecond).
+
+decode_job(Row) ->
+    maps:filtermap(
+        fun
+            (_K, null) -> false;
+            (queue, V) -> {true, binary_to_existing_atom(V)};
+            (state, V) -> {true, binary_to_existing_atom(V)};
+            (payload, V) -> {true, json:decode(V)};
+            (backoff, V) -> {true, json:decode(V)};
+            (errors, V) -> {true, decode_errors(json:decode(V))};
+            (K, V) when ?IS_TIMESTAMP(K) -> {true, {microsecond, V}};
+            (_K, V) -> {true, V}
+        end,
+        Row
+    ).
+
+decode_errors(Errors) ->
+    [decode_error_entry(E) || E <:- Errors].
+
+decode_error_entry(ErrorMap) ->
+    maps:fold(
+        fun
+            (~"attempt", V, Acc) -> Acc#{attempt => V};
+            (~"error", V, Acc) -> Acc#{error => V};
+            (~"at", V, Acc) -> Acc#{at => {microsecond, V}};
+            (K, V, Acc) -> Acc#{K => V}
+        end,
+        #{},
+        ErrorMap
+    ).
