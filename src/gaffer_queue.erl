@@ -234,7 +234,7 @@ schedule_job(Queue, Id, At) ->
     Conf = lookup(Queue),
     modify_job(Conf, Id, [gaffer, job, schedule], fun(Job) ->
         {ok, Available} = transition(Job, available),
-        {ok, Available#{scheduled_at => At}}
+        {ok, Available#{scheduled_at => timestamp(At)}}
     end).
 
 -spec claim_jobs(gaffer:queue_name(), gaffer:claim_opts()) ->
@@ -260,6 +260,9 @@ prune_jobs(Queue, Opts) ->
 
 is_gaffer_key({gaffer_queue, _}) -> true;
 is_gaffer_key(_) -> false.
+
+timestamp({Unit, V}) -> erlang:convert_time_unit(V, Unit, native);
+timestamp(Native) when is_integer(Native) -> Native.
 
 % Config validation
 
@@ -300,7 +303,7 @@ apply_defaults(Conf, Template) ->
 
 build_job(#{name := Queue} = Conf, Payload, Opts) ->
     Now = erlang:system_time(),
-    ScheduledAt = maps:get(scheduled_at, Opts, undefined),
+    ScheduledAt = maybe_scheduled_at(Opts),
     JobKeys = [max_attempts, priority, timeout, backoff, shutdown_timeout],
     Defaults = maps:with(JobKeys, Conf),
     JobOpts = maps:merge(Defaults, maps:without([scheduled_at], Opts)),
@@ -358,7 +361,7 @@ add_error(#{errors := Errors} = Job, Error) ->
 
 normalize_error(#{at := At, error := Err} = Error) ->
     Error#{
-        at := At,
+        at := timestamp(At),
         error := normalize_error_term(Err)
     }.
 
@@ -384,6 +387,9 @@ set_timestamp(completed, TS, Job) -> Job#{completed_at => TS};
 set_timestamp(cancelled, TS, Job) -> Job#{cancelled_at => TS};
 set_timestamp(discarded, TS, Job) -> Job#{discarded_at => TS};
 set_timestamp(_State, _TS, Job) -> Job.
+
+maybe_scheduled_at(#{scheduled_at := At}) -> timestamp(At);
+maybe_scheduled_at(#{}) -> undefined.
 
 maybe_put(_Key, undefined, Map) -> Map;
 maybe_put(Key, Value, Map) -> Map#{Key => Value}.

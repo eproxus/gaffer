@@ -459,14 +459,14 @@ fail_error_normalization(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    AtUs = erlang:system_time(microsecond),
+    AtNative = truncate_ts(0),
     ErrorInfo = [#{reason => {badrpc, nodedown}}],
-    E = #{attempt => 1, error => ErrorInfo, at => {microsecond, AtUs}},
+    E = #{attempt => 1, error => ErrorInfo, at => AtNative},
     {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
     ?assertMatch(
         #{
             errors := [
-                #{attempt := 1, error := ErrorInfo, at := {microsecond, AtUs}}
+                #{attempt := 1, error := ErrorInfo, at := AtNative}
             ]
         },
         Failed
@@ -478,8 +478,7 @@ schedule(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    FutureAt =
-        erlang:system_time() + erlang:convert_time_unit(60, second, native),
+    FutureAt = truncate_ts(60),
     {ok, Scheduled} = gaffer_queue_runner:schedule(?Q, Id, FutureAt),
     ?assertMatch(#{state := available, scheduled_at := FutureAt}, Scheduled).
 
@@ -489,8 +488,7 @@ schedule_from_failed(Driver) ->
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
     E = #{attempt => 1, error => boom, at => erlang:system_time()},
     {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
-    FutureAt =
-        erlang:system_time() + erlang:convert_time_unit(60, second, native),
+    FutureAt = truncate_ts(60),
     {ok, Scheduled} = gaffer_queue_runner:schedule(?Q, Id, FutureAt),
     ?assertMatch(#{state := available, scheduled_at := FutureAt}, Scheduled).
 
@@ -1116,6 +1114,12 @@ atomize_keys(Other) ->
 
 to_atom(A) when is_atom(A) -> A;
 to_atom(B) when is_binary(B) -> binary_to_existing_atom(B).
+
+% Returns a timestamp in native units at microsecond precision,
+% offset by Seconds. Survives a PGO round-trip without losing equality.
+truncate_ts(Seconds) ->
+    Us = erlang:system_time(microsecond) + Seconds * 1_000_000,
+    erlang:convert_time_unit(Us, microsecond, native).
 
 make_hook() -> make_hook(hook).
 make_hook(Tag) ->

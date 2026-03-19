@@ -325,10 +325,11 @@ encode_list_opts(Opts) ->
         Opts
     ).
 
-encode_timestamp({Unit, V}) ->
-    erlang:convert_time_unit(V, Unit, microsecond);
 encode_timestamp(Native) ->
     erlang:convert_time_unit(Native, native, microsecond).
+
+decode_timestamp(Microseconds) ->
+    erlang:convert_time_unit(Microseconds, microsecond, native).
 
 decode_job(Row) ->
     maps:filtermap(
@@ -339,7 +340,7 @@ decode_job(Row) ->
             (payload, V) -> {true, json:decode(V)};
             (backoff, V) -> {true, json:decode(V)};
             (errors, V) -> {true, decode_errors(json:decode(V))};
-            (K, V) when ?IS_TIMESTAMP(K) -> {true, {microsecond, V}};
+            (K, V) when ?IS_TIMESTAMP(K) -> {true, decode_timestamp(V)};
             (_K, V) -> {true, V}
         end,
         Row
@@ -353,7 +354,7 @@ decode_error_entry(ErrorMap) ->
         fun
             (~"attempt", V, Acc) -> Acc#{attempt => V};
             (~"error", V, Acc) -> Acc#{error => V};
-            (~"at", V, Acc) -> Acc#{at => {microsecond, V}};
+            (~"at", V, Acc) -> Acc#{at => decode_timestamp(V)};
             (K, V, Acc) -> Acc#{K => V}
         end,
         #{},

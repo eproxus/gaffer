@@ -19,8 +19,10 @@
       max_attempts. We should care about all config for the new queue?
 - [X] Remove 'scheduled' state, it can be represented with 'available' +
       'scheduled_at'
-- [ ] Would creating a gaffer_job module clean up the codebase, or just make it
-      more complicated?
+- [X] Move timestamp normalization out of gaffer_queue into the driver layer
+      to remove duplication with gaffer_driver_pgo:encode_timestamp/1
+- [ ] Refactor runner and queue module APIs so the runner doesn't construct job
+      internal data (such as errors)
 - [ ] Handle backoff and timeout in runner
 - [ ] on_discard should be switchable so success jobs can be put in one queue
       and failed in another. How do dispatch?
@@ -44,8 +46,13 @@
           pick them up?
     - [ ] Add property based tests
 - [ ] Document public API using `-moduledoc` and `-doc` attributes
-    - [ ] Document driver quirks (e.g. JSON fields return binary keys in
-          persistent drivers, ETS preserves original terms)
+    - [ ] Document driver quirks
+        - Postgres
+            - JSON fields return binary keys
+            - More fine-grained timestamps are truncated to microseconds
+              precision (but returned as native)
+        - ETS
+            - Preserves original terms including atom keys
 - [ ] Write a user guide
 - [ ] Avoid querying all persistent terms when stopping Gaffer
     - ETS table *plus* persistent_term ("best of both worlds")?
