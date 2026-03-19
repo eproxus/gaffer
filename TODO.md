@@ -19,18 +19,19 @@
       max_attempts. We should care about all config for the new queue?
 - [X] Remove 'scheduled' state, it can be represented with 'available' +
       'scheduled_at'
-- [ ] Postgres driver should atomize known job keys
+- [ ] Would creating a gaffer_job module clean up the codebase, or just make it
+      more complicated?
 - [ ] Handle backoff and timeout in runner
 - [ ] on_discard should be switchable so success jobs can be put in one queue
       and failed in another. How do dispatch?
     - What about discarded state? What is it used for? (cleanup)
     - [ ] Handle deleting a queue that is referenced in on_discard
 - [ ] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
-- [ ] Add feature to introspect queues (get real metadata from actual database, not hooks)
+- [ ] Add feature to introspect queues
+    - [ ] Count actual items in storage. How to make performant?
 - [ ] Implement drain and flush
-- [ ] Would creating a gaffer_job module clean up the codebase, or just make it
-      more complicated?
 - [ ] Implement 'priority' support
+- [ ] Improve CI to use `mise` and only one workflow
 - [ ] Add support for LISTEN/NOTIFY
 - [ ] Improve tests
     - [ ] Verify life cycle / runner more carefully
@@ -43,6 +44,8 @@
           pick them up?
     - [ ] Add property based tests
 - [ ] Document public API using `-moduledoc` and `-doc` attributes
+    - [ ] Document driver quirks (e.g. JSON fields return binary keys in
+          persistent drivers, ETS preserves original terms)
 - [ ] Write a user guide
 - [ ] Avoid querying all persistent terms when stopping Gaffer
     - ETS table *plus* persistent_term ("best of both worlds")?
