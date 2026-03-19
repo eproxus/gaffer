@@ -17,7 +17,7 @@
     - Job max_attempts default is hardcoded to 3 in gaffer_queue
     - We're looking up the new queue config in maybe_forward but only care about
       max_attempts. We should care about all config for the new queue?
-- [ ] Remove 'scheduled' state, it can be represented with 'available' +
+- [X] Remove 'scheduled' state, it can be represented with 'available' +
       'scheduled_at'
 - [ ] Postgres driver should atomize known job keys
 - [ ] Handle backoff and timeout in runner

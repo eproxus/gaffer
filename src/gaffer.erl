@@ -49,7 +49,6 @@
 -type job_id() :: binary().
 -type job_state() ::
     available
-    | scheduled
     | executing
     | completed
     | failed

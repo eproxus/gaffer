@@ -305,13 +305,13 @@ insert_scheduled(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     At = erlang:system_time() + erlang:convert_time_unit(3600, second, native),
     Job = gaffer:insert(?Q, #{task => 1}, #{scheduled_at => At}),
-    ?assertMatch(#{state := scheduled, scheduled_at := _}, Job).
+    ?assertMatch(#{state := available, scheduled_at := _}, Job).
 
 insert_scheduled_microsecond(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     At = {microsecond, erlang:system_time(microsecond) + 60_000_000},
     Job = gaffer:insert(?Q, #{task => 1}, #{scheduled_at => At}),
-    ?assertMatch(#{state := scheduled, scheduled_at := _}, Job).
+    ?assertMatch(#{state := available, scheduled_at := _}, Job).
 
 %--- Get / list tests ---------------------------------------------------------
 
@@ -476,7 +476,7 @@ schedule(Driver) ->
     FutureAt =
         erlang:system_time() + erlang:convert_time_unit(60, second, native),
     {ok, Scheduled} = gaffer_queue_runner:schedule(?Q, Id, FutureAt),
-    ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
+    ?assertMatch(#{state := available, scheduled_at := FutureAt}, Scheduled).
 
 schedule_from_failed(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
@@ -487,7 +487,7 @@ schedule_from_failed(Driver) ->
     FutureAt =
         erlang:system_time() + erlang:convert_time_unit(60, second, native),
     {ok, Scheduled} = gaffer_queue_runner:schedule(?Q, Id, FutureAt),
-    ?assertMatch(#{state := scheduled, scheduled_at := FutureAt}, Scheduled).
+    ?assertMatch(#{state := available, scheduled_at := FutureAt}, Scheduled).
 
 schedule_not_found(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
@@ -699,12 +699,6 @@ backoff_is_array(Driver) ->
     ?assertMatch(#{backoff := [1000, 2000, 4000]}, Job).
 
 %--- Forwarding tests ---------------------------------------------------------
-
-% FIXME: Merge forward_on_discard, forward_on_discard_retryable, and
-% forward_on_discard_fresh into a single multi-attempt test once the
-% scheduled state is removed (scheduled is just available with a future
-% scheduled_at). Currently we can't chain claim-fail cycles because
-% failed→scheduled jobs have no path back to available for re-claiming.
 
 forward_on_discard(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_dlq})),

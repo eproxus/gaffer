@@ -64,7 +64,7 @@ migrations(#{}) ->
                     id               UUID PRIMARY KEY,
                     queue            TEXT NOT NULL,
                     state            TEXT NOT NULL
-                                         CHECK (state IN ('available', 'scheduled', 'executing',
+                                         CHECK (state IN ('available', 'executing',
                                                           'completed', 'failed', 'cancelled',
                                                           'discarded')),
                     payload          JSONB NOT NULL,

@@ -233,8 +233,8 @@ fail_job(Queue, Id, Error) ->
 schedule_job(Queue, Id, At) ->
     Conf = lookup(Queue),
     modify_job(Conf, Id, [gaffer, job, schedule], fun(Job) ->
-        {ok, Scheduled} = transition(Job, scheduled),
-        {ok, Scheduled#{scheduled_at => At}}
+        {ok, Available} = transition(Job, available),
+        {ok, Available#{scheduled_at => At}}
     end).
 
 -spec claim_jobs(gaffer:queue_name(), gaffer:claim_opts()) ->
@@ -301,11 +301,6 @@ apply_defaults(Conf, Template) ->
 build_job(#{name := Queue} = Conf, Payload, Opts) ->
     Now = erlang:system_time(),
     ScheduledAt = maps:get(scheduled_at, Opts, undefined),
-    State =
-        case ScheduledAt of
-            undefined -> available;
-            _ -> scheduled
-        end,
     JobKeys = [max_attempts, priority, timeout, backoff, shutdown_timeout],
     Defaults = maps:with(JobKeys, Conf),
     JobOpts = maps:merge(Defaults, maps:without([scheduled_at], Opts)),
@@ -313,7 +308,7 @@ build_job(#{name := Queue} = Conf, Payload, Opts) ->
         id => keysmith:uuid(7, binary),
         queue => Queue,
         payload => Payload,
-        state => State,
+        state => available,
         attempt => 0,
         inserted_at => Now,
         errors => []
@@ -379,19 +374,16 @@ to_microsecond(Native) ->
 -spec valid_transition(gaffer:job_state(), gaffer:job_state()) -> boolean().
 valid_transition(available, executing) -> true;
 valid_transition(available, cancelled) -> true;
-valid_transition(scheduled, available) -> true;
-valid_transition(scheduled, cancelled) -> true;
 valid_transition(executing, completed) -> true;
 valid_transition(executing, failed) -> true;
 valid_transition(executing, cancelled) -> true;
-valid_transition(executing, scheduled) -> true;
+valid_transition(executing, available) -> true;
 valid_transition(failed, discarded) -> true;
-valid_transition(failed, scheduled) -> true;
+valid_transition(failed, available) -> true;
 valid_transition(_, _) -> false.
 
 -spec set_timestamp(gaffer:job_state(), integer(), gaffer:job()) ->
     gaffer:job().
-set_timestamp(scheduled, TS, Job) -> Job#{scheduled_at => TS};
 set_timestamp(executing, TS, Job) -> Job#{attempted_at => TS};
 set_timestamp(completed, TS, Job) -> Job#{completed_at => TS};
 set_timestamp(cancelled, TS, Job) -> Job#{cancelled_at => TS};
