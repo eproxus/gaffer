@@ -1,5 +1,8 @@
 ---
 extends: default
+ignore: |
+  _build/
+  tmp/
 rules:
   line-length:
     max: 100

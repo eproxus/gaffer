@@ -23,6 +23,7 @@
       to remove duplication with gaffer_driver_pgo:encode_timestamp/1
 - [X] Refactor runner and queue module APIs so the runner doesn't construct job
       internal data (such as errors)
+- [X] Improve CI to use `mise` and only one workflow
 - [ ] Handle backoff and timeout in runner
 - [ ] on_discard should be switchable so success jobs can be put in one queue
       and failed in another. How do dispatch?
@@ -33,7 +34,6 @@
     - [ ] Count actual items in storage. How to make performant?
 - [ ] Implement drain and flush
 - [ ] Implement 'priority' support
-- [ ] Improve CI to use `mise` and only one workflow
 - [ ] Add support for LISTEN/NOTIFY
 - [ ] Improve tests
     - [ ] Verify life cycle / runner more carefully
