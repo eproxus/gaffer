@@ -27,7 +27,7 @@ jobs:
             !_build/test/logs
           key: rebar3-${{runner.os}}_${{runner.arch}}-rebar-${{hashFiles('rebar.lock')}}
 
-      - run: mise run verify
+      - run: mise run --output=keep-order verify
 
   test:
     name: Test
@@ -47,4 +47,4 @@ jobs:
             !_build/test/logs
           key: rebar3-${{runner.os}}_${{runner.arch}}-rebar-${{hashFiles('rebar.lock')}}
 
-      - run: mise run test
+      - run: mise run --output=keep-order test
