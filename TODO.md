@@ -21,7 +21,7 @@
       'scheduled_at'
 - [X] Move timestamp normalization out of gaffer_queue into the driver layer
       to remove duplication with gaffer_driver_pgo:encode_timestamp/1
-- [ ] Refactor runner and queue module APIs so the runner doesn't construct job
+- [X] Refactor runner and queue module APIs so the runner doesn't construct job
       internal data (such as errors)
 - [ ] Handle backoff and timeout in runner
 - [ ] on_discard should be switchable so success jobs can be put in one queue

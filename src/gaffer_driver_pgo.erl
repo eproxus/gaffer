@@ -299,7 +299,6 @@ encode_error_entry(Entry) ->
     maps:map(
         fun
             (at, V) -> encode_timestamp(V);
-            (error, V) -> iolist_to_binary(io_lib:format(~"~0tp", [V]));
             (_K, V) -> V
         end,
         Entry

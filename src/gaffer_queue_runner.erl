@@ -44,12 +44,12 @@ complete(Name, Id) ->
     gen_statem:call(proc_name(Name), {complete, Id}).
 
 -spec fail(
-    gaffer:queue_name(), gaffer:job_id(), gaffer:job_error()
+    gaffer:queue_name(), gaffer:job_id(), term()
 ) ->
     {ok, gaffer:job()} | {error, term()}.
-fail(Name, Id, Error) ->
+fail(Name, Id, Reason) ->
     gen_statem:call(
-        proc_name(Name), {fail, Id, Error}
+        proc_name(Name), {fail, Id, Reason}
     ).
 
 -spec schedule(
@@ -157,7 +157,7 @@ worker_cmd(JobId, Queue, {cancel, _}) -> {cancel, Queue, JobId};
 worker_cmd(JobId, _Queue, {schedule, At}) -> {schedule, JobId, At}.
 
 fail_cmd(JobId, Reason) ->
-    {fail, JobId, #{attempt => 0, error => Reason, at => erlang:system_time()}}.
+    {fail, JobId, Reason}.
 
 poll_timeout(#{poll_interval := infinity}) ->
     {state_timeout, infinity, poll};
@@ -166,8 +166,8 @@ poll_timeout(#{poll_interval := Interval}) ->
 
 dispatch({complete, Id}, Name) ->
     gaffer_queue:complete_job(Name, Id);
-dispatch({fail, Id, Error}, Name) ->
-    gaffer_queue:fail_job(Name, Id, Error);
+dispatch({fail, Id, Reason}, Name) ->
+    gaffer_queue:fail_job(Name, Id, Reason);
 dispatch({schedule, Id, At}, Name) ->
     gaffer_queue:schedule_job(Name, Id, At);
 dispatch({cancel, Queue, Id}, _Name) ->

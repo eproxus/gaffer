@@ -207,14 +207,17 @@ complete_job(Queue, Id) ->
         {ok, C#{attempt := A + 1}}
     end).
 
--spec fail_job(gaffer:queue_name(), gaffer:job_id(), gaffer:job_error()) ->
+-spec fail_job(gaffer:queue_name(), gaffer:job_id(), term()) ->
     {ok, gaffer:job()} | {error, not_found}.
-fail_job(Queue, Id, Error) ->
+fail_job(Queue, Id, Reason) ->
     Conf = lookup(Queue),
     Result = modify_job(Conf, Id, [gaffer, job, fail], fun(Job) ->
         Attempt = maps:get(attempt, Job) + 1,
         MaxAttempts = maps:get(max_attempts, Job),
         Job1 = Job#{attempt := Attempt},
+        Error = #{
+            attempt => Attempt, error => Reason, at => erlang:system_time()
+        },
         Job2 = add_error(Job1, Error),
         {ok, Job3} = transition(Job2, failed),
         case Attempt >= MaxAttempts of
@@ -356,18 +359,26 @@ transition(#{state := From} = Job, To) ->
     end.
 
 add_error(#{errors := Errors} = Job, Error) ->
-    Normalized = normalize_error(Error),
-    Job#{errors := [Normalized | Errors]}.
+    Job#{errors := [normalize_error(Error) | Errors]}.
 
-normalize_error(#{at := At, error := Err} = Error) ->
-    Error#{
-        at := timestamp(At),
-        error := normalize_error_term(Err)
-    }.
+normalize_error(#{error := Err} = Error) ->
+    Error#{error := normalize_error_term(Err)}.
 
-normalize_error_term(T) when is_atom(T); is_binary(T); is_number(T) -> T;
-normalize_error_term(T) when is_map(T); is_list(T) -> T;
-normalize_error_term(T) -> iolist_to_binary(io_lib:format(~"~0tp", [T])).
+normalize_error_term(T) when is_atom(T); is_binary(T); is_number(T) ->
+    T;
+normalize_error_term(T) when is_list(T) ->
+    [normalize_error_term(E) || E <:- T];
+normalize_error_term(T) when is_map(T) ->
+    maps:fold(
+        fun(K, V, Acc) ->
+            Key = normalize_error_term(K),
+            Acc#{Key => normalize_error_term(V)}
+        end,
+        #{},
+        T
+    );
+normalize_error_term(T) ->
+    iolist_to_binary(io_lib:format(~"~0tp", [T])).
 
 -spec valid_transition(gaffer:job_state(), gaffer:job_state()) -> boolean().
 valid_transition(available, executing) -> true;

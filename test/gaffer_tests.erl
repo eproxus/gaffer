@@ -397,8 +397,7 @@ cancel_discarded_error(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, boom),
     ?assertMatch(
         {error, {invalid_transition, {discarded, cancelled}}},
         gaffer:cancel(?Q, Id)
@@ -428,8 +427,7 @@ fail_retryable(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => timeout, at => erlang:system_time()},
-    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, timeout),
     ?assertMatch(
         #{
             state := failed,
@@ -443,34 +441,36 @@ fail_discarded(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, Discarded} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, Discarded} = gaffer_queue_runner:fail(?Q, Id, boom),
     ?assertMatch(#{state := discarded, discarded_at := _}, Discarded).
 
 fail_not_found(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
     ?assertEqual(
         {error, not_found},
-        gaffer_queue_runner:fail(?Q, keysmith:uuid(nil, binary), E)
+        gaffer_queue_runner:fail(?Q, keysmith:uuid(nil, binary), boom)
     ).
 
 fail_error_normalization(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    AtNative = truncate_ts(0),
     ErrorInfo = [#{reason => {badrpc, nodedown}}],
-    E = #{attempt => 1, error => ErrorInfo, at => AtNative},
-    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, ErrorInfo),
     ?assertMatch(
         #{
             errors := [
-                #{attempt := 1, error := ErrorInfo, at := AtNative}
+                #{
+                    attempt := 1,
+                    error := [#{reason := ~"{badrpc,nodedown}"}],
+                    at := _
+                }
             ]
         },
         Failed
-    ).
+    ),
+    #{errors := [#{at := At}]} = Failed,
+    ?assert(is_integer(At)).
 
 %--- Schedule tests -----------------------------------------------------------
 
@@ -486,8 +486,7 @@ schedule_from_failed(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, boom),
     FutureAt = truncate_ts(60),
     {ok, Scheduled} = gaffer_queue_runner:schedule(?Q, Id, FutureAt),
     ?assertMatch(#{state := available, scheduled_at := FutureAt}, Scheduled).
@@ -672,8 +671,7 @@ forwarded_job_inherits_target_defaults(Driver) ->
     ),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, boom),
     [Forwarded] = gaffer:list(#{queue => fwd_target_defaults}),
     ?assertMatch(#{max_attempts := 10, priority := 3}, Forwarded).
 
@@ -708,8 +706,7 @@ forward_on_discard(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{on_discard => fwd_dlq})),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, Discarded} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, Discarded} = gaffer_queue_runner:fail(?Q, Id, boom),
     ?assertMatch(#{state := discarded}, Discarded),
     Wrapped = atomize_keys(
         maps:get(payload, hd(gaffer:list(#{queue => fwd_dlq})))
@@ -737,16 +734,14 @@ forward_on_discard_chain(Driver) ->
     ),
     #{id := Id1} = gaffer:insert(?Q, #{task => original}, #{max_attempts => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E1 = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(?Q, Id1, E1),
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id1, boom),
     % Job should now be in Q2 with max_attempts=1 from Q2's queue config
     [Q2Job] = gaffer:list(#{queue => fwd_chain_q2}),
     #{id := Id2} = Q2Job,
     [_] = gaffer_queue_runner:claim(fwd_chain_q2, #{
         queue => fwd_chain_q2, limit => 1
     }),
-    E2 = #{attempt => 1, error => crash, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(fwd_chain_q2, Id2, E2),
+    {ok, _} = gaffer_queue_runner:fail(fwd_chain_q2, Id2, crash),
     % Job should now be in Q3 with nested wrapping
     Outer = atomize_keys(
         maps:get(payload, hd(gaffer:list(#{queue => fwd_chain_q3})))
@@ -778,8 +773,7 @@ forward_on_discard_retryable(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{on_discard => fwd_retry_dlq})),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 3}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, boom),
     ?assertMatch(#{state := failed}, Failed),
     ?assertEqual([], gaffer:list(#{queue => fwd_retry_dlq})).
 
@@ -788,8 +782,7 @@ forward_on_discard_fresh(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{on_discard => fwd_fresh_dlq})),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}, #{max_attempts => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, boom),
     Forwarded = atomize_keys(hd(gaffer:list(#{queue => fwd_fresh_dlq}))),
     ?assertMatch(
         #{state := available, attempt := 0, errors := []},
@@ -886,8 +879,7 @@ hook_fail(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, _} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, _} = gaffer_queue_runner:fail(?Q, Id, boom),
     ?assertEqual(
         [
             {hook, pre, [gaffer, queue, create]},
@@ -1043,8 +1035,7 @@ hook_data_passthrough(Driver) ->
     ),
     #{id := Id} = Inserted,
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
-    E = #{attempt => 1, error => boom, at => erlang:system_time()},
-    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, E),
+    {ok, Failed} = gaffer_queue_runner:fail(?Q, Id, boom),
     ?assertEqual(
         [
             [~"pre", ~"gaffer", ~"job", ~"insert"],
