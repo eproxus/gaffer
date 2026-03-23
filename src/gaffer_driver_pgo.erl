@@ -21,6 +21,8 @@
 -export([job_claim/3]).
 -export([job_update/2]).
 -export([job_prune/2]).
+% Introspection
+-export([info/2]).
 
 -type pool_owner() :: driver | user.
 -type state() :: #{
@@ -118,6 +120,39 @@ queue_get(Name, #{pool := Pool}) ->
 queue_delete(Name, #{pool := Pool}) ->
     transaction(Pool, gaffer_postgres:queue_delete(Name)),
     ok.
+
+% Introspection
+
+-spec info(gaffer:queue_name(), state()) ->
+    #{jobs := #{gaffer:job_state() => gaffer:state_info()}}.
+info(Queue, #{pool := Pool}) ->
+    [#{rows := Rows}] =
+        transaction(Pool, gaffer_postgres:info(Queue)),
+    Empty = #{
+        available => #{count => 0},
+        executing => #{count => 0},
+        completed => #{count => 0},
+        failed => #{count => 0},
+        cancelled => #{count => 0},
+        discarded => #{count => 0}
+    },
+    Jobs = lists:foldl(fun decode_info_row/2, Empty, Rows),
+    #{jobs => Jobs}.
+
+decode_info_row(#{state := State, count := Count} = Row, Acc) ->
+    StateAtom = binary_to_existing_atom(State),
+    Entry = #{count => Count},
+    Entry1 =
+        case Row of
+            #{oldest := null} ->
+                Entry;
+            #{oldest := Oldest, newest := Newest} ->
+                Entry#{
+                    oldest => decode_timestamp(Oldest),
+                    newest => decode_timestamp(Newest)
+                }
+        end,
+    Acc#{StateAtom := Entry1}.
 
 % Jobs
 

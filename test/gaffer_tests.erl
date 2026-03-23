@@ -101,7 +101,13 @@ gaffer_test_() ->
         fun forward_on_discard/1,
         fun forward_on_discard_chain/1,
         fun forward_on_discard_retryable/1,
-        fun forward_on_discard_fresh/1
+        fun forward_on_discard_fresh/1,
+        % --- Info ---
+        fun info_empty_queue/1,
+        fun info_after_inserts/1,
+        fun info_mixed_states/1,
+        fun info_timestamps_per_state/1,
+        fun info_workers/1
     ],
     Sequential = [
         % Tests that restart gaffer
@@ -564,7 +570,7 @@ poll_claims_and_spawns(Driver) ->
     }),
     ok = gaffer_queue_runner:poll(?Q),
     receive
-        {job_started, _} -> ok
+        {job_started, _, _} -> ok
     after 5000 -> error(timeout)
     end,
     [Job] = gaffer:list(#{queue => ?Q}),
@@ -619,11 +625,11 @@ poll_max_workers_limits(Driver) ->
     ok = gaffer_queue_runner:poll(?Q),
     % Only 2 workers should have started
     receive
-        {job_started, _} -> ok
+        {job_started, _, _} -> ok
     after 5000 -> error(timeout)
     end,
     receive
-        {job_started, _} -> ok
+        {job_started, _, _} -> ok
     after 5000 -> error(timeout)
     end,
     % Third job should still be available
@@ -789,6 +795,82 @@ forward_on_discard_fresh(Driver) ->
         Forwarded
     ),
     ?assertEqual(#{task => 1}, mapz:deep_get([payload, payload], Forwarded)).
+
+%--- Info tests ---------------------------------------------------------------
+
+info_empty_queue(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    Info = gaffer:info(?Q),
+    #{jobs := Jobs, workers := Workers} = Info,
+    ?assertMatch(
+        #{
+            available := #{count := 0},
+            executing := #{count := 0},
+            completed := #{count := 0},
+            failed := #{count := 0},
+            cancelled := #{count := 0},
+            discarded := #{count := 0}
+        },
+        Jobs
+    ),
+    % No oldest/newest when count is 0
+    ?assertNot(maps:is_key(oldest, maps:get(available, Jobs))),
+    ?assertNot(maps:is_key(newest, maps:get(available, Jobs))),
+    ?assertMatch(
+        #{active := 0, max := #{local := 5, global := 25}},
+        Workers
+    ).
+
+info_after_inserts(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    _ = gaffer:insert(?Q, #{task => 2}),
+    _ = gaffer:insert(?Q, #{task => 3}),
+    #{jobs := #{available := Available}} = gaffer:info(?Q),
+    ?assertMatch(#{count := 3, oldest := _, newest := _}, Available).
+
+info_mixed_states(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    _ = gaffer:insert(?Q, #{task => 2}),
+    _ = gaffer:insert(?Q, #{task => 3}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    #{jobs := Jobs} = gaffer:info(?Q),
+    ?assertMatch(#{count := 2}, maps:get(available, Jobs)),
+    ?assertMatch(#{count := 1}, maps:get(cancelled, Jobs)).
+
+info_timestamps_per_state(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    {ok, _} = gaffer_queue_runner:complete(?Q, Id),
+    #{jobs := Jobs} = gaffer:info(?Q),
+    % completed uses completed_at
+    #{completed := #{count := 1, oldest := Oldest, newest := Newest}} = Jobs,
+    ?assert(is_integer(Oldest)),
+    ?assert(is_integer(Newest)),
+    ?assertEqual(Oldest, Newest).
+
+info_workers(Driver) ->
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{worker => gaffer_test_worker, max_workers => 2})
+    ),
+    _ = gaffer:insert(?Q, #{
+        ~"action" => ~"block",
+        ~"test_pid" => gaffer_test_worker:encode_pid(self())
+    }),
+    ok = gaffer_queue_runner:poll(?Q),
+    WorkerPid =
+        receive
+            {job_started, _, Pid} -> Pid
+        after 5000 -> error(timeout)
+        end,
+    #{workers := #{active := Active1}} = gaffer:info(?Q),
+    ?assertEqual(1, Active1),
+    % Unblock the worker and verify active drops to 0
+    WorkerPid ! continue,
+    timer:sleep(50),
+    #{workers := #{active := 0}} = gaffer:info(?Q).
 
 %--- PGO-specific tests -------------------------------------------------------
 

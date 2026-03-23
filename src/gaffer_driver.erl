@@ -35,3 +35,7 @@
     [gaffer:job()].
 -callback job_update(gaffer:job(), driver_opts()) -> ok.
 -callback job_prune(gaffer:prune_opts(), driver_opts()) -> non_neg_integer().
+
+% Introspection
+-callback info(gaffer:queue_name(), driver_opts()) ->
+    #{jobs := #{gaffer:job_state() => gaffer:state_info()}}.

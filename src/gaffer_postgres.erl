@@ -18,6 +18,8 @@
 -export([queue_update/2]).
 -export([queue_get/1]).
 -export([queue_delete/1]).
+% Introspection
+-export([info/1]).
 % Jobs
 -export([job_insert/1]).
 -export([job_get/1]).
@@ -171,6 +173,30 @@ queue_get(Name) ->
 -spec queue_delete(gaffer:queue_name()) -> [{iodata(), list()}].
 queue_delete(Name) ->
     [{~"DELETE FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
+
+% Introspection
+
+-spec info(gaffer:queue_name()) -> [{iodata(), list()}].
+info(Queue) ->
+    TSCase =
+        ~"""
+    CASE state
+        WHEN 'available' THEN inserted_at
+        WHEN 'executing' THEN attempted_at
+        WHEN 'completed' THEN completed_at
+        WHEN 'failed'    THEN attempted_at
+        WHEN 'cancelled' THEN cancelled_at
+        WHEN 'discarded' THEN discarded_at
+    END
+    """,
+    SQL = [
+        ~"SELECT state, COUNT(*) AS count, ",
+        ts_column([~"MIN(", TSCase, ~")"], ~"oldest"),
+        ~", ",
+        ts_column([~"MAX(", TSCase, ~")"], ~"newest"),
+        ~" FROM gaffer_jobs WHERE queue = $1 GROUP BY state"
+    ],
+    [{SQL, [atom_to_binary(Queue)]}].
 
 % Jobs
 

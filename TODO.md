@@ -24,8 +24,8 @@
 - [X] Refactor runner and queue module APIs so the runner doesn't construct job
       internal data (such as errors)
 - [X] Improve CI to use `mise` and only one workflow
-- [ ] Add feature to introspect queues
-    - [ ] Count actual items in storage. How to make performant?
+- [X] Add feature to introspect queues
+    - [X] Count actual items in storage. How to make performant?
 - [ ] Implement drain and flush
 - [ ] Review and deduplicate tests
     - Use queue introspection to verify test state?

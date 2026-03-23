@@ -17,6 +17,8 @@
 -export([claim/2]).
 -ignore_xref(prune/2).
 -export([prune/2]).
+-ignore_xref(info/1).
+-export([info/1]).
 % gen_statem Callbacks
 -export([callback_mode/0]).
 -export([init/1]).
@@ -71,6 +73,10 @@ claim(Name, Opts) ->
 prune(Name, Opts) ->
     gen_statem:call(proc_name(Name), {prune, Opts}).
 
+-spec info(gaffer:queue_name()) -> map().
+info(Name) ->
+    gen_statem:call(proc_name(Name), info).
+
 %--- gen_statem Callbacks ------------------------------------------------------
 
 callback_mode() -> handle_event_function.
@@ -80,6 +86,7 @@ init({Name, Conf}) ->
         name => Name,
         workers => #{},
         max_workers => maps:get(max_workers, Conf, 5),
+        global_max_workers => maps:get(global_max_workers, Conf, 25),
         poll_interval => maps:get(poll_interval, Conf, 1000),
         worker_mod => maps:get(worker, Conf, undefined)
     },
@@ -90,6 +97,8 @@ handle_event(
 ) ->
     Data1 = do_poll(Name, Data),
     {keep_state, Data1, [{reply, From, ok}, poll_timeout(Data1)]};
+handle_event({call, From}, info, _State, Data) ->
+    {keep_state, Data, [{reply, From, worker_info(Data)}]};
 handle_event(
     {call, From}, Cmd, _State, #{name := Name} = Data
 ) ->
@@ -176,6 +185,14 @@ dispatch({claim, #{queue := Queue} = Opts}, _Name) ->
     gaffer_queue:claim_jobs(Queue, Opts);
 dispatch({prune, Opts}, Name) ->
     gaffer_queue:prune_jobs(Name, Opts).
+
+worker_info(#{
+    workers := Workers, max_workers := MaxW, global_max_workers := GlobalMaxW
+}) ->
+    #{
+        active => map_size(Workers),
+        max => #{local => MaxW, global => GlobalMaxW}
+    }.
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input

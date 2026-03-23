@@ -10,6 +10,8 @@
 -export([update/2]).
 -export([list/0]).
 -export([queue_conf_template/0]).
+% Introspection
+-export([info/1]).
 % Jobs (user)
 -export([insert_job/3]).
 -export([get_job/2]).
@@ -144,6 +146,15 @@ queue_conf_template() ->
         priority           => #{type => integer, default => 0},
         on_discard         => #{type => atom}
     }.
+
+% Introspection
+
+-spec info(gaffer:queue_name()) -> gaffer:queue_info().
+info(Queue) ->
+    #{driver := {Mod, DS}} = lookup(Queue),
+    StorageInfo = Mod:info(Queue, DS),
+    WorkerInfo = gaffer_queue_runner:info(Queue),
+    StorageInfo#{workers => WorkerInfo}.
 
 % Job (user)
 

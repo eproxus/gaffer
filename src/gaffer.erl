@@ -36,6 +36,9 @@
 -export([flush/1]).
 -ignore_xref(flush/2).
 -export([flush/2]).
+% Introspection
+-ignore_xref(info/1).
+-export([info/1]).
 % Querying
 -ignore_xref(get/2).
 -export([get/2]).
@@ -119,6 +122,27 @@
     hooks => hooks()
 }.
 
+-type state_info() :: #{
+    count := non_neg_integer(),
+    oldest => timestamp(),
+    newest => timestamp()
+}.
+
+-type queue_info() :: #{
+    jobs := #{
+        available := state_info(),
+        executing := state_info(),
+        completed := state_info(),
+        failed := state_info(),
+        cancelled := state_info(),
+        discarded := state_info()
+    },
+    workers := #{
+        active := non_neg_integer(),
+        max := #{local := pos_integer(), global := pos_integer()}
+    }
+}.
+
 -type list_opts() :: #{
     queue => queue_name(),
     state => job_state()
@@ -159,6 +183,8 @@
     list_opts/0,
     claim_opts/0,
     job_changes/0,
+    state_info/0,
+    queue_info/0,
     prune_opts/0,
     event/0,
     hook/0,
@@ -241,6 +267,12 @@ flush(Queue) ->
 flush(_Queue, _Timeout) ->
     % TODO: process all remaining items in the queue until empty
     error(not_implemented).
+
+% Introspection
+
+-spec info(queue_name()) -> queue_info().
+info(Queue) ->
+    gaffer_queue:info(Queue).
 
 % Querying
 

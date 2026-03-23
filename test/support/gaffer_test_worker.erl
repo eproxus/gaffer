@@ -15,7 +15,7 @@ perform(#{payload := #{~"action" := ~"crash"}}) ->
     error(test_crash);
 perform(#{id := Id, payload := #{~"action" := ~"block", ~"test_pid" := PidBin}}) ->
     Pid = binary_to_term(base64:decode(PidBin)),
-    Pid ! {job_started, Id},
+    Pid ! {job_started, Id, self()},
     receive
         continue -> complete
     after 30000 -> {fail, ~"timeout"}
