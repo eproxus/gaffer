@@ -1,10 +1,5 @@
 -module(gaffer_postgres).
-
-% Pure SQL module — no pgo dependency. Contains all SQL and
-% serialization logic for the Postgres driver.
-%
-% All public functions return [{iodata(), list()}] — a uniform list
-% of query tuples. The driver runs these in a transaction.
+-moduledoc "Pure SQL query builder and serializer for Postgres drivers.".
 
 % API
 % Migrations
@@ -29,18 +24,26 @@
 -export([job_update/1]).
 -export([job_prune/1]).
 
+-doc """
+A parameterized SQL query.
+
+The `QueryString` will contain `$1` etc. which each will correspond to the nth
+value in `Values`.
+""".
+-type query() :: {QueryString :: iodata(), Values :: list()}.
+-doc "A list of queries to be run in one transaction.".
+-type queries() :: [query()].
+
+-export_type([query/0]).
+-export_type([queries/0]).
+
 %--- API -----------------------------------------------------------------------
 
 % Migrations
 
+-doc "Sorted list of all schema migrations as `{Version, Up, Down}` tuples.".
 -spec migrations(Opts :: map()) ->
-    [
-        {
-            Version :: pos_integer(),
-            Up :: [{iodata(), list()}],
-            Down :: [{iodata(), list()}]
-        }
-    ].
+    [{Version :: pos_integer(), Up :: queries(), Down :: queries()}].
 migrations(#{}) ->
     [
         {1,
@@ -109,19 +112,20 @@ migrations(#{}) ->
             queries([~"DROP TABLE gaffer_jobs", ~"DROP TABLE gaffer_queues"])}
     ].
 
--spec migrate_up({pos_integer(), [{iodata(), list()}], _}) ->
-    [{iodata(), list()}].
+-doc "Queries to apply a migration and record its version.".
+-spec migrate_up({pos_integer(), queries(), _}) -> queries().
 migrate_up({Version, UpQueries, _DownQueries}) ->
     UpQueries ++
         [{~"UPDATE gaffer_schema_version SET version = $1", [Version]}].
 
--spec migrate_down({pos_integer(), _, [{iodata(), list()}]}) ->
-    [{iodata(), list()}].
+-doc "Queries to roll back a migration and decrement the version.".
+-spec migrate_down({pos_integer(), _, queries()}) -> queries().
 migrate_down({Version, _UpQueries, DownQueries}) ->
     DownQueries ++
         [{~"UPDATE gaffer_schema_version SET version = $1", [Version - 1]}].
 
--spec ensure_migrations_table() -> [{iodata(), list()}].
+-doc "Queries to create the migrations table if it does not exist.".
+-spec ensure_migrations_table() -> queries().
 ensure_migrations_table() ->
     queries([
         ~"""
@@ -135,14 +139,15 @@ ensure_migrations_table() ->
         """
     ]).
 
-% Returns a query guaranteed to return a single row with an integer version.
--spec applied_version() -> [{iodata(), list()}].
+-doc "Query that fetches the current schema version.".
+-spec applied_version() -> queries().
 applied_version() ->
     [{~"SELECT version FROM gaffer_schema_version", []}].
 
 % Queues
 
--spec queue_insert(map()) -> [{iodata(), list()}].
+-doc "Query to insert a queue configuration.".
+-spec queue_insert(map()) -> queries().
 queue_insert(Conf) ->
     {Cols, Phs, Vals} = columns_and_values(Conf),
     SQL = [
@@ -154,7 +159,8 @@ queue_insert(Conf) ->
     ],
     [{SQL, Vals}].
 
--spec queue_update(gaffer:queue_name(), map()) -> [{iodata(), list()}].
+-doc "Query to update a queue configuration.".
+-spec queue_update(gaffer:queue(), map()) -> queries().
 queue_update(Name, Changes) ->
     {Sets, Vals} = set_clause(Changes),
     N = length(Vals) + 1,
@@ -166,17 +172,20 @@ queue_update(Name, Changes) ->
     ],
     [{SQL, Vals ++ [atom_to_binary(Name)]}].
 
--spec queue_get(gaffer:queue_name()) -> [{iodata(), list()}].
+-doc "Query to fetch a queue configuration by name.".
+-spec queue_get(gaffer:queue()) -> queries().
 queue_get(Name) ->
     [{~"SELECT * FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
 
--spec queue_delete(gaffer:queue_name()) -> [{iodata(), list()}].
+-doc "Query to delete a queue configuration by name.".
+-spec queue_delete(gaffer:queue()) -> queries().
 queue_delete(Name) ->
     [{~"DELETE FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
 
 % Introspection
 
--spec info(gaffer:queue_name()) -> [{iodata(), list()}].
+-doc "Query that aggregates job counts and timestamps per state.".
+-spec info(gaffer:queue()) -> queries().
 info(Queue) ->
     TSCase =
         ~"""
@@ -200,7 +209,8 @@ info(Queue) ->
 
 % Jobs
 
--spec job_insert(map()) -> [{iodata(), list()}].
+-doc "Returns a query to insert a job and return the inserted row.".
+-spec job_insert(map()) -> queries().
 job_insert(Encoded) ->
     {Cols, Phs, Vals} = columns_and_values(Encoded),
     SQL = [
@@ -213,14 +223,16 @@ job_insert(Encoded) ->
     ],
     [{SQL, Vals}].
 
--spec job_get(term()) -> [{iodata(), list()}].
+-doc "Query to fetch a job by ID.".
+-spec job_get(term()) -> queries().
 job_get(Id) ->
     SQL = [
         ~"SELECT ", job_columns(), ~" FROM gaffer_jobs WHERE id = $1"
     ],
     [{SQL, [Id]}].
 
--spec job_list(map()) -> [{iodata(), list()}].
+-doc "Query to list jobs matching the given filters.".
+-spec job_list(map()) -> queries().
 job_list(#{queue := Queue} = Opts) ->
     {SQL, Params} =
         case Opts of
@@ -245,7 +257,8 @@ job_list(#{queue := Queue} = Opts) ->
         end,
     [{SQL, Params}].
 
--spec job_delete(term()) -> [{iodata(), list()}].
+-doc "Query to delete a job by ID.".
+-spec job_delete(term()) -> queries().
 job_delete(Id) ->
     [{~"DELETE FROM gaffer_jobs WHERE id = $1", [Id]}].
 
@@ -293,7 +306,8 @@ ts_column_names() ->
 
 % Job lifecycle
 
--spec job_claim(map(), map()) -> [{iodata(), list()}].
+-doc "Query to atomically claim available jobs for execution.".
+-spec job_claim(map(), map()) -> queries().
 job_claim(
     #{queue := Queue, limit := Limit},
     #{state := State, attempted_at := AttemptedAt}
@@ -340,7 +354,8 @@ job_claim(
     ],
     [{SQL, [Queue, Now, Limit, State, Now]}].
 
--spec job_update(map()) -> [{iodata(), list()}].
+-doc "Query to update a job's fields.".
+-spec job_update(map()) -> queries().
 job_update(Encoded) ->
     #{id := Id} = Encoded,
     Fields = maps:remove(id, Encoded),
@@ -354,7 +369,8 @@ job_update(Encoded) ->
     ],
     [{SQL, Vals ++ [Id]}].
 
--spec job_prune(map()) -> [{iodata(), list()}].
+-doc "Query to delete jobs in terminal states.".
+-spec job_prune(map()) -> queries().
 job_prune(Opts) ->
     States = maps:get(states, Opts, [completed, discarded]),
     TextArray = [atom_to_binary(S) || S <:- States],

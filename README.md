@@ -3,7 +3,7 @@
 [ci]:     https://github.com/eproxus/gaffer/actions/workflows/erlang.yml
 [ci-img]: https://github.com/eproxus/gaffer/actions/workflows/erlang.yml/badge.svg
 
-A persistent job queue implemented in Erlang.
+A reliable job queue implemented in Erlang.
 
 ## Usage
 

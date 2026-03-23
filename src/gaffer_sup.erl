@@ -1,4 +1,5 @@
 -module(gaffer_sup).
+-moduledoc false.
 
 -behaviour(supervisor).
 
@@ -15,7 +16,7 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, _InitArgs = {}).
 
--spec start_queue(gaffer:queue_name(), gaffer_queue:queue_conf()) ->
+-spec start_queue(gaffer:queue(), gaffer_queue:queue_conf()) ->
     {ok, pid()}.
 start_queue(Name, Conf) ->
     ChildSpec = #{
@@ -29,7 +30,7 @@ start_queue(Name, Conf) ->
     true = is_pid(Pid),
     {ok, Pid}.
 
--spec stop_queue(gaffer:queue_name()) -> ok.
+-spec stop_queue(gaffer:queue()) -> ok.
 stop_queue(Name) ->
     _ = supervisor:terminate_child(?MODULE, Name),
     _ = supervisor:delete_child(?MODULE, Name),

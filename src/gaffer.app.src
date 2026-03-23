@@ -1,5 +1,5 @@
 {application, gaffer, [
-    {description, "A persistent job queue"},
+    {description, "A reliable job queue"},
     {vsn, semver},
     {mod, {gaffer, []}},
     {applications, [
@@ -7,6 +7,7 @@
         stdlib,
         keysmith
     ]},
+    {optional_applications, [pgo]},
     {licenses, ["MIT"]},
     {links, [
         {"Changelog",

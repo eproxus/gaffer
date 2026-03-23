@@ -1,8 +1,8 @@
 -module(gaffer_driver_pgo).
+-moduledoc "Postgres driver for gaffer using pgo.".
 
 -behaviour(gaffer_driver).
 
-% gaffer_driver Callbacks
 % Lifecycle
 -export([start/1]).
 -export([stop/1]).
@@ -24,13 +24,33 @@
 % Introspection
 -export([info/2]).
 
+-doc "PGO pool configuration passed to `pgo:start_pool/2`.".
+-type pool_config() :: map().
+
+-doc """
+Options for starting the PGO driver.
+
+Use a PGO pool with the identifier `pool`. If `start` options are supplied, the
+driver starts its own PGO pool with that name and those options. Otherwise an
+existing pool is used, and ensuring this pool is started is the responsibility
+of the user.
+""".
+-type start_opts() :: #{
+    pool := atom(),
+    start => pool_config()
+}.
+
 -type pool_owner() :: driver | user.
--type state() :: #{
+
+-doc "PGO driver state.".
+-opaque driver_state() :: #{
     pool := atom(),
     pool_owner := pool_owner()
 }.
 
--export_type([state/0]).
+-export_type([pool_config/0]).
+-export_type([start_opts/0]).
+-export_type([driver_state/0]).
 
 -define(IS_TIMESTAMP(K),
     K =:= inserted_at;
@@ -45,7 +65,12 @@
 
 % Lifecycle
 
--spec start(map()) -> state().
+-doc """
+Starts the driver and optionally a pool.
+
+Runs any pending migrations.
+""".
+-spec start(start_opts()) -> driver_state().
 start(Opts) ->
     State = start_pool(Opts),
     #{pool := Pool} = State,
@@ -56,11 +81,17 @@ start(Opts) ->
     run_migrations(Pool, fun gaffer_postgres:migrate_up/1, Pending),
     State.
 
--spec stop(state()) -> ok.
+-doc """
+Stop the driver.
+
+Also stops the connection pool if started by the driver.
+""".
+-spec stop(driver_state()) -> ok.
 stop(State) ->
     stop_pool(State).
 
--spec rollback(TargetVersion :: non_neg_integer(), state()) -> ok.
+-doc "Rolls back migrations down to the given version.".
+-spec rollback(TargetVersion :: non_neg_integer(), driver_state()) -> ok.
 rollback(TargetVersion, #{pool := Pool}) ->
     Current = applied_version(Pool),
     AllMigrations = gaffer_postgres:migrations(#{}),
@@ -73,7 +104,8 @@ rollback(TargetVersion, #{pool := Pool}) ->
 
 % Queues
 
--spec queue_insert(gaffer:queue_conf(), state()) -> ok.
+-doc false.
+-spec queue_insert(gaffer:queue_conf(), driver_state()) -> ok.
 queue_insert(Conf, #{pool := Pool} = State) ->
     Encoded = encode_conf(Conf),
     case queue_transaction(Pool, gaffer_postgres:queue_insert(Encoded), Conf) of
@@ -98,7 +130,8 @@ queue_insert(Conf, #{pool := Pool} = State) ->
             end
     end.
 
--spec queue_update(gaffer:queue_name(), map(), state()) -> ok.
+-doc false.
+-spec queue_update(gaffer:queue(), map(), driver_state()) -> ok.
 queue_update(Name, Updates, #{pool := Pool}) ->
     Encoded = encode_conf(Updates),
     queue_transaction(
@@ -106,7 +139,8 @@ queue_update(Name, Updates, #{pool := Pool}) ->
     ),
     ok.
 
--spec queue_get(gaffer:queue_name(), state()) ->
+-doc false.
+-spec queue_get(gaffer:queue(), driver_state()) ->
     gaffer:queue_conf() | not_found.
 queue_get(Name, #{pool := Pool}) ->
     [#{rows := Rows}] =
@@ -116,14 +150,16 @@ queue_get(Name, #{pool := Pool}) ->
         [] -> not_found
     end.
 
--spec queue_delete(gaffer:queue_name(), state()) -> ok.
+-doc false.
+-spec queue_delete(gaffer:queue(), driver_state()) -> ok.
 queue_delete(Name, #{pool := Pool}) ->
     transaction(Pool, gaffer_postgres:queue_delete(Name)),
     ok.
 
 % Introspection
 
--spec info(gaffer:queue_name(), state()) ->
+-doc false.
+-spec info(gaffer:queue(), driver_state()) ->
     #{jobs := #{gaffer:job_state() => gaffer:state_info()}}.
 info(Queue, #{pool := Pool}) ->
     [#{rows := Rows}] =
@@ -156,14 +192,16 @@ decode_info_row(#{state := State, count := Count} = Row, Acc) ->
 
 % Jobs
 
--spec job_insert(gaffer:job(), state()) -> gaffer:job().
+-doc false.
+-spec job_insert(gaffer:job(), driver_state()) -> gaffer:job().
 job_insert(Job, #{pool := Pool}) ->
     Encoded = encode_job(Job),
     [#{rows := [Row]}] =
         transaction(Pool, gaffer_postgres:job_insert(Encoded)),
     decode_job(Row).
 
--spec job_get(gaffer:job_id(), state()) -> gaffer:job() | not_found.
+-doc false.
+-spec job_get(gaffer:job_id(), driver_state()) -> gaffer:job() | not_found.
 job_get(Id, #{pool := Pool}) ->
     [#{rows := Rows}] =
         transaction(Pool, gaffer_postgres:job_get(Id)),
@@ -172,14 +210,16 @@ job_get(Id, #{pool := Pool}) ->
         [] -> not_found
     end.
 
--spec job_list(gaffer:list_opts(), state()) -> [gaffer:job()].
+-doc false.
+-spec job_list(gaffer:job_filter(), driver_state()) -> [gaffer:job()].
 job_list(Opts, #{pool := Pool}) ->
     Encoded = encode_list_opts(Opts),
     [#{rows := Rows}] =
         transaction(Pool, gaffer_postgres:job_list(Encoded)),
     [decode_job(R) || R <:- Rows].
 
--spec job_delete(gaffer:job_id(), state()) -> ok | not_found.
+-doc false.
+-spec job_delete(gaffer:job_id(), driver_state()) -> ok | not_found.
 job_delete(Id, #{pool := Pool}) ->
     [#{num_rows := N}] =
         transaction(Pool, gaffer_postgres:job_delete(Id)),
@@ -188,8 +228,9 @@ job_delete(Id, #{pool := Pool}) ->
         0 -> not_found
     end.
 
+-doc false.
 -spec job_claim(
-    gaffer:claim_opts(), gaffer:job_changes(), state()
+    gaffer_driver:claim_opts(), gaffer_driver:job_changes(), driver_state()
 ) -> [gaffer:job()].
 job_claim(Opts, Changes, #{pool := Pool}) ->
     {EncodedOpts, EncodedChanges} = encode_claim(Opts, Changes),
@@ -199,13 +240,16 @@ job_claim(Opts, Changes, #{pool := Pool}) ->
         ),
     [decode_job(R) || R <:- Rows].
 
--spec job_update(gaffer:job(), state()) -> ok.
+-doc false.
+-spec job_update(gaffer:job(), driver_state()) -> ok.
 job_update(Job, #{pool := Pool}) ->
     Encoded = encode_job(Job),
     transaction(Pool, gaffer_postgres:job_update(Encoded)),
     ok.
 
--spec job_prune(gaffer:prune_opts(), state()) -> non_neg_integer().
+-doc false.
+-spec job_prune(gaffer_driver:prune_opts(), driver_state()) ->
+    non_neg_integer().
 job_prune(Opts, #{pool := Pool}) ->
     [#{num_rows := Count}] =
         transaction(Pool, gaffer_postgres:job_prune(Opts)),
@@ -237,17 +281,11 @@ stop_pool(#{pool_owner := user}) ->
 stop_pool(#{pool := Pool, pool_owner := driver}) ->
     case whereis(Pool) of
         undefined -> ok;
-        Pid -> supervisor:terminate_child(pgo_sup, Pid)
-    end,
-    ok.
+        Pid -> ok = supervisor:terminate_child(pgo_sup, Pid)
+    end.
 
 ensure_migrations_table(Pool) ->
-    lists:foreach(
-        fun({SQL, Params}) ->
-            pgo:query(SQL, Params, #{pool => Pool})
-        end,
-        gaffer_postgres:ensure_migrations_table()
-    ).
+    transaction(Pool, gaffer_postgres:ensure_migrations_table()).
 
 run_migrations(Pool, ToQueries, Migrations) ->
     lists:foreach(
@@ -256,8 +294,8 @@ run_migrations(Pool, ToQueries, Migrations) ->
     ).
 
 applied_version(Pool) ->
-    [{SQL, Params}] = gaffer_postgres:applied_version(),
-    #{rows := [{Version}]} = pgo:query(SQL, Params, #{pool => Pool}),
+    [#{rows := [#{version := Version}]}] =
+        transaction(Pool, gaffer_postgres:applied_version()),
     Version.
 
 % Runs a list of queries in a single transaction, returning [pgo:result()].

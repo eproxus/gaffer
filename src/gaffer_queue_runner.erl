@@ -1,4 +1,5 @@
 -module(gaffer_queue_runner).
+-moduledoc false.
 
 -behaviour(gen_statem).
 
@@ -26,7 +27,7 @@
 
 %--- API -----------------------------------------------------------------------
 
--spec start_link(gaffer:queue_name(), gaffer_queue:queue_conf()) ->
+-spec start_link(gaffer:queue(), gaffer_queue:queue_conf()) ->
     gen_statem:start_ret().
 start_link(Name, Conf) ->
     gen_statem:start_link(
@@ -36,17 +37,17 @@ start_link(Name, Conf) ->
         []
     ).
 
--spec poll(gaffer:queue_name()) -> ok.
+-spec poll(gaffer:queue()) -> ok.
 poll(Name) ->
     gen_statem:call(proc_name(Name), poll).
 
--spec complete(gaffer:queue_name(), gaffer:job_id()) ->
+-spec complete(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
 complete(Name, Id) ->
     gen_statem:call(proc_name(Name), {complete, Id}).
 
 -spec fail(
-    gaffer:queue_name(), gaffer:job_id(), term()
+    gaffer:queue(), gaffer:job_id(), term()
 ) ->
     {ok, gaffer:job()} | {error, term()}.
 fail(Name, Id, Reason) ->
@@ -55,7 +56,7 @@ fail(Name, Id, Reason) ->
     ).
 
 -spec schedule(
-    gaffer:queue_name(), gaffer:job_id(), gaffer:timestamp()
+    gaffer:queue(), gaffer:job_id(), gaffer:timestamp()
 ) ->
     {ok, gaffer:job()} | {error, term()}.
 schedule(Name, Id, At) ->
@@ -63,17 +64,17 @@ schedule(Name, Id, At) ->
         proc_name(Name), {schedule, Id, At}
     ).
 
--spec claim(gaffer:queue_name(), gaffer:claim_opts()) ->
+-spec claim(gaffer:queue(), gaffer_driver:claim_opts()) ->
     [gaffer:job()].
 claim(Name, Opts) ->
     gen_statem:call(proc_name(Name), {claim, Opts}).
 
--spec prune(gaffer:queue_name(), gaffer:prune_opts()) ->
+-spec prune(gaffer:queue(), gaffer_driver:prune_opts()) ->
     non_neg_integer().
 prune(Name, Opts) ->
     gen_statem:call(proc_name(Name), {prune, Opts}).
 
--spec info(gaffer:queue_name()) -> map().
+-spec info(gaffer:queue()) -> map().
 info(Name) ->
     gen_statem:call(proc_name(Name), info).
 

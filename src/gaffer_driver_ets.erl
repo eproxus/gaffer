@@ -1,8 +1,8 @@
 -module(gaffer_driver_ets).
+-moduledoc "In-memory ETS driver for gaffer.".
 
 -behaviour(gaffer_driver).
 
-% gaffer_driver Callbacks
 % Lifecycle
 -export([start/1]).
 -export([stop/1]).
@@ -22,9 +22,10 @@
 % Introspection
 -export([info/2]).
 
--export_type([state/0]).
+-export_type([driver_state/0]).
 
--type state() :: #{
+-doc "ETS driver state.".
+-opaque driver_state() :: #{
     queued := ets:table(),
     locked := ets:table(),
     queues := ets:table()
@@ -34,14 +35,16 @@
 
 % Lifecycle
 
--spec start(map()) -> state().
-start(_Opts) ->
+-doc "Starts the driver.".
+-spec start(map()) -> driver_state().
+start(#{}) ->
     Queued = ets:new(gaffer_driver_ets_queued, [public, set]),
     Locked = ets:new(gaffer_driver_ets_locked, [public, set]),
     Queues = ets:new(gaffer_driver_ets_queues, [public, set]),
     #{queued => Queued, locked => Locked, queues => Queues}.
 
--spec stop(state()) -> ok.
+-doc "Stops the driver.".
+-spec stop(driver_state()) -> ok.
 stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
     ets:delete(Queued),
     ets:delete(Locked),
@@ -50,7 +53,8 @@ stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
 
 % Queues
 
--spec queue_insert(gaffer:queue_conf(), state()) ->
+-doc false.
+-spec queue_insert(gaffer:queue_conf(), driver_state()) ->
     ok.
 queue_insert(#{name := Name} = Conf, #{queues := Tab}) ->
     validate_on_discard(Conf, Tab),
@@ -68,7 +72,8 @@ queue_insert(#{name := Name} = Conf, #{queues := Tab}) ->
             )
     end.
 
--spec queue_update(gaffer:queue_name(), map(), state()) ->
+-doc false.
+-spec queue_update(gaffer:queue(), map(), driver_state()) ->
     ok.
 queue_update(Name, Updates, #{queues := Tab}) ->
     [{_, Conf}] = ets:lookup(Tab, Name),
@@ -77,12 +82,14 @@ queue_update(Name, Updates, #{queues := Tab}) ->
     true = ets:insert(Tab, {Name, Merged}),
     ok.
 
--spec queue_get(gaffer:queue_name(), state()) ->
+-doc false.
+-spec queue_get(gaffer:queue(), driver_state()) ->
     gaffer:queue_conf() | not_found.
 queue_get(Name, #{queues := Tab}) ->
     ets:lookup_element(Tab, Name, 2, not_found).
 
--spec queue_delete(gaffer:queue_name(), state()) ->
+-doc false.
+-spec queue_delete(gaffer:queue(), driver_state()) ->
     ok.
 queue_delete(Name, #{queues := Tab}) ->
     true = ets:delete(Tab, Name),
@@ -90,13 +97,15 @@ queue_delete(Name, #{queues := Tab}) ->
 
 % Jobs
 
--spec job_insert(gaffer:job(), state()) ->
+-doc false.
+-spec job_insert(gaffer:job(), driver_state()) ->
     gaffer:job().
 job_insert(#{id := Id} = Job, #{queued := Tab}) ->
     true = ets:insert(Tab, {Id, Job}),
     Job.
 
--spec job_get(gaffer:job_id(), state()) ->
+-doc false.
+-spec job_get(gaffer:job_id(), driver_state()) ->
     gaffer:job() | not_found.
 job_get(Id, #{queued := Queued, locked := Locked}) ->
     case ets:lookup(Locked, Id) of
@@ -106,7 +115,8 @@ job_get(Id, #{queued := Queued, locked := Locked}) ->
             ets:lookup_element(Queued, Id, 2, not_found)
     end.
 
--spec job_list(gaffer:list_opts(), state()) ->
+-doc false.
+-spec job_list(gaffer:job_filter(), driver_state()) ->
     [gaffer:job()].
 job_list(Opts, #{queued := Queued, locked := Locked}) ->
     Pattern = {'_', Opts},
@@ -116,7 +126,8 @@ job_list(Opts, #{queued := Queued, locked := Locked}) ->
          || {_, Job} <:- ets:match_object(Locked, Pattern)
         ].
 
--spec job_delete(gaffer:job_id(), state()) ->
+-doc false.
+-spec job_delete(gaffer:job_id(), driver_state()) ->
     ok | not_found.
 job_delete(Id, #{queued := Queued, locked := Locked}) ->
     case {ets:member(Queued, Id), ets:member(Locked, Id)} of
@@ -128,8 +139,9 @@ job_delete(Id, #{queued := Queued, locked := Locked}) ->
             ok
     end.
 
+-doc false.
 -spec job_claim(
-    gaffer:claim_opts(), gaffer:job_changes(), state()
+    gaffer_driver:claim_opts(), gaffer_driver:job_changes(), driver_state()
 ) ->
     [gaffer:job()].
 job_claim(
@@ -153,7 +165,8 @@ job_claim(
     ToFetch = lists:sublist(Sorted, max(0, Limit)),
     claim_jobs(ToFetch, Changes, Queued, Locked, []).
 
--spec job_update(gaffer:job(), state()) ->
+-doc false.
+-spec job_update(gaffer:job(), driver_state()) ->
     ok.
 job_update(
     #{id := Id, state := JobState} = Job,
@@ -170,7 +183,8 @@ job_update(
     end,
     ok.
 
--spec job_prune(gaffer:prune_opts(), state()) ->
+-doc false.
+-spec job_prune(gaffer_driver:prune_opts(), driver_state()) ->
     non_neg_integer().
 job_prune(Opts, #{queued := Queued, locked := Locked}) ->
     States = maps:get(states, Opts, [completed, discarded]),
@@ -191,7 +205,8 @@ job_prune(Opts, #{queued := Queued, locked := Locked}) ->
 
 % Introspection
 
--spec info(gaffer:queue_name(), state()) ->
+-doc false.
+-spec info(gaffer:queue(), driver_state()) ->
     #{jobs := #{gaffer:job_state() => gaffer:state_info()}}.
 info(Queue, #{queued := Queued, locked := Locked}) ->
     Empty = #{

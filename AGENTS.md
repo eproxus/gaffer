@@ -4,7 +4,7 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Project Overview
 
-Gaffer is a persistent job queue implemented in Erlang/OTP.
+Gaffer is a reliable job queue implemented in Erlang/OTP.
 
 ## Build & Development Commands
 
@@ -30,7 +30,7 @@ Modules:
 * `gaffer_queue_runner` - Process managing a queue and its jobs (using `gaffer_queue`)
 * `gaffer_driver` - Storage-agnostic driver behaviour
 * `gaffer_driver_ets` - ETS driver implementation (in-memory, for testing/dev)
-* `gaffer_driver_pgo` - Postgres driver implementation (using `pgo`, test-only dep)
+* `gaffer_driver_pgo` - Postgres driver implementation (using `pgo`, optional dep)
 * `gaffer_postgres` - Postgres SQL query builder / deserializer
 * `gaffer_worker` - Worker process executing jobs
 * `gaffer_sup` - Top-level supervisor

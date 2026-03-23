@@ -1,14 +1,10 @@
 -module(gaffer_worker).
-
-% Worker behaviour for gaffer job queues.
-%
-% Implement the `perform/1` callback to define how a job executes.
-% Operational parameters (max_attempts, timeout, backoff) come from
-% persisted queue config or per-job opts at insert time.
+-moduledoc "Worker behaviour for gaffer job queues.".
 
 % API
 -export([perform/2]).
 
+-doc "Executes a `t:gaffer:job/0`.".
 -callback perform(Job :: gaffer:job()) ->
     complete
     | {complete, term()}
@@ -18,6 +14,7 @@
 
 %--- API -----------------------------------------------------------------------
 
+-doc false.
 -spec perform(module(), gaffer:job()) ->
     complete
     | {complete, term()}

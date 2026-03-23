@@ -1,19 +1,27 @@
 -module(gaffer_hooks).
+-moduledoc "Hook behaviour for intercepting queue and job events.".
 
-% Behaviour
--callback gaffer_hook(pre | post, gaffer:event(), term()) -> term().
+-doc "Hook event path.".
+-type event() :: [atom()].
+-doc "A hook callback function.".
+-type hook_fun() :: fun((pre | post, event(), term()) -> term()).
+-doc "A hook module or function.".
+-type hook() :: module() | hook_fun().
+
+-export_type([event/0]).
+-export_type([hook_fun/0]).
+-export_type([hook/0]).
+
+-doc "Called before and after queue events.".
+-callback gaffer_hook(pre | post, event(), term()) -> term().
 
 % API
 -export([with_hooks/4]).
 
 %--- API -----------------------------------------------------------------------
 
--spec with_hooks(
-    gaffer:hooks(),
-    gaffer:event(),
-    term(),
-    fun((term()) -> term())
-) ->
+-doc false.
+-spec with_hooks([hook()], event(), term(), fun((term()) -> term())) ->
     dynamic().
 with_hooks(QueueHooks, Event, Data, Fun) ->
     case resolve(QueueHooks) of

@@ -1,4 +1,5 @@
 -module(gaffer).
+-moduledoc "Main API for managing job queues.".
 
 -hank([{unnecessary_function_arguments, [drain, flush]}]).
 
@@ -25,7 +26,7 @@
 -export([insert/2]).
 -ignore_xref(insert/3).
 -export([insert/3]).
-% Lifecycle
+% Job Lifecycle
 -ignore_xref(cancel/2).
 -export([cancel/2]).
 -ignore_xref(drain/1).
@@ -36,7 +37,7 @@
 -export([flush/1]).
 -ignore_xref(flush/2).
 -export([flush/2]).
-% Introspection
+% Queue Introspection
 -ignore_xref(info/1).
 -export([info/1]).
 % Querying
@@ -49,7 +50,11 @@
 
 %--- Types ---------------------------------------------------------------------
 
--type job_id() :: binary().
+-doc #{group => "Job Types"}.
+-doc "Unique job identifier.".
+-type job_id() :: keysmith:uuid().
+-doc #{group => "Job Types"}.
+-doc "Possible states of a job.".
 -type job_state() ::
     available
     | executing
@@ -57,22 +62,39 @@
     | failed
     | cancelled
     | discarded.
--type queue_name() :: atom().
+-doc #{group => "Queue Types"}.
+-doc "Queue identifier.".
+-type queue() :: atom().
 
+-doc #{group => "Job Types"}.
+-doc """
+Job timestamp.
+
+An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
+""".
 -type timestamp() :: integer() | {erlang:time_unit(), integer()}.
-% Native time units (erlang:system_time/0) or {Unit, Value}.
-% Drivers normalize to their own precision.
 
-% Shared value types for job-overridable properties
+-doc #{group => "Job Types"}.
+-doc "Maximum execution attempts for a job.".
 -type max_attempts() :: pos_integer().
+-doc #{group => "Job Types"}.
+-doc "Job priority.".
 -type priority() :: non_neg_integer().
+-doc #{group => "Job Types"}.
+-doc "Execution timeout in milliseconds.".
 -type timeout_ms() :: pos_integer().
+-doc #{group => "Job Types"}.
+-doc "Retry backoff strategy.".
 -type backoff() :: [non_neg_integer()].
+-doc #{group => "Job Types"}.
+-doc "Grace period for worker shutdown in milliseconds.".
 -type shutdown_timeout() :: pos_integer().
 
+-doc #{group => "Job Types"}.
+-doc "A job.".
 -type job() :: #{
     id := job_id(),
-    queue := queue_name(),
+    queue := queue(),
     payload := term(),
     state := job_state(),
     attempt := non_neg_integer(),
@@ -90,8 +112,10 @@
     errors := [job_error()]
 }.
 
+-doc #{group => "Job Types"}.
+-doc "Per-job options at insert time.".
 -type job_opts() :: #{
-    queue => queue_name(),
+    queue => queue(),
     max_attempts => max_attempts(),
     priority => priority(),
     timeout => timeout_ms(),
@@ -100,15 +124,19 @@
     scheduled_at => timestamp()
 }.
 
+-doc #{group => "Job Types"}.
+-doc "A recorded execution error.".
 -type job_error() :: #{
     attempt := non_neg_integer(),
     error := term(),
     at := timestamp()
 }.
 
+-doc #{group => "Queue Types"}.
+-doc "Queue configuration.".
 -type queue_conf() :: #{
-    name := queue_name(),
-    driver => {module(), gaffer_driver:driver_opts()},
+    name := queue(),
+    driver => {module(), gaffer_driver:driver_state()},
     worker => module(),
     global_max_workers => pos_integer(),
     max_workers => pos_integer(),
@@ -118,16 +146,20 @@
     timeout => timeout_ms(),
     backoff => backoff(),
     priority => priority(),
-    on_discard => queue_name(),
-    hooks => hooks()
+    on_discard => queue(),
+    hooks => [gaffer_hooks:hook()]
 }.
 
+-doc #{group => "Queue Types"}.
+-doc "Information about a job state.".
 -type state_info() :: #{
     count := non_neg_integer(),
     oldest => timestamp(),
     newest => timestamp()
 }.
 
+-doc #{group => "Queue Types"}.
+-doc "Information about a queue.".
 -type queue_info() :: #{
     jobs := #{
         available := state_info(),
@@ -143,60 +175,38 @@
     }
 }.
 
--type list_opts() :: #{
-    queue => queue_name(),
+-doc #{group => "Job Types"}.
+-doc "Filter options for listing jobs.".
+-type job_filter() :: #{
+    queue => queue(),
     state => job_state()
 }.
 
--type claim_opts() :: #{
-    queue => queue_name(),
-    limit => pos_integer()
-}.
-
--type job_changes() :: #{
-    state => job_state(),
-    atom() => term()
-}.
-
--type prune_opts() :: #{
-    states => [job_state()]
-}.
-
--type event() :: [atom()].
--type hook() :: module() | fun((pre | post, event(), term()) -> term()).
--type hooks() :: [hook()].
-
--export_type([
-    job_id/0,
-    job_state/0,
-    queue_name/0,
-    timestamp/0,
-    max_attempts/0,
-    priority/0,
-    timeout_ms/0,
-    backoff/0,
-    shutdown_timeout/0,
-    job/0,
-    job_opts/0,
-    job_error/0,
-    queue_conf/0,
-    list_opts/0,
-    claim_opts/0,
-    job_changes/0,
-    state_info/0,
-    queue_info/0,
-    prune_opts/0,
-    event/0,
-    hook/0,
-    hooks/0
-]).
+-export_type([job_id/0]).
+-export_type([job_state/0]).
+-export_type([queue/0]).
+-export_type([timestamp/0]).
+-export_type([max_attempts/0]).
+-export_type([priority/0]).
+-export_type([timeout_ms/0]).
+-export_type([backoff/0]).
+-export_type([shutdown_timeout/0]).
+-export_type([job/0]).
+-export_type([job_opts/0]).
+-export_type([job_error/0]).
+-export_type([queue_conf/0]).
+-export_type([job_filter/0]).
+-export_type([state_info/0]).
+-export_type([queue_info/0]).
 
 %--- Application Callbacks -----------------------------------------------------
 
+-doc false.
 start(_StartType, _StartArgs) ->
     gaffer_queue:init(),
     gaffer_sup:start_link().
 
+-doc false.
 stop(_State) ->
     gaffer_queue:teardown().
 
@@ -204,39 +214,55 @@ stop(_State) ->
 
 % Queue management
 
+-doc #{group => "Queue Management"}.
+-doc "Creates a new queue.".
 -spec create_queue(queue_conf()) -> ok | {error, already_exists}.
 create_queue(Conf) ->
     gaffer_queue:create(Conf).
 
--spec get_queue(queue_name()) -> queue_conf().
+-doc #{group => "Queue Management"}.
+-doc "Gets the configuration of a queue.".
+-spec get_queue(queue()) -> queue_conf().
 get_queue(Name) ->
     gaffer_queue:get(Name).
 
--spec update_queue(queue_name(), map()) -> ok.
+-doc #{group => "Queue Management"}.
+-doc "Updates the configuration of a queue.".
+-spec update_queue(queue(), map()) -> ok.
 update_queue(Name, Updates) ->
     gaffer_queue:update(Name, Updates).
 
--spec delete_queue(queue_name()) -> ok.
+-doc #{group => "Queue Management"}.
+-doc "Deletes a queue.".
+-spec delete_queue(queue()) -> ok.
 delete_queue(Name) ->
     gaffer_queue:delete(Name).
 
--spec list_queues() -> [{queue_name(), queue_conf()}].
+-doc #{group => "Queue Management"}.
+-doc "Lists all queues.".
+-spec list_queues() -> [{queue(), queue_conf()}].
 list_queues() ->
     gaffer_queue:list().
 
 % Enqueueing
 
--spec insert(queue_name(), term()) -> job().
+-doc #{group => "Job Management"}.
+-doc #{equiv => insert(Queue, Payload, #{})}.
+-spec insert(queue(), term()) -> job().
 insert(Queue, Payload) ->
     insert(Queue, Payload, #{}).
 
--spec insert(queue_name(), term(), job_opts()) -> job().
+-doc #{group => "Job Management"}.
+-doc "Inserts a job into a queue.".
+-spec insert(queue(), term(), job_opts()) -> job().
 insert(Queue, Payload, Opts) ->
     gaffer_queue:insert_job(Queue, Payload, Opts).
 
-% Lifecycle
+% Job Lifecycle
 
--spec cancel(queue_name(), job_id()) ->
+-doc #{group => "Job Lifecycle"}.
+-doc "Cancels a job, preventing further execution.".
+-spec cancel(queue(), job_id()) ->
     {ok, job()} | {error, {invalid_transition, term()}}.
 cancel(Queue, JobId) ->
     case gaffer_queue:cancel_job(Queue, JobId) of
@@ -245,11 +271,15 @@ cancel(Queue, JobId) ->
         {ok, _} = Ok -> Ok
     end.
 
--spec drain(queue_name()) -> ok.
+-doc #{group => "Job Lifecycle"}.
+-doc #{equiv => drain(Queue, 5000)}.
+-spec drain(queue()) -> ok.
 drain(Queue) ->
     drain(Queue, 5000).
 
--spec drain(queue_name(), timeout()) -> ok.
+-doc #{group => "Job Lifecycle"}.
+-doc "Waits for the active workers to finish their jobs.".
+-spec drain(queue(), timeout()) -> ok.
 % elp:ignore W0048 - stubs (see TODO below)
 -dialyzer([
     {no_return, [drain/1, drain/2, flush/1, flush/2]},
@@ -259,34 +289,46 @@ drain(_Queue, _Timeout) ->
     % TODO: stop claiming, wait for in-flight workers
     error(not_implemented).
 
--spec flush(queue_name()) -> ok.
+-doc #{group => "Job Lifecycle"}.
+-doc #{equiv => flush(Queue, infinity)}.
+-spec flush(queue()) -> ok.
 flush(Queue) ->
     flush(Queue, infinity).
 
--spec flush(queue_name(), timeout()) -> ok.
+-doc #{group => "Job Lifecycle"}.
+-doc "Waits for *all* jobs in the queue to finish.".
+-spec flush(queue(), timeout()) -> ok.
 flush(_Queue, _Timeout) ->
     % TODO: process all remaining items in the queue until empty
     error(not_implemented).
 
-% Introspection
+% Queue Introspection
 
--spec info(queue_name()) -> queue_info().
+-doc #{group => "Queue Introspection"}.
+-doc "Returns current queue information.".
+-spec info(queue()) -> queue_info().
 info(Queue) ->
     gaffer_queue:info(Queue).
 
 % Querying
 
--spec get(queue_name(), job_id()) -> job().
+-doc #{group => "Job Management"}.
+-doc "Gets the definition of a job.".
+-spec get(queue(), job_id()) -> job().
 get(Queue, JobId) ->
     case gaffer_queue:get_job(Queue, JobId) of
         not_found -> error({unknown_job, JobId});
         Job -> Job
     end.
 
--spec list(list_opts()) -> [job()].
+-doc #{group => "Job Management"}.
+-doc "Lists jobs matching the given filter options.".
+-spec list(job_filter()) -> [job()].
 list(Opts) ->
     gaffer_queue:list_jobs(Opts).
 
--spec delete(queue_name(), job_id()) -> ok.
+-doc #{group => "Job Management"}.
+-doc "Deletes a job.".
+-spec delete(queue(), job_id()) -> ok.
 delete(Queue, JobId) ->
     gaffer_queue:delete_job(Queue, JobId).
