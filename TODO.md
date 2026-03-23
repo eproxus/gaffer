@@ -26,13 +26,14 @@
 - [X] Improve CI to use `mise` and only one workflow
 - [X] Add feature to introspect queues
     - [X] Count actual items in storage. How to make performant?
+- [ ] Document public API using `-moduledoc` and `-doc` attributes
+- [ ] Handle backoff and timeout in runner
 - [ ] Implement drain and flush
 - [ ] Review and deduplicate tests
-    - Use queue introspection to verify test state?
+    - Use queue info to verify test state?
 - [ ] More hooks
     - [ ] Worker created/destroyed
     - [ ] ...
-- [ ] Handle backoff and timeout in runner
 - [ ] Make time output value configurable
     - [ ] Support date tuples is input/output format
 - [ ] Implement egpsql driver to verify the driver/Postgres APIs
@@ -40,6 +41,7 @@
       performance/indices
 - [ ] on_discard should be switchable so success jobs can be put in one queue
       and failed in another. How do dispatch?
+    - on_success?
     - What about discarded state? What is it used for? (cleanup)
     - [ ] Handle deleting a queue that is referenced in on_discard
 - [ ] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
@@ -56,14 +58,13 @@
         - What about config updates to persistent storage? Should other runners
           pick them up?
     - [ ] Add property based tests
-- [ ] Document public API using `-moduledoc` and `-doc` attributes
-    - [ ] Document driver quirks
-        - Postgres
-            - JSON fields return binary keys
-            - More fine-grained timestamps are truncated to microseconds
-              precision (but returned as native)
-        - ETS
-            - Preserves original terms including atom keys
+- [ ] Document driver quirks
+    - Postgres
+        - JSON fields return binary keys
+        - More fine-grained timestamps are truncated to microseconds
+            precision (but returned as native)
+    - ETS
+        - Preserves original terms including atom keys
 - [ ] Write a user guide
 - [ ] Avoid querying all persistent terms when stopping Gaffer
     - ETS table *plus* persistent_term ("best of both worlds")?
