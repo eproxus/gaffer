@@ -12,6 +12,7 @@ Gaffer is a persistent job queue implemented in Erlang/OTP.
 mise run --output=keep-order verify             # Run all linting
 mise run --output=keep-order test               # Run all tests (requires Docker for CT)
 mise run format                                 # Format all code
+mise run docs                                   # Generate documentation
 rebar3 eunit --module=gaffer_tests              # Run a single eunit module
 rebar3 ct --suite=gaffer_driver_pgo_SUITE       # Run a single CT suite
 elp lint --diagnostic-filter W0023 --apply-fix  # Apply a specific elp fix by code
@@ -55,6 +56,7 @@ Modules:
 After every change
 
 * Format the code: `mise run format`
-* Lint: `mise run verify`
-* Test: `mise run test`
+* Lint: `mise run --output=keep-order verify`
+* Docs: `mise run docs`
+* Test: `mise run --output=keep-order test`
 * Ensure all modified code is covered by tests

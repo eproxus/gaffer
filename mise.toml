@@ -57,6 +57,10 @@ depends = [
   "verify:actions",
 ]
 
+[tasks.docs]
+description = "Generate documentation"
+run = "rebar3 ex_doc"
+
 [tasks.test]
 description = "Run all tests"
 run = """
