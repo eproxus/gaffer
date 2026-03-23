@@ -77,10 +77,8 @@ gaffer_test_() ->
         % Prune
         fun prune/1,
         % Polling
-        fun poll_claims_and_spawns/1,
-        fun poll_worker_completes_job/1,
+        fun poll_worker_lifecycle/1,
         fun poll_worker_crash_fails_job/1,
-        fun poll_max_workers_limits/1,
         fun poll_auto_executes/1,
         % --- Hooks ---
         fun hook_cancel/1,
@@ -560,41 +558,35 @@ prune(Driver) ->
 
 %--- Polling tests ------------------------------------------------------------
 
-poll_claims_and_spawns(Driver) ->
+poll_worker_lifecycle(Driver) ->
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{worker => gaffer_test_worker})
+        ?CONF(Driver, #{worker => gaffer_test_worker, max_workers => 2})
     ),
-    _ = gaffer:insert(?Q, #{
-        ~"action" => ~"block",
-        ~"test_pid" => gaffer_test_worker:encode_pid(self())
-    }),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    _ = gaffer:insert(?Q, #{~"action" => ~"block", ~"test_pid" => TestPid}),
+    _ = gaffer:insert(?Q, #{~"action" => ~"block", ~"test_pid" => TestPid}),
+    _ = gaffer:insert(?Q, #{~"action" => ~"block", ~"test_pid" => TestPid}),
     ok = gaffer_queue_runner:poll(?Q),
-    receive
-        {job_started, _, _} -> ok
-    after 5000 -> error(timeout)
-    end,
-    [Job] = gaffer:list(#{queue => ?Q}),
-    ?assertMatch(#{state := executing}, Job).
-
-poll_worker_completes_job(Driver) ->
-    ok = gaffer:create_queue(
-        ?CONF(Driver, #{worker => gaffer_test_worker})
-    ),
-    #{id := Id} = gaffer:insert(
-        ?Q, #{
-            ~"action" => ~"complete",
-            ~"test_pid" => gaffer_test_worker:encode_pid(self())
-        }
-    ),
-    ok = gaffer_queue_runner:poll(?Q),
-    receive
-        {job_executed, Id} -> ok
-    after 5000 -> error(timeout)
-    end,
-    % Give the DOWN handler time to process
+    % max_workers caps concurrent workers at 2
+    Pid1 =
+        receive
+            {job_started, _, P1} -> P1
+        after 5000 -> error(timeout)
+        end,
+    Pid2 =
+        receive
+            {job_started, _, P2} -> P2
+        after 5000 -> error(timeout)
+        end,
+    % Third job stays available while workers are busy
+    ?assertEqual(1, length(gaffer:list(#{queue => ?Q, state => available}))),
+    % Polling claims jobs and moves them to executing
+    ?assertEqual(2, length(gaffer:list(#{queue => ?Q, state => executing}))),
+    % Completing workers transitions jobs to completed
+    Pid1 ! continue,
+    Pid2 ! continue,
     timer:sleep(50),
-    Job = gaffer:get(?Q, Id),
-    ?assertMatch(#{state := completed}, Job).
+    ?assertEqual(2, length(gaffer:list(#{queue => ?Q, state => completed}))).
 
 poll_worker_crash_fails_job(Driver) ->
     ok = gaffer:create_queue(
@@ -605,36 +597,6 @@ poll_worker_crash_fails_job(Driver) ->
     timer:sleep(50),
     Job = gaffer:get(?Q, Id),
     ?assertMatch(#{state := failed}, Job).
-
-poll_max_workers_limits(Driver) ->
-    ok = gaffer:create_queue(
-        ?CONF(Driver, #{worker => gaffer_test_worker, max_workers => 2})
-    ),
-    _ = gaffer:insert(?Q, #{
-        ~"action" => ~"block",
-        ~"test_pid" => gaffer_test_worker:encode_pid(self())
-    }),
-    _ = gaffer:insert(?Q, #{
-        ~"action" => ~"block",
-        ~"test_pid" => gaffer_test_worker:encode_pid(self())
-    }),
-    _ = gaffer:insert(?Q, #{
-        ~"action" => ~"block",
-        ~"test_pid" => gaffer_test_worker:encode_pid(self())
-    }),
-    ok = gaffer_queue_runner:poll(?Q),
-    % Only 2 workers should have started
-    receive
-        {job_started, _, _} -> ok
-    after 5000 -> error(timeout)
-    end,
-    receive
-        {job_started, _, _} -> ok
-    after 5000 -> error(timeout)
-    end,
-    % Third job should still be available
-    Available = gaffer:list(#{queue => ?Q, state => available}),
-    ?assertEqual(1, length(Available)).
 
 poll_auto_executes(Driver) ->
     ok = gaffer:create_queue(
