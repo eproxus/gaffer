@@ -24,9 +24,13 @@
 - [X] Refactor runner and queue module APIs so the runner doesn't construct job
       internal data (such as errors)
 - [X] Improve CI to use `mise` and only one workflow
-- [X] Add feature to introspect queues
+- [X] Add a feature to introspect queues
     - [X] Count actual items in storage. How to make performant?
 - [ ] Document public API using `-moduledoc` and `-doc` attributes
+- [ ] Add a public `migrations/1` function to the PGO driver to use together
+      with rollback
+- [ ] Make job ID output format configurable (hex, type_id etc.)
+- [ ] Make job ID UUID format configurable (v4 etc.)
 - [ ] Handle backoff and timeout in runner
 - [ ] Implement drain and flush
 - [ ] Review and deduplicate tests
@@ -36,7 +40,7 @@
     - [ ] ...
 - [ ] Make time output value configurable
     - [ ] Support date tuples is input/output format
-- [ ] Implement egpsql driver to verify the driver/Postgres APIs
+- [ ] Implement `egpsql` driver to verify the driver/Postgres APIs
 - [ ] Figure out a way to run EXPLAIN ANALYZE on all queries to validate
       performance/indices
 - [ ] on_discard should be switchable so success jobs can be put in one queue
