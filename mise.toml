@@ -50,11 +50,11 @@ run = "actionlint"
 [tasks.verify]
 description = "Run all verification checks"
 depends = [
-    "verify:rebar",
-    "verify:elp",
-    "verify:markdown",
-    "verify:yaml",
-    "verify:actions",
+  "verify:rebar",
+  "verify:elp",
+  "verify:markdown",
+  "verify:yaml",
+  "verify:actions",
 ]
 
 [tasks.test]
