@@ -24,21 +24,32 @@
 - [X] Refactor runner and queue module APIs so the runner doesn't construct job
       internal data (such as errors)
 - [X] Improve CI to use `mise` and only one workflow
+- [ ] Add feature to introspect queues
+    - [ ] Count actual items in storage. How to make performant?
+- [ ] Implement drain and flush
+- [ ] Review and deduplicate tests
+    - Use queue introspection to verify test state?
+- [ ] More hooks
+    - [ ] Worker created/destroyed
+    - [ ] ...
 - [ ] Handle backoff and timeout in runner
+- [ ] Make time output value configurable
+    - [ ] Support date tuples is input/output format
+- [ ] Implement egpsql driver to verify the driver/Postgres APIs
+- [ ] Figure out a way to run EXPLAIN ANALYZE on all queries to validate
+      performance/indices
 - [ ] on_discard should be switchable so success jobs can be put in one queue
       and failed in another. How do dispatch?
     - What about discarded state? What is it used for? (cleanup)
     - [ ] Handle deleting a queue that is referenced in on_discard
 - [ ] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
-- [ ] Add feature to introspect queues
-    - [ ] Count actual items in storage. How to make performant?
-- [ ] Implement drain and flush
 - [ ] Implement 'priority' support
 - [ ] Add support for LISTEN/NOTIFY
 - [ ] Improve tests
     - [ ] Verify life cycle / runner more carefully
         - Figure out a way to timestep the world? Are we already doing this?
             - Manually call poll somehow?
+            - This could replace all calls to gaffer_queue_runner:claim in the tests
     - [ ] Explore scenarios with shared queue config
         - Nodes booting up with existing queues, differing configs etc.
         - What about a rolling app deployment that updates a queue config?
