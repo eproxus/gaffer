@@ -2,14 +2,6 @@
 
 -behaviour(gaffer_hooks).
 
--hank([
-    {unnecessary_function_arguments, [
-        pgo_migration_idempotent,
-        pgo_migration_rollback,
-        pgo_start_with_new_pool
-    ]}
-]).
-
 -export([gaffer_hook/3]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -115,90 +107,9 @@ gaffer_test_() ->
         fun hook_global_queue/1
     ],
     [
-        harness(gaffer_driver_ets, Parallel, Sequential),
-        harness(gaffer_driver_pgo, Parallel, Sequential)
+        gaffer_test_helpers:harness(gaffer_driver_ets, Parallel, Sequential),
+        gaffer_test_helpers:harness(gaffer_driver_pgo, Parallel, Sequential)
     ].
-
-% PGO-specific tests (driver internals, UUID IDs)
-gaffer_pgo_test_() ->
-    harness(
-        gaffer_driver_pgo,
-        [
-            % Calls driver directly to test upsert behavior
-            fun pgo_idempotent_create/1
-        ],
-        [
-            % Driver migration/startup internals (mutate shared schema)
-            fun pgo_migration_idempotent/1,
-            fun pgo_migration_rollback/1,
-            fun pgo_start_with_new_pool/1
-        ]
-    ).
-
-harness(DriverMod, Parallel, Sequential) ->
-    {setup, fun() -> setup(DriverMod) end, fun teardown/1, fun(
-        #{driver := Driver}
-    ) ->
-        {inorder, [
-            {inparallel, [{with, Driver, [T]} || T <:- Parallel]},
-            [{with, Driver, [T]} || T <:- Sequential]
-        ]}
-    end}.
-
-%--- Setup / teardown ---------------------------------------------------------
-
-setup(DriverMod) ->
-    error_logger:tty(false),
-    {Driver, Apps0} = setup_driver(DriverMod),
-    {ok, Apps1} = application:ensure_all_started(gaffer),
-    #{driver => Driver, gaffer_apps => Apps1, driver_apps => Apps0}.
-
-teardown(#{
-    driver := Driver, gaffer_apps := GafferApps, driver_apps := DriverApps
-}) ->
-    [application:stop(A) || A <:- lists:reverse(GafferApps)],
-    teardown_driver(Driver),
-    [application:stop(A) || A <:- lists:reverse(DriverApps)],
-    error_logger:tty(true).
-
-setup_driver(gaffer_driver_ets) ->
-    DS = gaffer_driver_ets:start(#{}),
-    {{gaffer_driver_ets, DS}, []};
-setup_driver(gaffer_driver_pgo) ->
-    {ok, Apps} = application:ensure_all_started(pgo),
-    stop_pool(test_pool),
-    {ok, _} = pgo:start_pool(test_pool, pgo_pool_config()),
-    reset_database(test_pool),
-    DS = gaffer_driver_pgo:start(#{pool => test_pool}),
-    {{gaffer_driver_pgo, DS}, Apps}.
-
-teardown_driver({gaffer_driver_ets, DS}) ->
-    gaffer_driver_ets:stop(DS);
-teardown_driver({gaffer_driver_pgo, DS}) ->
-    gaffer_driver_pgo:stop(DS),
-    reset_database(test_pool),
-    stop_pool(test_pool).
-
-%--- PGO helpers --------------------------------------------------------------
-
-pgo_pool_config() ->
-    {ok, Props} = application:get_env(gaffer, postgres),
-    Config = maps:with(
-        [host, port, database, user, password], maps:from_list(Props)
-    ),
-    Config#{pool_size => 2}.
-
-reset_database(Pool) ->
-    Opts = #{pool => Pool},
-    pgo:query(~"DROP SCHEMA public CASCADE", [], Opts),
-    pgo:query(~"CREATE SCHEMA public", [], Opts),
-    ok.
-
-stop_pool(Pool) ->
-    case whereis(Pool) of
-        undefined -> ok;
-        Pid -> supervisor:terminate_child(pgo_sup, Pid)
-    end.
 
 %--- Queue management tests ---------------------------------------------------
 
@@ -834,50 +745,6 @@ info_workers(Driver) ->
     timer:sleep(50),
     #{workers := #{active := 0}} = gaffer:info(?Q).
 
-%--- PGO-specific tests -------------------------------------------------------
-
-pgo_migration_idempotent(_Driver) ->
-    State = gaffer_driver_pgo:start(#{pool => test_pool}),
-    State2 = gaffer_driver_pgo:start(#{pool => test_pool}),
-    ?assertMatch(#{pool := test_pool}, State),
-    ?assertMatch(#{pool := test_pool}, State2),
-    ?assert(table_exists(test_pool, ~"gaffer_queues")),
-    ?assert(table_exists(test_pool, ~"gaffer_jobs")).
-
-pgo_migration_rollback(_Driver) ->
-    State = gaffer_driver_pgo:start(#{pool => test_pool}),
-    ?assert(table_exists(test_pool, ~"gaffer_queues")),
-    ?assert(table_exists(test_pool, ~"gaffer_jobs")),
-    ok = gaffer_driver_pgo:rollback(0, State),
-    ?assertNot(table_exists(test_pool, ~"gaffer_queues")),
-    ?assertNot(table_exists(test_pool, ~"gaffer_jobs")),
-    #{rows := Rows} = pgo:query(
-        ~"SELECT version FROM gaffer_schema_version",
-        [],
-        #{pool => test_pool}
-    ),
-    ?assertEqual([{0}], Rows).
-
-pgo_start_with_new_pool(_Driver) ->
-    PoolConfig = pgo_pool_config(),
-    stop_pool(my_started_pool),
-    State = gaffer_driver_pgo:start(#{
-        pool => my_started_pool, start => PoolConfig
-    }),
-    try
-        ?assert(table_exists(my_started_pool, ~"gaffer_queues")),
-        ?assert(table_exists(my_started_pool, ~"gaffer_jobs"))
-    after
-        gaffer_driver_pgo:stop(State)
-    end.
-
-pgo_idempotent_create(Driver) ->
-    ok = gaffer:create_queue(?CONF(Driver, #{max_workers => 3})),
-    % Bypass persistent_term and insert the same config via driver directly
-    {gaffer_driver_pgo, DS} = Driver,
-    Persisted = gaffer:get_queue(?Q),
-    ?assertEqual(ok, gaffer_driver_pgo:queue_insert(Persisted, DS)).
-
 %--- Hook tests ---------------------------------------------------------------
 
 hook_cancel(Driver) ->
@@ -1126,17 +993,6 @@ hook_global_queue(Driver) ->
     end.
 
 %--- Helpers ------------------------------------------------------------------
-
-table_exists(Pool, TableName) ->
-    #{rows := Rows} = pgo:query(
-        ~"""
-        SELECT 1 FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = $1
-        """,
-        [TableName],
-        #{pool => Pool}
-    ),
-    Rows =/= [].
 
 atomize_keys(Map) when is_map(Map) ->
     maps:fold(

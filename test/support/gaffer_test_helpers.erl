@@ -1,0 +1,69 @@
+-module(gaffer_test_helpers).
+
+-export([harness/3]).
+-export([pgo_pool_config/0, reset_database/1, stop_pool/1]).
+
+%--- API ----------------------------------------------------------------------
+
+harness(DriverMod, Parallel, Sequential) ->
+    {setup, fun() -> setup(DriverMod) end, fun teardown/1, fun(
+        #{driver := Driver}
+    ) ->
+        {inorder, [
+            {inparallel, [{with, Driver, [T]} || T <:- Parallel]},
+            [{with, Driver, [T]} || T <:- Sequential]
+        ]}
+    end}.
+
+pgo_pool_config() ->
+    {ok, Props} = application:get_env(gaffer, postgres),
+    Config = maps:with(
+        [host, port, database, user, password], maps:from_list(Props)
+    ),
+    Config#{pool_size => 2}.
+
+reset_database(Pool) ->
+    Opts = #{pool => Pool},
+    pgo:query(~"DROP SCHEMA public CASCADE", [], Opts),
+    pgo:query(~"CREATE SCHEMA public", [], Opts),
+    ok.
+
+stop_pool(Pool) ->
+    case whereis(Pool) of
+        undefined -> ok;
+        Pid -> supervisor:terminate_child(pgo_sup, Pid)
+    end.
+
+%--- Internal -----------------------------------------------------------------
+
+setup(DriverMod) ->
+    error_logger:tty(false),
+    {Driver, Apps0} = setup_driver(DriverMod),
+    {ok, Apps1} = application:ensure_all_started(gaffer),
+    #{driver => Driver, gaffer_apps => Apps1, driver_apps => Apps0}.
+
+teardown(#{
+    driver := Driver, gaffer_apps := GafferApps, driver_apps := DriverApps
+}) ->
+    [application:stop(A) || A <:- lists:reverse(GafferApps)],
+    teardown_driver(Driver),
+    [application:stop(A) || A <:- lists:reverse(DriverApps)],
+    error_logger:tty(true).
+
+setup_driver(gaffer_driver_ets) ->
+    DS = gaffer_driver_ets:start(#{}),
+    {{gaffer_driver_ets, DS}, []};
+setup_driver(gaffer_driver_pgo) ->
+    {ok, Apps} = application:ensure_all_started(pgo),
+    stop_pool(test_pool),
+    {ok, _} = pgo:start_pool(test_pool, pgo_pool_config()),
+    reset_database(test_pool),
+    DS = gaffer_driver_pgo:start(#{pool => test_pool}),
+    {{gaffer_driver_pgo, DS}, Apps}.
+
+teardown_driver({gaffer_driver_ets, DS}) ->
+    gaffer_driver_ets:stop(DS);
+teardown_driver({gaffer_driver_pgo, DS}) ->
+    gaffer_driver_pgo:stop(DS),
+    reset_database(test_pool),
+    stop_pool(test_pool).
