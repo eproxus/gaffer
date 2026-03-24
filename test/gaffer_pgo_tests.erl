@@ -2,14 +2,22 @@
 
 -hank([
     {unnecessary_function_arguments, [
-        pgo_start_with_new_pool, pgo_multi_node_distribution
+        pgo_start_with_new_pool,
+        pgo_multi_node_distribution,
+        pgo_multi_node_ensure_queue,
+        pgo_multi_node_ensure_queue_rolling_upgrade
     ]}
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
 
 -define(Q, ?FUNCTION_NAME).
--define(CONF(Driver), #{name => ?Q, driver => Driver, poll_interval => infinity}).
+-define(CONF(Driver), #{
+    name => ?Q,
+    driver => Driver,
+    worker => gaffer_test_worker,
+    poll_interval => infinity
+}).
 -define(CONF(Driver, Extra), maps:merge(?CONF(Driver), Extra)).
 
 %--- Fixtures -----------------------------------------------------------------
@@ -26,7 +34,9 @@ gaffer_pgo_test_() ->
             fun pgo_migration_idempotent/1,
             fun pgo_migration_rollback/1,
             fun pgo_start_with_new_pool/1,
-            fun pgo_multi_node_distribution/1
+            fun pgo_multi_node_distribution/1,
+            fun pgo_multi_node_ensure_queue/1,
+            fun pgo_multi_node_ensure_queue_rolling_upgrade/1
         ]
     ).
 
@@ -103,6 +113,73 @@ pgo_multi_node_distribution(_Driver) ->
         end
     end.
 
+pgo_multi_node_ensure_queue(_Driver) ->
+    ensure_distributed(),
+    PoolConfig = gaffer_test_helpers:pgo_pool_config(),
+    Peers = [
+        start_peer(Name, PoolConfig)
+     || Name <:- [gaffer_peer_1, gaffer_peer_2]
+    ],
+    PeerNodes = [N || {_, N} <:- Peers],
+    QName = pgo_multi_node_ensure_queue,
+    try
+        % Node A creates the queue with max_workers=1
+        ok = gaffer:create_queue(queue_conf(QName, #{max_workers => 1})),
+        % Node B ensures the queue with updated max_workers=2
+        ok = erpc:call(hd(PeerNodes), fun() ->
+            gaffer:ensure_queue(queue_conf(QName, #{max_workers => 2}))
+        end),
+        % Node C also ensures
+        ok = erpc:call(lists:last(PeerNodes), fun() ->
+            gaffer:ensure_queue(queue_conf(QName, #{max_workers => 2}))
+        end),
+        % Verify the driver has the updated config
+        #{max_workers := 2} = gaffer:get_queue(QName),
+        % All nodes process jobs
+        Nodes = insert_and_collect(QName, 12),
+        UniqueNodes = lists:usort(Nodes),
+        ExpectedNodes = lists:sort([node() | PeerNodes]),
+        ?assertEqual(ExpectedNodes, UniqueNodes)
+    after
+        [peer:stop(P) || {P, _} <:- Peers],
+        try
+            gaffer:delete_queue(QName)
+        catch
+            _:_ -> ok
+        end
+    end.
+
+pgo_multi_node_ensure_queue_rolling_upgrade(_Driver) ->
+    ensure_distributed(),
+    PoolConfig = gaffer_test_helpers:pgo_pool_config(),
+    QName = pgo_multi_node_ensure_queue_rolling_upgrade,
+    try
+        % "Old" node starts with max_workers=1
+        ok = gaffer:ensure_queue(queue_conf(QName, #{max_workers => 1})),
+        ?assertMatch(#{max_workers := 1}, gaffer:get_queue(QName)),
+        % "New" nodes start with max_workers=3 (rolling upgrade)
+        {Peer1, Node1} = start_peer(gaffer_peer_1, PoolConfig),
+        ensure_queue_on(Node1, QName, #{max_workers => 3}),
+        % Driver reflects the latest config
+        ?assertMatch(#{max_workers := 3}, gaffer:get_queue(QName)),
+        % Second "new" node also starts with max_workers=3
+        {Peer2, Node2} = start_peer(gaffer_peer_2, PoolConfig),
+        ensure_queue_on(Node2, QName, #{max_workers => 3}),
+        % All three nodes participate in processing
+        Nodes = insert_and_collect(QName, 12),
+        UniqueNodes = lists:usort(Nodes),
+        ExpectedNodes = lists:sort([node(), Node1, Node2]),
+        ?assertEqual(ExpectedNodes, UniqueNodes),
+        peer:stop(Peer1),
+        peer:stop(Peer2)
+    after
+        try
+            gaffer:delete_queue(QName)
+        catch
+            _:_ -> ok
+        end
+    end.
+
 %--- Helpers ------------------------------------------------------------------
 
 ensure_distributed() ->
@@ -126,14 +203,25 @@ start_peer(Name, PoolConfig) ->
     end),
     {Peer, Node}.
 
+ensure_queue_on(Node, QName, Extra) ->
+    ok = erpc:call(Node, fun() ->
+        gaffer:ensure_queue(queue_conf(QName, Extra))
+    end).
+
 queue_conf(Name) ->
-    #{
-        name => Name,
-        driver => {gaffer_driver_pgo, #{pool => test_pool}},
-        worker => gaffer_test_worker,
-        max_workers => 1,
-        poll_interval => 1
-    }.
+    queue_conf(Name, #{}).
+
+queue_conf(Name, Extra) ->
+    maps:merge(
+        #{
+            name => Name,
+            driver => {gaffer_driver_pgo, #{pool => test_pool}},
+            worker => gaffer_test_worker,
+            max_workers => 1,
+            poll_interval => 1
+        },
+        Extra
+    ).
 
 insert_and_collect(QueueName, JobCount) ->
     PidBin = gaffer_test_worker:encode_pid(self()),

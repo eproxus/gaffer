@@ -10,7 +10,7 @@
 -export([rollback/2]).
 % Queues
 -export([queue_insert/2]).
--export([queue_update/3]).
+-export([queue_upsert/2]).
 -export([queue_get/2]).
 -export([queue_delete/2]).
 % Jobs
@@ -131,11 +131,11 @@ queue_insert(Conf, #{pool := Pool} = State) ->
     end.
 
 -doc false.
--spec queue_update(gaffer:queue(), map(), driver_state()) -> ok.
-queue_update(Name, Updates, #{pool := Pool}) ->
-    Encoded = encode_conf(Updates),
+-spec queue_upsert(gaffer:queue_conf(), driver_state()) -> ok.
+queue_upsert(Conf, #{pool := Pool}) ->
+    Encoded = encode_conf(Conf),
     queue_transaction(
-        Pool, gaffer_postgres:queue_update(Name, Encoded), Updates
+        Pool, gaffer_postgres:queue_upsert(Encoded), Conf
     ),
     ok.
 

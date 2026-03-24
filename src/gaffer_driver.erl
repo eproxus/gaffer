@@ -43,8 +43,8 @@
 -doc "Persists a new queue configuration.".
 -callback queue_insert(gaffer:queue_conf(), driver_state()) -> ok.
 
--doc "Updates an existing queue configuration.".
--callback queue_update(gaffer:queue(), map(), driver_state()) -> ok.
+-doc "Inserts or updates a queue configuration.".
+-callback queue_upsert(gaffer:queue_conf(), driver_state()) -> ok.
 
 -doc "Fetches a queue configuration by name.".
 -callback queue_get(gaffer:queue(), driver_state()) ->

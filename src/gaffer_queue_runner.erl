@@ -18,8 +18,11 @@
 -export([claim/2]).
 -ignore_xref(prune/2).
 -export([prune/2]).
+-ignore_xref(reconfigure/1).
+-export([reconfigure/1]).
 -ignore_xref(info/1).
 -export([info/1]).
+-export([pid/1]).
 % gen_statem Callbacks
 -export([callback_mode/0]).
 -export([init/1]).
@@ -29,87 +32,68 @@
 
 -spec start_link(gaffer:queue(), gaffer_queue:queue_conf()) ->
     gen_statem:start_ret().
-start_link(Name, Conf) ->
-    gen_statem:start_link(
-        {local, proc_name(Name)},
-        ?MODULE,
-        {Name, Conf},
-        []
-    ).
+start_link(Name, _Conf) ->
+    gen_statem:start_link({local, proc_name(Name)}, ?MODULE, Name, []).
 
 -spec poll(gaffer:queue()) -> ok.
-poll(Name) ->
-    gen_statem:call(proc_name(Name), poll).
+poll(Name) -> call(Name, poll).
 
 -spec complete(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
-complete(Name, Id) ->
-    gen_statem:call(proc_name(Name), {complete, Id}).
+complete(Name, Id) -> call(Name, {complete, Id}).
 
--spec fail(
-    gaffer:queue(), gaffer:job_id(), term()
-) ->
+-spec fail(gaffer:queue(), gaffer:job_id(), term()) ->
     {ok, gaffer:job()} | {error, term()}.
-fail(Name, Id, Reason) ->
-    gen_statem:call(
-        proc_name(Name), {fail, Id, Reason}
-    ).
+fail(Name, Id, Reason) -> call(Name, {fail, Id, Reason}).
 
--spec schedule(
-    gaffer:queue(), gaffer:job_id(), gaffer:timestamp()
-) ->
+-spec schedule(gaffer:queue(), gaffer:job_id(), gaffer:timestamp()) ->
     {ok, gaffer:job()} | {error, term()}.
-schedule(Name, Id, At) ->
-    gen_statem:call(
-        proc_name(Name), {schedule, Id, At}
-    ).
+schedule(Name, Id, At) -> call(Name, {schedule, Id, At}).
 
--spec claim(gaffer:queue(), gaffer_driver:claim_opts()) ->
-    [gaffer:job()].
-claim(Name, Opts) ->
-    gen_statem:call(proc_name(Name), {claim, Opts}).
+-spec claim(gaffer:queue(), gaffer_driver:claim_opts()) -> [gaffer:job()].
+claim(Name, Opts) -> call(Name, {claim, Opts}).
 
--spec prune(gaffer:queue(), gaffer_driver:prune_opts()) ->
-    non_neg_integer().
-prune(Name, Opts) ->
-    gen_statem:call(proc_name(Name), {prune, Opts}).
+-spec prune(gaffer:queue(), gaffer_driver:prune_opts()) -> non_neg_integer().
+prune(Name, Opts) -> call(Name, {prune, Opts}).
 
--spec info(gaffer:queue()) -> map().
-info(Name) ->
-    gen_statem:call(proc_name(Name), info).
+-spec reconfigure(gaffer:queue()) -> ok.
+reconfigure(Name) -> call(Name, reconfigure).
+
+-spec info(gaffer:queue()) -> non_neg_integer().
+info(Name) -> call(Name, info).
+
+-spec pid(gaffer:queue()) -> pid().
+pid(Name) ->
+    Pid = erlang:whereis(proc_name(Name)),
+    true = is_pid(Pid),
+    Pid.
 
 %--- gen_statem Callbacks ------------------------------------------------------
 
 callback_mode() -> handle_event_function.
 
-init({Name, Conf}) ->
-    Data = #{
-        name => Name,
-        workers => #{},
-        max_workers => maps:get(max_workers, Conf, 5),
-        global_max_workers => maps:get(global_max_workers, Conf, 25),
-        poll_interval => maps:get(poll_interval, Conf, 1000),
-        worker_mod => maps:get(worker, Conf, undefined)
-    },
-    {ok, polling, Data, [poll_timeout(Data)]}.
+init(Name) ->
+    Conf = gaffer_queue:conf(Name),
+    Data = #{name => Name, workers => #{}},
+    {ok, polling, Data, initial_poll(Conf) ++ poll_timeout(Conf)}.
 
-handle_event(
-    {call, From}, poll, _State, #{name := Name} = Data
-) ->
-    Data1 = do_poll(Name, Data),
-    {keep_state, Data1, [{reply, From, ok}, poll_timeout(Data1)]};
-handle_event({call, From}, info, _State, Data) ->
-    {keep_state, Data, [{reply, From, worker_info(Data)}]};
-handle_event(
-    {call, From}, Cmd, _State, #{name := Name} = Data
-) ->
-    Reply = dispatch(Cmd, Name),
-    {keep_state, Data, [{reply, From, Reply}]};
-handle_event(
-    state_timeout, poll, _State, #{name := Name} = Data
-) ->
-    Data1 = do_poll(Name, Data),
-    {keep_state, Data1, [poll_timeout(Data1)]};
+handle_event(internal, poll, _State, #{name := Name} = Data) ->
+    Conf = gaffer_queue:conf(Name),
+    {keep_state, do_poll(Conf, Data)};
+handle_event(state_timeout, poll, _State, #{name := Name} = Data) ->
+    Conf = gaffer_queue:conf(Name),
+    {keep_state, do_poll(Conf, Data), poll_timeout(Conf)};
+handle_event({call, From}, poll, _State, #{name := Name} = Data) ->
+    Conf = gaffer_queue:conf(Name),
+    {keep_state, do_poll(Conf, Data), [{reply, From, ok} | poll_timeout(Conf)]};
+handle_event({call, From}, reconfigure, _State, #{name := Name}) ->
+    {keep_state_and_data, [
+        {reply, From, ok} | poll_timeout(gaffer_queue:conf(Name))
+    ]};
+handle_event({call, From}, info, _State, #{workers := Workers}) ->
+    {keep_state_and_data, [{reply, From, map_size(Workers)}]};
+handle_event({call, From}, Cmd, _State, #{name := Name} = Data) ->
+    {keep_state, Data, [{reply, From, dispatch(Cmd, Name)}]};
 handle_event(
     info,
     {'DOWN', _Ref, process, Pid, Reason},
@@ -126,10 +110,17 @@ handle_event(
 
 %--- Internal ------------------------------------------------------------------
 
+call(Name, Msg) -> gen_statem:call(proc_name(Name), Msg).
+
+initial_poll(#{poll_interval := infinity}) -> [];
+initial_poll(#{}) -> [{next_event, internal, poll}].
+
+poll_timeout(#{poll_interval := infinity}) -> [];
+poll_timeout(#{poll_interval := Interval}) -> [{state_timeout, Interval, poll}].
+
 do_poll(
-    Name,
-    #{workers := Workers, max_workers := MaxWorkers, worker_mod := WorkerMod} =
-        Data
+    #{max_workers := MaxWorkers, worker := WorkerMod},
+    #{name := Name, workers := Workers} = Data
 ) ->
     Limit = MaxWorkers - map_size(Workers),
     case Limit > 0 of
@@ -169,11 +160,6 @@ worker_cmd(JobId, _Queue, {schedule, At}) -> {schedule, JobId, At}.
 fail_cmd(JobId, Reason) ->
     {fail, JobId, Reason}.
 
-poll_timeout(#{poll_interval := infinity}) ->
-    {state_timeout, infinity, poll};
-poll_timeout(#{poll_interval := Interval}) ->
-    {state_timeout, Interval, poll}.
-
 dispatch({complete, Id}, Name) ->
     gaffer_queue:complete_job(Name, Id);
 dispatch({fail, Id, Reason}, Name) ->
@@ -186,14 +172,6 @@ dispatch({claim, #{queue := Queue} = Opts}, _Name) ->
     gaffer_queue:claim_jobs(Queue, Opts);
 dispatch({prune, Opts}, Name) ->
     gaffer_queue:prune_jobs(Name, Opts).
-
-worker_info(#{
-    workers := Workers, max_workers := MaxW, global_max_workers := GlobalMaxW
-}) ->
-    #{
-        active => map_size(Workers),
-        max => #{local => MaxW, global => GlobalMaxW}
-    }.
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input

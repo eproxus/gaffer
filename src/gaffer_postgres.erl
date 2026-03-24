@@ -10,7 +10,7 @@
 -export([applied_version/0]).
 % Queues
 -export([queue_insert/1]).
--export([queue_update/2]).
+-export([queue_upsert/1]).
 -export([queue_get/1]).
 -export([queue_delete/1]).
 % Introspection
@@ -159,18 +159,21 @@ queue_insert(Conf) ->
     ],
     [{SQL, Vals}].
 
--doc "Query to update a queue configuration.".
--spec queue_update(gaffer:queue(), map()) -> queries().
-queue_update(Name, Changes) ->
-    {Sets, Vals} = set_clause(Changes),
-    N = length(Vals) + 1,
+-doc "Query to insert or update a queue configuration.".
+-spec queue_upsert(map()) -> queries().
+queue_upsert(Conf) ->
+    {Cols, Phs, Vals} = columns_and_values(Conf),
+    NonNameCols = [C || C <:- Cols, C =/= ~"name"],
+    Updates = lists:join(~", ", [[C, ~" = EXCLUDED.", C] || C <:- NonNameCols]),
     SQL = [
-        ~"UPDATE gaffer_queues SET ",
-        Sets,
-        ~" WHERE name = $",
-        integer_to_binary(N)
+        ~"INSERT INTO gaffer_queues (",
+        lists:join(~", ", Cols),
+        ~") VALUES (",
+        lists:join(~", ", Phs),
+        ~") ON CONFLICT (name) DO UPDATE SET ",
+        Updates
     ],
-    [{SQL, Vals ++ [atom_to_binary(Name)]}].
+    [{SQL, Vals}].
 
 -doc "Query to fetch a queue configuration by name.".
 -spec queue_get(gaffer:queue()) -> queries().

@@ -6,11 +6,13 @@
 -export([init/0]).
 -export([teardown/0]).
 -export([create/1]).
+-export([ensure/1]).
 -export([delete/1]).
 -export([get/1]).
 -export([update/2]).
 -export([list/0]).
 -export([queue_conf_template/0]).
+-export([conf/1]).
 % Introspection
 -export([info/1]).
 % Jobs (user)
@@ -57,10 +59,11 @@ teardown() ->
     ok.
 
 -spec create(queue_conf()) -> ok | {error, already_exists}.
-create(#{name := Name, driver := {Mod, DS}} = Conf) ->
+create(Conf0) ->
+    #{name := Name, driver := {Mod, DS}, hooks := Hooks} =
+        Conf = with_defaults(Conf0),
     case persistent_term:get({gaffer_queue, Name}, undefined) of
         undefined ->
-            Hooks = maps:get(hooks, Conf, []),
             Validated = validate_conf(strip_runtime(Conf)),
             Persisted = Validated#{name => Name},
             _ = gaffer_hooks:with_hooks(
@@ -71,7 +74,7 @@ create(#{name := Name, driver := {Mod, DS}} = Conf) ->
                     Mod:queue_insert(Persisted, DS),
                     persistent_term:put(
                         {gaffer_queue, Name},
-                        maps:merge(Conf#{hooks => Hooks}, Validated)
+                        maps:merge(Conf, Validated)
                     ),
                     {ok, _Pid} = gaffer_sup:start_queue(Name, Conf),
                     C
@@ -82,20 +85,38 @@ create(#{name := Name, driver := {Mod, DS}} = Conf) ->
             {error, already_exists}
     end.
 
+-spec ensure(queue_conf()) -> ok.
+ensure(Conf0) ->
+    #{name := Name, driver := {Mod, DS}, hooks := Hooks} =
+        Conf = with_defaults(Conf0),
+    Validated = validate_conf(strip_runtime(Conf)),
+    Mod:queue_upsert(Validated#{name => Name}, DS),
+    persistent_term:put(
+        {gaffer_queue, Name},
+        maps:merge(Conf, Validated)
+    ),
+    case ensure_runner(Name, Conf) of
+        created ->
+            _ = gaffer_hooks:with_hooks(
+                Hooks, [gaffer, queue, create], Conf, fun(C) -> C end
+            ),
+            ok;
+        updated ->
+            _ = gaffer_hooks:with_hooks(
+                Hooks, [gaffer, queue, update], Conf, fun(C) -> C end
+            ),
+            ok
+    end.
+
 -spec delete(gaffer:queue()) -> ok.
 delete(Name) ->
-    ok = gaffer_sup:stop_queue(Name),
-    #{driver := {Mod, DS}, hooks := Hooks} = lookup(Name),
-    _ = gaffer_hooks:with_hooks(
-        Hooks,
-        [gaffer, queue, delete],
-        Name,
-        fun(N) ->
-            persistent_term:erase({gaffer_queue, Name}),
-            Mod:queue_delete(Name, DS),
-            N
-        end
-    ),
+    #{driver := {Mod, DS}, hooks := Hooks} = conf(Name),
+    _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, delete], Name, fun(N) ->
+        ok = gaffer_sup:stop_queue(gaffer_queue_runner:pid(Name)),
+        persistent_term:erase({gaffer_queue, Name}),
+        Mod:queue_delete(Name, DS),
+        N
+    end),
     ok.
 
 -spec list() -> [{gaffer:queue(), gaffer:queue_conf()}].
@@ -111,7 +132,7 @@ queue_entry(_) ->
 
 -spec get(gaffer:queue()) -> gaffer:queue_conf().
 get(Name) ->
-    #{driver := {Mod, DS}} = lookup(Name),
+    #{driver := {Mod, DS}} = conf(Name),
     case Mod:queue_get(Name, DS) of
         not_found -> error({unknown_queue, Name});
         Conf -> Conf
@@ -120,19 +141,17 @@ get(Name) ->
 -spec update(gaffer:queue(), map()) -> ok.
 update(Name, Updates) ->
     Validated = validate_updates(strip_runtime(Updates)),
-    #{driver := {Mod, DS}, hooks := Hooks} = Conf = lookup(Name),
-    _ = gaffer_hooks:with_hooks(
-        Hooks,
-        [gaffer, queue, update],
-        Updates,
-        fun(U) ->
-            Mod:queue_update(Name, Validated, DS),
-            persistent_term:put(
-                {gaffer_queue, Name}, maps:merge(Conf, Validated)
-            ),
-            U
-        end
-    ),
+    #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Name),
+    MergedConf = maps:merge(Conf, Validated),
+    Persisted = validate_conf(strip_runtime(MergedConf)),
+    _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, update], Updates, fun(U) ->
+        Mod:queue_upsert(Persisted#{name => Name}, DS),
+        persistent_term:put(
+            {gaffer_queue, Name}, MergedConf
+        ),
+        gaffer_queue_runner:reconfigure(Name),
+        U
+    end),
     ok.
 
 -spec queue_conf_template() -> map().
@@ -153,9 +172,16 @@ queue_conf_template() ->
 
 -spec info(gaffer:queue()) -> gaffer:queue_info().
 info(Queue) ->
-    #{driver := {Mod, DS}} = lookup(Queue),
+    #{driver := {Mod, DS}} = Conf = conf(Queue),
     StorageInfo = Mod:info(Queue, DS),
-    WorkerInfo = gaffer_queue_runner:info(Queue),
+    Active = gaffer_queue_runner:info(Queue),
+    WorkerInfo = #{
+        active => Active,
+        max => #{
+            local => maps:get(max_workers, Conf),
+            global => maps:get(global_max_workers, Conf)
+        }
+    },
     StorageInfo#{workers => WorkerInfo}.
 
 % Job (user)
@@ -163,7 +189,7 @@ info(Queue) ->
 -spec insert_job(gaffer:queue(), term(), gaffer:job_opts()) ->
     gaffer:job().
 insert_job(Queue, Payload, Opts) ->
-    #{driver := {Mod, DS}, hooks := Hooks} = Conf = lookup(Queue),
+    #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
     NewJob = build_job(Conf, Payload, Opts),
     validate(NewJob),
     gaffer_hooks:with_hooks(
@@ -176,18 +202,18 @@ insert_job(Queue, Payload, Opts) ->
 -spec get_job(gaffer:queue(), gaffer:job_id()) ->
     gaffer:job() | not_found.
 get_job(Queue, JobId) ->
-    #{driver := {Mod, DS}} = lookup(Queue),
+    #{driver := {Mod, DS}} = conf(Queue),
     Mod:job_get(JobId, DS).
 
 -spec list_jobs(gaffer:job_filter()) ->
     [gaffer:job()].
 list_jobs(#{queue := Queue} = Opts) ->
-    #{driver := {Mod, DS}} = lookup(Queue),
+    #{driver := {Mod, DS}} = conf(Queue),
     Mod:job_list(Opts, DS).
 
 -spec delete_job(gaffer:queue(), gaffer:job_id()) -> ok.
 delete_job(Queue, JobId) ->
-    #{driver := {Mod, DS}, hooks := Hooks} = lookup(Queue),
+    #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
     _ = gaffer_hooks:with_hooks(
         Hooks,
         [gaffer, job, delete],
@@ -204,7 +230,7 @@ delete_job(Queue, JobId) ->
 -spec cancel_job(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
 cancel_job(Queue, JobId) ->
-    Conf = lookup(Queue),
+    Conf = conf(Queue),
     modify_job(Conf, JobId, [gaffer, job, cancel], fun(Job) ->
         transition(Job, cancelled)
     end).
@@ -214,7 +240,7 @@ cancel_job(Queue, JobId) ->
 -spec complete_job(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, not_found}.
 complete_job(Queue, Id) ->
-    Conf = lookup(Queue),
+    Conf = conf(Queue),
     modify_job(Conf, Id, [gaffer, job, complete], fun(#{attempt := A} = Job) ->
         {ok, C} = transition(Job, completed),
         {ok, C#{attempt := A + 1}}
@@ -223,7 +249,7 @@ complete_job(Queue, Id) ->
 -spec fail_job(gaffer:queue(), gaffer:job_id(), term()) ->
     {ok, gaffer:job()} | {error, not_found}.
 fail_job(Queue, Id, Reason) ->
-    Conf = lookup(Queue),
+    Conf = conf(Queue),
     Result = modify_job(Conf, Id, [gaffer, job, fail], fun(Job) ->
         Attempt = maps:get(attempt, Job) + 1,
         MaxAttempts = maps:get(max_attempts, Job),
@@ -247,7 +273,7 @@ fail_job(Queue, Id, Reason) ->
 -spec schedule_job(gaffer:queue(), gaffer:job_id(), gaffer:timestamp()) ->
     {ok, gaffer:job()} | {error, not_found}.
 schedule_job(Queue, Id, At) ->
-    Conf = lookup(Queue),
+    Conf = conf(Queue),
     modify_job(Conf, Id, [gaffer, job, schedule], fun(Job) ->
         {ok, Available} = transition(Job, available),
         {ok, Available#{scheduled_at => timestamp(At)}}
@@ -258,7 +284,7 @@ schedule_job(Queue, Id, At) ->
 claim_jobs(Queue, Opts) ->
     Now = erlang:system_time(),
     Changes = #{state => executing, attempted_at => Now},
-    #{driver := {Mod, DS}, hooks := Hooks} = lookup(Queue),
+    #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
     gaffer_hooks:with_hooks(
         Hooks,
         [gaffer, job, claim],
@@ -269,7 +295,7 @@ claim_jobs(Queue, Opts) ->
 -spec prune_jobs(gaffer:queue(), gaffer_driver:prune_opts()) ->
     non_neg_integer().
 prune_jobs(Queue, Opts) ->
-    #{driver := {Mod, DS}} = lookup(Queue),
+    #{driver := {Mod, DS}} = conf(Queue),
     Mod:job_prune(Opts, DS).
 
 %--- Internal ------------------------------------------------------------------
@@ -452,8 +478,20 @@ maybe_forward(#{on_discard := Target}, #{state := discarded} = Job) ->
 maybe_forward(_, _) ->
     ok.
 
--spec lookup(gaffer:queue()) -> queue_conf().
-lookup(Name) ->
+with_defaults(Conf) ->
+    maps:merge(#{hooks => [], poll_interval => 1000}, Conf).
+
+ensure_runner(Name, Conf) ->
+    case gaffer_sup:start_queue(Name, Conf) of
+        {ok, _Pid} ->
+            created;
+        {error, {already_started, _Pid}} ->
+            gaffer_queue_runner:reconfigure(Name),
+            updated
+    end.
+
+-spec conf(gaffer:queue()) -> queue_conf().
+conf(Name) ->
     case persistent_term:get({gaffer_queue, Name}, undefined) of
         undefined -> error({unknown_queue, Name});
         Conf -> Conf

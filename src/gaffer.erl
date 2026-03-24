@@ -13,6 +13,8 @@
 % Queue management
 -ignore_xref(create_queue/1).
 -export([create_queue/1]).
+-ignore_xref(ensure_queue/1).
+-export([ensure_queue/1]).
 -ignore_xref(get_queue/1).
 -export([get_queue/1]).
 -ignore_xref(update_queue/2).
@@ -137,7 +139,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -type queue_conf() :: #{
     name := queue(),
     driver => {module(), gaffer_driver:driver_state()},
-    worker => module(),
+    worker := module(),
     global_max_workers => pos_integer(),
     max_workers => pos_integer(),
     poll_interval => pos_integer() | infinity,
@@ -219,6 +221,12 @@ stop(_State) ->
 -spec create_queue(queue_conf()) -> ok | {error, already_exists}.
 create_queue(Conf) ->
     gaffer_queue:create(Conf).
+
+-doc #{group => "Queue Management"}.
+-doc "Creates a queue or updates it if it already exists.".
+-spec ensure_queue(queue_conf()) -> ok.
+ensure_queue(Conf) ->
+    gaffer_queue:ensure(Conf).
 
 -doc #{group => "Queue Management"}.
 -doc "Gets the configuration of a queue.".

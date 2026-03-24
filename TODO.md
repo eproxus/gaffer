@@ -26,7 +26,8 @@
 - [X] Improve CI to use `mise` and only one workflow
 - [X] Add a feature to introspect queues
     - [X] Count actual items in storage. How to make performant?
-- [ ] Document public API using `-moduledoc` and `-doc` attributes
+- [X] Document public API using `-moduledoc` and `-doc` attributes
+- [ ] Refactor the strange dispatch lookup in gaffer_queue_runner
 - [ ] Do not expose the internal driver configuration in the exposed queue config
 - [ ] Add a public `migrations/1` function to the PGO driver to use together
       with rollback

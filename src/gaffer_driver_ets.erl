@@ -8,7 +8,7 @@
 -export([stop/1]).
 % Queues
 -export([queue_insert/2]).
--export([queue_update/3]).
+-export([queue_upsert/2]).
 -export([queue_get/2]).
 -export([queue_delete/2]).
 % Jobs
@@ -73,13 +73,11 @@ queue_insert(#{name := Name} = Conf, #{queues := Tab}) ->
     end.
 
 -doc false.
--spec queue_update(gaffer:queue(), map(), driver_state()) ->
+-spec queue_upsert(gaffer:queue_conf(), driver_state()) ->
     ok.
-queue_update(Name, Updates, #{queues := Tab}) ->
-    [{_, Conf}] = ets:lookup(Tab, Name),
-    Merged = maps:merge(Conf, Updates),
-    validate_on_discard(Merged, Tab),
-    true = ets:insert(Tab, {Name, Merged}),
+queue_upsert(#{name := Name} = Conf, #{queues := Tab}) ->
+    validate_on_discard(Conf, Tab),
+    true = ets:insert(Tab, {Name, Conf}),
     ok.
 
 -doc false.

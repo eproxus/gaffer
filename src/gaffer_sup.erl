@@ -17,31 +17,32 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, _InitArgs = {}).
 
 -spec start_queue(gaffer:queue(), gaffer_queue:queue_conf()) ->
-    {ok, pid()}.
+    {ok, pid()} | {error, {already_started, pid()}}.
 start_queue(Name, Conf) ->
-    ChildSpec = #{
-        id => Name,
-        start =>
-            {gaffer_queue_runner, start_link, [Name, Conf]},
-        restart => transient,
-        shutdown => 5000
-    },
-    {ok, Pid} = supervisor:start_child(?MODULE, ChildSpec),
-    true = is_pid(Pid),
-    {ok, Pid}.
+    case supervisor:start_child(?MODULE, [Name, Conf]) of
+        {ok, Pid} when is_pid(Pid) ->
+            {ok, Pid};
+        {error, {already_started, Pid}} when is_pid(Pid) ->
+            {error, {already_started, Pid}}
+    end.
 
--spec stop_queue(gaffer:queue()) -> ok.
-stop_queue(Name) ->
-    _ = supervisor:terminate_child(?MODULE, Name),
-    _ = supervisor:delete_child(?MODULE, Name),
+-spec stop_queue(pid()) -> ok.
+stop_queue(Pid) ->
+    _ = supervisor:terminate_child(?MODULE, Pid),
     ok.
 
 %--- Callbacks -----------------------------------------------------------------
 
 init({} = _InitArgs) ->
     SupFlags = #{
-        strategy => one_for_one,
+        strategy => simple_one_for_one,
         intensity => 5,
         period => 10
     },
-    {ok, {SupFlags, []}}.
+    ChildSpec = #{
+        id => gaffer_queue_runner,
+        start => {gaffer_queue_runner, start_link, []},
+        restart => transient,
+        shutdown => 5000
+    },
+    {ok, {SupFlags, [ChildSpec]}}.

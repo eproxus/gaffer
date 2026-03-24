@@ -60,3 +60,4 @@ After every change
 * Docs: `mise run docs`
 * Test: `mise run --output=keep-order test`
 * Ensure all modified code is covered by tests
+* For substantial changes or new features, verify that coverage did not go down

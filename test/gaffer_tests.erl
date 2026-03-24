@@ -7,7 +7,12 @@
 -include_lib("eunit/include/eunit.hrl").
 
 -define(Q, ?FUNCTION_NAME).
--define(CONF(Driver), #{name => ?Q, driver => Driver, poll_interval => infinity}).
+-define(CONF(Driver), #{
+    name => ?Q,
+    driver => Driver,
+    worker => gaffer_test_worker,
+    poll_interval => infinity
+}).
 -define(CONF(Driver, Extra), maps:merge(?CONF(Driver), Extra)).
 
 %--- Fixtures -----------------------------------------------------------------
@@ -18,6 +23,11 @@ gaffer_test_() ->
         % --- CRUD ---
         % Queue management
         fun create_queue/1,
+        fun ensure_queue/1,
+        fun ensure_queue_update/1,
+        fun ensure_queue_idempotent/1,
+        fun ensure_queue_starts_runner/1,
+        fun update_queue_propagates/1,
         fun get_queue/1,
         fun update_queue/1,
         fun delete_queue/1,
@@ -118,6 +128,69 @@ create_queue(Driver) ->
     ?assertEqual(ok, gaffer:create_queue(Conf)),
     ?assertMatch(#{name := create_queue}, gaffer:get_queue(?Q)),
     ?assertEqual({error, already_exists}, gaffer:create_queue(Conf)).
+
+ensure_queue(Driver) ->
+    Conf = ?CONF(Driver),
+    ?assertEqual(ok, gaffer:ensure_queue(Conf)),
+    ?assertMatch(#{name := ensure_queue}, gaffer:get_queue(?Q)).
+
+ensure_queue_update(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{global_max_workers => 5})),
+    ok = gaffer:ensure_queue(?CONF(Driver, #{global_max_workers => 20})),
+    Updated = gaffer:get_queue(?Q),
+    ?assertEqual(20, maps:get(global_max_workers, Updated)).
+
+ensure_queue_idempotent(Driver) ->
+    Conf = ?CONF(Driver, #{max_workers => 3}),
+    ok = gaffer:ensure_queue(Conf),
+    ok = gaffer:ensure_queue(Conf),
+    ?assertMatch(#{name := ensure_queue_idempotent}, gaffer:get_queue(?Q)).
+
+ensure_queue_starts_runner(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:ensure_queue(
+        ?CONF(Driver, #{poll_interval => 50, hooks => [Hook]})
+    ),
+    #{id := Id} = gaffer:insert(
+        ?Q, #{
+            ~"action" => ~"complete",
+            ~"test_pid" => gaffer_test_worker:encode_pid(self())
+        }
+    ),
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(#{state := completed}, gaffer:get(?Q, Id)).
+
+update_queue_propagates(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{max_workers => 1, hooks => [Hook]})
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    % Update max_workers to 2
+    ok = gaffer:update_queue(?Q, #{max_workers => 2}),
+    % Insert 2 blocking jobs
+    #{id := Id1} = gaffer:insert(?Q, #{
+        ~"action" => ~"block", ~"test_pid" => TestPid
+    }),
+    #{id := Id2} = gaffer:insert(?Q, #{
+        ~"action" => ~"block", ~"test_pid" => TestPid
+    }),
+    ok = gaffer_queue_runner:poll(?Q),
+    % Both should start since max_workers is now 2
+    Pid1 =
+        receive
+            {job_started, #{id := Id1, worker := P1}} -> P1
+        after 5000 -> error(timeout)
+        end,
+    Pid2 =
+        receive
+            {job_started, #{id := Id2, worker := P2}} -> P2
+        after 5000 -> error(timeout)
+        end,
+    Pid1 ! continue,
+    Pid2 ! continue,
+    gaffer_test_helpers:await_hooks(2),
+    ?assertEqual(2, length(gaffer:list(#{queue => ?Q, state => completed}))).
 
 get_queue(Driver) ->
     Conf = ?CONF(Driver),
@@ -470,8 +543,9 @@ prune(Driver) ->
 %--- Polling tests ------------------------------------------------------------
 
 poll_worker_lifecycle(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{worker => gaffer_test_worker, max_workers => 2})
+        ?CONF(Driver, #{max_workers => 2, hooks => [Hook]})
     ),
     TestPid = gaffer_test_worker:encode_pid(self()),
     #{id := Id1} = gaffer:insert(?Q, #{
@@ -500,22 +574,21 @@ poll_worker_lifecycle(Driver) ->
     % Completing workers transitions jobs to completed
     Pid1 ! continue,
     Pid2 ! continue,
-    timer:sleep(50),
+    gaffer_test_helpers:await_hooks(2),
     ?assertEqual(2, length(gaffer:list(#{queue => ?Q, state => completed}))).
 
 poll_worker_crash_fails_job(Driver) ->
-    ok = gaffer:create_queue(
-        ?CONF(Driver, #{worker => gaffer_test_worker})
-    ),
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
     #{id := Id} = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
-    timer:sleep(50),
-    Job = gaffer:get(?Q, Id),
-    ?assertMatch(#{state := failed}, Job).
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(#{state := failed}, gaffer:get(?Q, Id)).
 
 poll_auto_executes(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{worker => gaffer_test_worker, poll_interval => 50})
+        ?CONF(Driver, #{poll_interval => 50, hooks => [Hook]})
     ),
     #{id := Id} = gaffer:insert(
         ?Q, #{
@@ -524,13 +597,8 @@ poll_auto_executes(Driver) ->
         }
     ),
     % No manual poll — the timer should trigger it
-    receive
-        {job_executed, #{id := Id}} -> ok
-    after 5000 -> error(timeout)
-    end,
-    timer:sleep(50),
-    Job = gaffer:get(?Q, Id),
-    ?assertMatch(#{state := completed}, Job).
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(#{state := completed}, gaffer:get(?Q, Id)).
 
 %--- Defaults tests -----------------------------------------------------------
 
@@ -544,9 +612,7 @@ job_inherits_queue_defaults(Driver) ->
 forwarded_job_inherits_target_defaults(Driver) ->
     ok = gaffer:create_queue(
         ?CONF(Driver, #{
-            name => fwd_target_defaults,
-            max_attempts => 10,
-            priority => 3
+            name => fwd_target_defaults, max_attempts => 10, priority => 3
         })
     ),
     ok = gaffer:create_queue(
@@ -576,9 +642,7 @@ job_overrides_timeout_backoff_shutdown(Driver) ->
     ).
 
 backoff_is_array(Driver) ->
-    ok = gaffer:create_queue(
-        ?CONF(Driver, #{backoff => [1000, 2000, 4000]})
-    ),
+    ok = gaffer:create_queue(?CONF(Driver, #{backoff => [1000, 2000, 4000]})),
     Job = gaffer:insert(?Q, #{task => 1}),
     ?assertMatch(#{backoff := [1000, 2000, 4000]}, Job).
 
@@ -612,9 +676,7 @@ forward_on_discard_chain(Driver) ->
             name => fwd_chain_q2, on_discard => fwd_chain_q3, max_attempts => 1
         })
     ),
-    ok = gaffer:create_queue(
-        ?CONF(Driver, #{on_discard => fwd_chain_q2})
-    ),
+    ok = gaffer:create_queue(?CONF(Driver, #{on_discard => fwd_chain_q2})),
     #{id := Id1} = gaffer:insert(?Q, #{task => original}, #{max_attempts => 1}),
     [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
     {ok, _} = gaffer_queue_runner:fail(?Q, Id1, boom),
@@ -729,8 +791,9 @@ info_timestamps_per_state(Driver) ->
     ?assertEqual(Oldest, Newest).
 
 info_workers(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{worker => gaffer_test_worker, max_workers => 2})
+        ?CONF(Driver, #{max_workers => 2, hooks => [Hook]})
     ),
     #{id := Id} = gaffer:insert(?Q, #{
         ~"action" => ~"block",
@@ -746,7 +809,7 @@ info_workers(Driver) ->
     ?assertEqual(1, Active1),
     % Unblock the worker and verify active drops to 0
     WorkerPid ! continue,
-    timer:sleep(50),
+    gaffer_test_helpers:await_hook(),
     #{workers := #{active := 0}} = gaffer:info(?Q).
 
 %--- Hook tests ---------------------------------------------------------------

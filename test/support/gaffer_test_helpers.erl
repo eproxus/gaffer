@@ -1,6 +1,7 @@
 -module(gaffer_test_helpers).
 
 -export([harness/3]).
+-export([notify_hook/2, await_hook/0, await_hooks/1]).
 -export([pgo_pool_config/0, reset_database/1, stop_pool/1]).
 
 %--- API ----------------------------------------------------------------------
@@ -14,6 +15,30 @@ harness(DriverMod, Parallel, Sequential) ->
             [{with, Driver, [T]} || T <:- Sequential]
         ]}
     end}.
+
+notify_hook(Pid, Events) ->
+    fun
+        (post, Event, Data) ->
+            case lists:member(Event, Events) of
+                true -> Pid ! {gaffer_hook, Event, Data};
+                false -> ok
+            end,
+            Data;
+        (pre, _Event, Data) ->
+            Data
+    end.
+
+await_hook() ->
+    receive
+        {gaffer_hook, _Event, _Data} -> ok
+    after 5000 -> error(timeout)
+    end.
+
+await_hooks(0) ->
+    ok;
+await_hooks(N) ->
+    await_hook(),
+    await_hooks(N - 1).
 
 pgo_pool_config() ->
     {ok, Props} = application:get_env(gaffer, postgres),
