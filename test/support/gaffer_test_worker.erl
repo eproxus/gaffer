@@ -5,22 +5,24 @@
 -export([perform/1]).
 -export([encode_pid/1]).
 
-perform(#{
-    id := Id, payload := #{~"action" := ~"complete", ~"test_pid" := PidBin}
-}) ->
+perform(#{payload := #{~"action" := ~"complete", ~"test_pid" := PidBin}} = Job) ->
     Pid = binary_to_term(base64:decode(PidBin)),
-    Pid ! {job_executed, Id},
+    Pid ! {job_executed, metadata(Job)},
     complete;
-perform(#{payload := #{~"action" := ~"crash"}}) ->
-    error(test_crash);
-perform(#{id := Id, payload := #{~"action" := ~"block", ~"test_pid" := PidBin}}) ->
+perform(#{payload := #{~"action" := ~"crash"}} = Job) ->
+    error({test_crash, metadata(Job)});
+perform(#{payload := #{~"action" := ~"block", ~"test_pid" := PidBin}} = Job) ->
     Pid = binary_to_term(base64:decode(PidBin)),
-    Pid ! {job_started, Id, self()},
+    Pid ! {job_started, metadata(Job)},
     receive
-        continue -> complete
-    after 30000 -> {fail, ~"timeout"}
+        continue ->
+            Pid ! {job_executed, metadata(Job)},
+            complete
+    after 30000 ->
+        error({test_timeout, metadata(Job)})
     end.
 
 -spec encode_pid(pid()) -> binary().
-encode_pid(Pid) ->
-    base64:encode(term_to_binary(Pid)).
+encode_pid(Pid) -> base64:encode(term_to_binary(Pid)).
+
+metadata(#{id := Id}) -> #{id => Id, worker => self()}.

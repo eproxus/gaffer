@@ -474,19 +474,23 @@ poll_worker_lifecycle(Driver) ->
         ?CONF(Driver, #{worker => gaffer_test_worker, max_workers => 2})
     ),
     TestPid = gaffer_test_worker:encode_pid(self()),
-    _ = gaffer:insert(?Q, #{~"action" => ~"block", ~"test_pid" => TestPid}),
-    _ = gaffer:insert(?Q, #{~"action" => ~"block", ~"test_pid" => TestPid}),
+    #{id := Id1} = gaffer:insert(?Q, #{
+        ~"action" => ~"block", ~"test_pid" => TestPid
+    }),
+    #{id := Id2} = gaffer:insert(?Q, #{
+        ~"action" => ~"block", ~"test_pid" => TestPid
+    }),
     _ = gaffer:insert(?Q, #{~"action" => ~"block", ~"test_pid" => TestPid}),
     ok = gaffer_queue_runner:poll(?Q),
     % max_workers caps concurrent workers at 2
     Pid1 =
         receive
-            {job_started, _, P1} -> P1
+            {job_started, #{id := Id1, worker := P1}} -> P1
         after 5000 -> error(timeout)
         end,
     Pid2 =
         receive
-            {job_started, _, P2} -> P2
+            {job_started, #{id := Id2, worker := P2}} -> P2
         after 5000 -> error(timeout)
         end,
     % Third job stays available while workers are busy
@@ -521,7 +525,7 @@ poll_auto_executes(Driver) ->
     ),
     % No manual poll — the timer should trigger it
     receive
-        {job_executed, Id} -> ok
+        {job_executed, #{id := Id}} -> ok
     after 5000 -> error(timeout)
     end,
     timer:sleep(50),
@@ -728,14 +732,14 @@ info_workers(Driver) ->
     ok = gaffer:create_queue(
         ?CONF(Driver, #{worker => gaffer_test_worker, max_workers => 2})
     ),
-    _ = gaffer:insert(?Q, #{
+    #{id := Id} = gaffer:insert(?Q, #{
         ~"action" => ~"block",
         ~"test_pid" => gaffer_test_worker:encode_pid(self())
     }),
     ok = gaffer_queue_runner:poll(?Q),
     WorkerPid =
         receive
-            {job_started, _, Pid} -> Pid
+            {job_started, #{id := Id, worker := Pid}} -> Pid
         after 5000 -> error(timeout)
         end,
     #{workers := #{active := Active1}} = gaffer:info(?Q),
