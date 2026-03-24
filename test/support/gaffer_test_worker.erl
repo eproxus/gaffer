@@ -25,4 +25,4 @@ perform(#{payload := #{~"action" := ~"block", ~"test_pid" := PidBin}} = Job) ->
 -spec encode_pid(pid()) -> binary().
 encode_pid(Pid) -> base64:encode(term_to_binary(Pid)).
 
-metadata(#{id := Id}) -> #{id => Id, worker => self()}.
+metadata(#{id := Id}) -> #{id => Id, worker => self(), node => node()}.

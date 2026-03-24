@@ -1,7 +1,9 @@
 -module(gaffer_pgo_tests).
 
 -hank([
-    {unnecessary_function_arguments, [pgo_start_with_new_pool]}
+    {unnecessary_function_arguments, [
+        pgo_start_with_new_pool, pgo_multi_node_distribution
+    ]}
 ]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -23,7 +25,8 @@ gaffer_pgo_test_() ->
             % Driver migration/startup internals (mutate shared schema)
             fun pgo_migration_idempotent/1,
             fun pgo_migration_rollback/1,
-            fun pgo_start_with_new_pool/1
+            fun pgo_start_with_new_pool/1,
+            fun pgo_multi_node_distribution/1
         ]
     ).
 
@@ -70,7 +73,85 @@ pgo_idempotent_create({gaffer_driver_pgo, DS} = Driver) ->
     Persisted = gaffer:get_queue(?Q),
     ?assertEqual(ok, gaffer_driver_pgo:queue_insert(Persisted, DS)).
 
+%--- Multi-node tests ---------------------------------------------------------
+
+pgo_multi_node_distribution(_Driver) ->
+    ensure_distributed(),
+    PoolConfig = gaffer_test_helpers:pgo_pool_config(),
+    Peers = [
+        start_peer(Name, PoolConfig)
+     || Name <:- [gaffer_peer_1, gaffer_peer_2]
+    ],
+    PeerNodes = [N || {_, N} <:- Peers],
+    try
+        QueueConf = queue_conf(pgo_multi_node_distribution),
+        ok = gaffer:create_queue(QueueConf),
+        [
+            ok = erpc:call(N, fun() -> gaffer:create_queue(QueueConf) end)
+         || N <:- PeerNodes
+        ],
+        Nodes = insert_and_collect(pgo_multi_node_distribution, 12),
+        UniqueNodes = lists:usort(Nodes),
+        ExpectedNodes = lists:sort([node() | PeerNodes]),
+        ?assertEqual(ExpectedNodes, UniqueNodes)
+    after
+        [peer:stop(P) || {P, _} <:- Peers],
+        try
+            gaffer:delete_queue(pgo_multi_node_distribution)
+        catch
+            _:_ -> ok
+        end
+    end.
+
 %--- Helpers ------------------------------------------------------------------
+
+ensure_distributed() ->
+    case is_alive() of
+        true ->
+            ok;
+        false ->
+            _ = os:cmd("epmd -daemon"),
+            {ok, _} = net_kernel:start(
+                gaffer_test, #{name_domain => shortnames}
+            )
+    end.
+
+start_peer(Name, PoolConfig) ->
+    {ok, Peer, Node} = peer:start_link(#{name => Name}),
+    erpc:call(Node, code, add_paths, [code:get_path()]),
+    erpc:call(Node, fun() ->
+        {ok, _} = application:ensure_all_started(pgo),
+        {ok, _} = pgo:start_pool(test_pool, PoolConfig),
+        {ok, _} = application:ensure_all_started(gaffer)
+    end),
+    {Peer, Node}.
+
+queue_conf(Name) ->
+    #{
+        name => Name,
+        driver => {gaffer_driver_pgo, #{pool => test_pool}},
+        worker => gaffer_test_worker,
+        max_workers => 1,
+        poll_interval => 1
+    }.
+
+insert_and_collect(QueueName, JobCount) ->
+    PidBin = gaffer_test_worker:encode_pid(self()),
+    [
+        gaffer:insert(QueueName, #{
+            ~"action" => ~"complete",
+            ~"test_pid" => PidBin
+        })
+     || _ <:- lists:seq(1, JobCount)
+    ],
+    [
+        receive
+            {job_executed, #{node := N}} -> N
+        after 10000 ->
+            error(timeout)
+        end
+     || _ <:- lists:seq(1, JobCount)
+    ].
 
 table_exists(Pool, TableName) ->
     #{rows := Rows} = pgo:query(
