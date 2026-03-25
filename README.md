@@ -1,7 +1,12 @@
-# gaffer [![Erlang CI][ci-img]][ci]
+<!-- markdownlint-disable-line MD013 -->
+# gaffer [![CI Status][ci-img]][ci] [![Minimum Erlang Version][erlang-img]][erlang] [![License][license-img]][license]
 
-[ci]:     https://github.com/eproxus/gaffer/actions/workflows/erlang.yml
-[ci-img]: https://github.com/eproxus/gaffer/actions/workflows/erlang.yml/badge.svg
+[ci]:          https://github.com/eproxus/gaffer/actions/workflows/ci.yml?query=branch%3Amain
+[ci-img]:      https://img.shields.io/github/actions/workflow/status/eproxus/gaffer/ci.yml?label=ci
+[erlang]:      https://github.com/eproxus/gaffer/blob/main/mise.toml
+[erlang-img]:  https://img.shields.io/badge/erlang-28+-blue.svg
+[license]:     LICENSE.md
+[license-img]: https://img.shields.io/badge/license-MIT-blue.svg
 
 A reliable job queue implemented in Erlang.
 
