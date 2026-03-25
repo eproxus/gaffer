@@ -52,7 +52,7 @@ stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
 
 -doc false.
 queue_insert(Name, #{queues := Tab}) ->
-    true = ets:insert_new(Tab, {Name, true}) orelse true,
+    _ = ets:insert_new(Tab, {Name, true}),
     ok.
 
 -doc false.

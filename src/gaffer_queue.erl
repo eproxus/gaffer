@@ -35,11 +35,22 @@
 
 -type queue_conf() :: gaffer:queue_conf().
 
+-type claim_opts() :: #{
+    queue := gaffer:queue(),
+    limit := pos_integer()
+}.
+
+-type prune_opts() :: #{
+    states => [gaffer:job_state()]
+}.
+
 % elp:ignore W0048 - dialyzer over-constrains types from internal call sites
 -dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).
 
 -export_type([driver/0]).
 -export_type([queue_conf/0]).
+-export_type([claim_opts/0]).
+-export_type([prune_opts/0]).
 
 %--- API -----------------------------------------------------------------------
 
@@ -112,19 +123,19 @@ ensure(Conf0) ->
 delete(Name) ->
     #{driver := {Mod, DS}, hooks := Hooks} = conf(Name),
     _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, delete], Name, fun(N) ->
-        ok = gaffer_sup:stop_queue(gaffer_queue_runner:pid(Name)),
-        persistent_term:erase({gaffer_queue, Name}),
         case Mod:queue_delete(Name, DS) of
-            ok -> N;
-            {error, not_found} -> error({unknown_queue, Name});
-            {error, has_jobs} -> error({queue_has_jobs, Name})
+            ok ->
+                ok = gaffer_sup:stop_queue(gaffer_queue_runner:pid(Name)),
+                persistent_term:erase({gaffer_queue, Name}),
+                N;
+            {error, has_jobs} ->
+                error({queue_has_jobs, Name})
         end
     end),
     ok.
 
 -spec list() -> [{gaffer:queue(), gaffer:queue_conf()}].
-list() ->
-    lists:filtermap(fun queue_entry/1, persistent_term:get()).
+list() -> lists:filtermap(fun queue_entry/1, persistent_term:get()).
 
 queue_entry({{gaffer_queue, Name}, #{driver := {Mod, _}}}) when
     is_atom(Name), is_atom(Mod)
@@ -150,20 +161,6 @@ update(Name, Updates) ->
         U
     end),
     ok.
-
--spec queue_conf_template() -> map().
-% erlfmt-ignore
-queue_conf_template() ->
-    #{
-        global_max_workers => #{type => integer, default => 25},
-        max_workers        => #{type => integer, default => 5},
-        shutdown_timeout   => #{type => integer, default => 5000},
-        max_attempts       => #{type => integer, default => 3},
-        timeout            => #{type => integer, default => 30000},
-        backoff            => #{type => json, default => [1000]},
-        priority           => #{type => integer, default => 0},
-        on_discard         => #{type => atom}
-    }.
 
 % Introspection
 
@@ -276,7 +273,7 @@ schedule_job(Queue, Id, At) ->
         {ok, Available#{scheduled_at => timestamp(At)}}
     end).
 
--spec claim_jobs(gaffer:queue(), gaffer_driver:claim_opts()) ->
+-spec claim_jobs(gaffer:queue(), claim_opts()) ->
     [gaffer:job()].
 claim_jobs(Queue, Opts) ->
     Now = erlang:system_time(),
@@ -291,7 +288,7 @@ claim_jobs(Queue, Opts) ->
         fun(_) -> Mod:job_claim(ClaimOpts, Changes, DS) end
     ).
 
--spec prune_jobs(gaffer:queue(), gaffer_driver:prune_opts()) ->
+-spec prune_jobs(gaffer:queue(), prune_opts()) ->
     non_neg_integer().
 prune_jobs(Queue, Opts) ->
     #{driver := {Mod, DS}} = conf(Queue),
@@ -308,9 +305,21 @@ timestamp(Native) when is_integer(Native) -> Native.
 
 % Config validation
 
+% erlfmt-ignore
+queue_conf_defaults() ->
+    #{
+        global_max_workers => 25,
+        max_workers        => 5,
+        shutdown_timeout   => 5000,
+        max_attempts       => 3,
+        timeout            => 30000,
+        backoff            => [1000],
+        priority           => 0
+    }.
+
 validate_conf(Conf) ->
     check_extra_keys(Conf),
-    apply_defaults(Conf, queue_conf_template()).
+    maps:merge(queue_conf_defaults(), Conf).
 
 validate_updates(Updates) when map_size(Updates) =:= 0 ->
     error({invalid_queue_conf, #{extra => []}});
@@ -319,8 +328,8 @@ validate_updates(Updates) ->
     Updates.
 
 check_extra_keys(Map) ->
-    Template = queue_conf_template(),
-    case maps:keys(maps:without(maps:keys(Template), Map)) of
+    Allowed = maps:keys(queue_conf_defaults()) ++ [on_discard],
+    case maps:keys(maps:without(Allowed, Map)) of
         [] -> ok;
         Extra -> error({invalid_queue_conf, #{extra => Extra}})
     end.
@@ -335,19 +344,6 @@ validate_on_discard(#{on_discard := Target}, Mod, DS) ->
     end;
 validate_on_discard(_, _, _) ->
     ok.
-
-apply_defaults(Conf, Template) ->
-    maps:fold(
-        fun(K, Spec, Acc) ->
-            case {maps:is_key(K, Acc), maps:get(default, Spec, undefined)} of
-                {false, undefined} -> Acc;
-                {false, Default} -> Acc#{K => Default};
-                {true, _} -> Acc
-            end
-        end,
-        Conf,
-        Template
-    ).
 
 % Job construction
 

@@ -50,10 +50,10 @@ fail(Name, Id, Reason) -> call(Name, {fail, Id, Reason}).
     {ok, gaffer:job()} | {error, term()}.
 schedule(Name, Id, At) -> call(Name, {schedule, Id, At}).
 
--spec claim(gaffer:queue(), gaffer_driver:claim_opts()) -> [gaffer:job()].
+-spec claim(gaffer:queue(), gaffer_queue:claim_opts()) -> [gaffer:job()].
 claim(Name, Opts) -> call(Name, {claim, Opts}).
 
--spec prune(gaffer:queue(), gaffer_driver:prune_opts()) -> non_neg_integer().
+-spec prune(gaffer:queue(), gaffer_queue:prune_opts()) -> non_neg_integer().
 prune(Name, Opts) -> call(Name, {prune, Opts}).
 
 -spec reconfigure(gaffer:queue()) -> ok.

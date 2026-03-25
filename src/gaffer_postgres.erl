@@ -297,10 +297,7 @@ job_claim(
         effective_limit AS (
             SELECT LEAST(
                 $3,
-                COALESCE(
-                    $6 - (SELECT cnt FROM executing_count),
-                    $3
-                )
+                $6 - (SELECT cnt FROM executing_count)
             ) AS lim
         ),
         candidates AS (

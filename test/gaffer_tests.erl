@@ -77,6 +77,7 @@ gaffer_test_() ->
         % Claim
         fun claim/1,
         fun claim_empty/1,
+        fun claim_global_max/1,
         % Prune
         fun prune/1,
         % Polling
@@ -527,6 +528,14 @@ claim_empty(Driver) ->
         [],
         gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 5})
     ).
+
+claim_global_max(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{global_max_workers => 2})),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    _ = gaffer:insert(?Q, #{task => 2}),
+    _ = gaffer:insert(?Q, #{task => 3}),
+    Claimed = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 10}),
+    ?assertEqual(2, length(Claimed)).
 
 %--- Prune tests --------------------------------------------------------------
 

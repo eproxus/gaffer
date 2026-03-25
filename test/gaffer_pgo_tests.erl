@@ -26,7 +26,7 @@ gaffer_pgo_test_() ->
     gaffer_test_helpers:harness(
         gaffer_driver_pgo,
         [
-            % Calls driver directly to test upsert behavior
+            % Calls driver directly to test idempotent insert
             fun pgo_idempotent_create/1
         ],
         [
