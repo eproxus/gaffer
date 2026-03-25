@@ -10,8 +10,7 @@
 -export([applied_version/0]).
 % Queues
 -export([queue_insert/1]).
--export([queue_upsert/1]).
--export([queue_get/1]).
+-export([queue_exists/1]).
 -export([queue_delete/1]).
 % Introspection
 -export([info/1]).
@@ -51,23 +50,15 @@ migrations(#{}) ->
                 % Queues
                 ~"""
                 CREATE TABLE gaffer_queues (
-                    name               TEXT PRIMARY KEY,
-                    global_max_workers INTEGER,
-                    max_workers        INTEGER,
-                    poll_interval      INTEGER,
-                    shutdown_timeout   INTEGER,
-                    max_attempts       INTEGER,
-                    timeout            INTEGER,
-                    backoff            JSONB,
-                    priority           INTEGER,
-                    on_discard         TEXT REFERENCES gaffer_queues(name)
+                    name TEXT PRIMARY KEY
                 )
                 """,
                 % Jobs
                 ~"""
                 CREATE TABLE gaffer_jobs (
                     id               UUID PRIMARY KEY,
-                    queue            TEXT NOT NULL,
+                    queue            TEXT NOT NULL
+                                         REFERENCES gaffer_queues(name),
                     state            TEXT NOT NULL
                                          CHECK (state IN ('available', 'executing',
                                                           'completed', 'failed', 'cancelled',
@@ -146,41 +137,22 @@ applied_version() ->
 
 % Queues
 
--doc "Query to insert a queue configuration.".
--spec queue_insert(map()) -> queries().
-queue_insert(Conf) ->
-    {Cols, Phs, Vals} = columns_and_values(Conf),
-    SQL = [
-        ~"INSERT INTO gaffer_queues (",
-        lists:join(~", ", Cols),
-        ~") VALUES (",
-        lists:join(~", ", Phs),
-        ~") ON CONFLICT (name) DO NOTHING"
-    ],
-    [{SQL, Vals}].
+-doc "Query to register a queue name. No-op if already registered.".
+-spec queue_insert(gaffer:queue()) -> queries().
+queue_insert(Name) ->
+    [
+        {
+            ~"INSERT INTO gaffer_queues (name) VALUES ($1) ON CONFLICT (name) DO NOTHING",
+            [atom_to_binary(Name)]
+        }
+    ].
 
--doc "Query to insert or update a queue configuration.".
--spec queue_upsert(map()) -> queries().
-queue_upsert(Conf) ->
-    {Cols, Phs, Vals} = columns_and_values(Conf),
-    NonNameCols = [C || C <:- Cols, C =/= ~"name"],
-    Updates = lists:join(~", ", [[C, ~" = EXCLUDED.", C] || C <:- NonNameCols]),
-    SQL = [
-        ~"INSERT INTO gaffer_queues (",
-        lists:join(~", ", Cols),
-        ~") VALUES (",
-        lists:join(~", ", Phs),
-        ~") ON CONFLICT (name) DO UPDATE SET ",
-        Updates
-    ],
-    [{SQL, Vals}].
+-doc "Query to check whether a queue name exists.".
+-spec queue_exists(gaffer:queue()) -> queries().
+queue_exists(Name) ->
+    [{~"SELECT 1 FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
 
--doc "Query to fetch a queue configuration by name.".
--spec queue_get(gaffer:queue()) -> queries().
-queue_get(Name) ->
-    [{~"SELECT * FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
-
--doc "Query to delete a queue configuration by name.".
+-doc "Query to delete a queue by name.".
 -spec queue_delete(gaffer:queue()) -> queries().
 queue_delete(Name) ->
     [{~"DELETE FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
@@ -312,16 +284,13 @@ ts_column_names() ->
 -doc "Query to atomically claim available jobs for execution.".
 -spec job_claim(map(), map()) -> queries().
 job_claim(
-    #{queue := Queue, limit := Limit},
+    #{queue := Queue, limit := Limit, global_max_workers := GlobalMax},
     #{state := State, attempted_at := AttemptedAt}
 ) ->
     Now = AttemptedAt,
     SQL = [
         ~"""
-        WITH queue_config AS (
-            SELECT global_max_workers FROM gaffer_queues WHERE name = $1
-        ),
-        executing_count AS (
+        WITH executing_count AS (
             SELECT count(*) AS cnt FROM gaffer_jobs
             WHERE queue = $1 AND state = 'executing'
         ),
@@ -329,8 +298,7 @@ job_claim(
             SELECT LEAST(
                 $3,
                 COALESCE(
-                    (SELECT global_max_workers FROM queue_config)
-                        - (SELECT cnt FROM executing_count),
+                    $6 - (SELECT cnt FROM executing_count),
                     $3
                 )
             ) AS lim
@@ -355,7 +323,7 @@ job_claim(
         ~" ",
         job_columns(~"j.")
     ],
-    [{SQL, [Queue, Now, Limit, State, Now]}].
+    [{SQL, [Queue, Now, Limit, State, Now, GlobalMax]}].
 
 -doc "Query to update a job's fields.".
 -spec job_update(map()) -> queries().
@@ -374,8 +342,7 @@ job_update(Encoded) ->
 
 -doc "Query to delete jobs in terminal states.".
 -spec job_prune(map()) -> queries().
-job_prune(Opts) ->
-    States = maps:get(states, Opts, [completed, discarded]),
+job_prune(#{states := States}) ->
     TextArray = [atom_to_binary(S) || S <:- States],
     [
         {

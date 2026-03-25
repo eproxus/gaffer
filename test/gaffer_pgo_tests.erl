@@ -79,9 +79,8 @@ pgo_start_with_new_pool(_Driver) ->
 
 pgo_idempotent_create({gaffer_driver_pgo, DS} = Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{max_workers => 3})),
-    % Bypass persistent_term and insert the same config via driver directly
-    Persisted = gaffer:get_queue(?Q),
-    ?assertEqual(ok, gaffer_driver_pgo:queue_insert(Persisted, DS)).
+    % Registering the same queue name again is idempotent
+    ?assertEqual(ok, gaffer_driver_pgo:queue_insert(?Q, DS)).
 
 %--- Multi-node tests ---------------------------------------------------------
 
@@ -125,16 +124,16 @@ pgo_multi_node_ensure_queue(_Driver) ->
     try
         % Node A creates the queue with max_workers=1
         ok = gaffer:create_queue(queue_conf(QName, #{max_workers => 1})),
-        % Node B ensures the queue with updated max_workers=2
+        % Node B ensures with different local config (max_workers=2)
         ok = erpc:call(hd(PeerNodes), fun() ->
             gaffer:ensure_queue(queue_conf(QName, #{max_workers => 2}))
         end),
-        % Node C also ensures
+        % Node C also ensures with max_workers=2
         ok = erpc:call(lists:last(PeerNodes), fun() ->
             gaffer:ensure_queue(queue_conf(QName, #{max_workers => 2}))
         end),
-        % Verify the driver has the updated config
-        #{max_workers := 2} = gaffer:get_queue(QName),
+        % Local config is node-local, not shared
+        #{max_workers := 1} = gaffer:get_queue(QName),
         % All nodes process jobs
         Nodes = insert_and_collect(QName, 12),
         UniqueNodes = lists:usort(Nodes),
@@ -160,8 +159,8 @@ pgo_multi_node_ensure_queue_rolling_upgrade(_Driver) ->
         % "New" nodes start with max_workers=3 (rolling upgrade)
         {Peer1, Node1} = start_peer(gaffer_peer_1, PoolConfig),
         ensure_queue_on(Node1, QName, #{max_workers => 3}),
-        % Driver reflects the latest config
-        ?assertMatch(#{max_workers := 3}, gaffer:get_queue(QName)),
+        % Local config stays at old value on this node
+        ?assertMatch(#{max_workers := 1}, gaffer:get_queue(QName)),
         % Second "new" node also starts with max_workers=3
         {Peer2, Node2} = start_peer(gaffer_peer_2, PoolConfig),
         ensure_queue_on(Node2, QName, #{max_workers => 3}),

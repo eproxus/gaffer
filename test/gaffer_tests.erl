@@ -31,6 +31,7 @@ gaffer_test_() ->
         fun get_queue/1,
         fun update_queue/1,
         fun delete_queue/1,
+        fun delete_queue_has_jobs/1,
         fun list_queues/1,
         fun create_queue_on_discard/1,
         fun update_queue_on_discard_not_found/1,
@@ -110,8 +111,6 @@ gaffer_test_() ->
         fun info_workers/1
     ],
     Sequential = [
-        % Tests that restart gaffer
-        fun create_queue_config_mismatch/1,
         % Hook tests that affect global state
         fun hook_module/1,
         fun hook_global_queue/1
@@ -135,10 +134,10 @@ ensure_queue(Driver) ->
     ?assertMatch(#{name := ensure_queue}, gaffer:get_queue(?Q)).
 
 ensure_queue_update(Driver) ->
-    ok = gaffer:create_queue(?CONF(Driver, #{global_max_workers => 5})),
-    ok = gaffer:ensure_queue(?CONF(Driver, #{global_max_workers => 20})),
+    ok = gaffer:create_queue(?CONF(Driver, #{max_workers => 5})),
+    ok = gaffer:ensure_queue(?CONF(Driver, #{max_workers => 20})),
     Updated = gaffer:get_queue(?Q),
-    ?assertEqual(20, maps:get(global_max_workers, Updated)).
+    ?assertEqual(20, maps:get(max_workers, Updated)).
 
 ensure_queue_idempotent(Driver) ->
     Conf = ?CONF(Driver, #{max_workers => 3}),
@@ -198,6 +197,8 @@ get_queue(Driver) ->
     ?assertMatch(
         #{
             name := get_queue,
+            driver := _,
+            worker := gaffer_test_worker,
             global_max_workers := 25,
             max_workers := 5,
             priority := 0
@@ -216,6 +217,13 @@ delete_queue(Driver) ->
     ?assertEqual(ok, gaffer:delete_queue(?Q)),
     ?assertError({unknown_queue, delete_queue}, gaffer:get_queue(?Q)),
     ?assertError({unknown_queue, delete_queue}, gaffer:delete_queue(?Q)).
+
+delete_queue_has_jobs(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    ?assertError(
+        {queue_has_jobs, delete_queue_has_jobs}, gaffer:delete_queue(?Q)
+    ).
 
 list_queues(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{name => list_queues_1})),
@@ -245,17 +253,6 @@ update_queue_on_discard_not_found(Driver) ->
     ?assertError(
         {on_discard_queue_not_found, nonexistent},
         gaffer:update_queue(?Q, #{on_discard => nonexistent})
-    ).
-
-create_queue_config_mismatch(Driver) ->
-    ok = gaffer:create_queue(?CONF(Driver, #{max_workers => 3})),
-    % Simulate a second node: restart gaffer to clear persistent_term
-    % while keeping driver state intact
-    application:stop(gaffer),
-    {ok, _} = application:ensure_all_started(gaffer),
-    ?assertError(
-        {queue_config_mismatch, create_queue_config_mismatch, _},
-        gaffer:create_queue(?CONF(Driver, #{max_workers => 99}))
     ).
 
 %--- Insert tests -------------------------------------------------------------

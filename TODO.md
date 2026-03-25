@@ -40,6 +40,8 @@
 - [ ] More hooks
     - [ ] Worker created/destroyed
     - [ ] ...
+- [ ] Remove any usage of global_max_workers from the ETS driver? Fold it into
+      an internal max value at the beginning?
 - [ ] Make time output value configurable
     - [ ] Support date tuples is input/output format
 - [ ] Implement `egpsql` driver to verify the driver/Postgres APIs

@@ -11,7 +11,6 @@
 -export([get/1]).
 -export([update/2]).
 -export([list/0]).
--export([queue_conf_template/0]).
 -export([conf/1]).
 % Introspection
 -export([info/1]).
@@ -65,13 +64,13 @@ create(Conf0) ->
     case persistent_term:get({gaffer_queue, Name}, undefined) of
         undefined ->
             Validated = validate_conf(strip_runtime(Conf)),
-            Persisted = Validated#{name => Name},
+            validate_on_discard(Conf, Mod, DS),
             _ = gaffer_hooks:with_hooks(
                 Hooks,
                 [gaffer, queue, create],
                 Conf,
                 fun(C) ->
-                    Mod:queue_insert(Persisted, DS),
+                    Mod:queue_insert(Name, DS),
                     persistent_term:put(
                         {gaffer_queue, Name},
                         maps:merge(Conf, Validated)
@@ -90,7 +89,8 @@ ensure(Conf0) ->
     #{name := Name, driver := {Mod, DS}, hooks := Hooks} =
         Conf = with_defaults(Conf0),
     Validated = validate_conf(strip_runtime(Conf)),
-    Mod:queue_upsert(Validated#{name => Name}, DS),
+    validate_on_discard(Conf, Mod, DS),
+    Mod:queue_insert(Name, DS),
     persistent_term:put(
         {gaffer_queue, Name},
         maps:merge(Conf, Validated)
@@ -114,8 +114,11 @@ delete(Name) ->
     _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, delete], Name, fun(N) ->
         ok = gaffer_sup:stop_queue(gaffer_queue_runner:pid(Name)),
         persistent_term:erase({gaffer_queue, Name}),
-        Mod:queue_delete(Name, DS),
-        N
+        case Mod:queue_delete(Name, DS) of
+            ok -> N;
+            {error, not_found} -> error({unknown_queue, Name});
+            {error, has_jobs} -> error({queue_has_jobs, Name})
+        end
     end),
     ok.
 
@@ -132,23 +135,17 @@ queue_entry(_) ->
 
 -spec get(gaffer:queue()) -> gaffer:queue_conf().
 get(Name) ->
-    #{driver := {Mod, DS}} = conf(Name),
-    case Mod:queue_get(Name, DS) of
-        not_found -> error({unknown_queue, Name});
-        Conf -> Conf
-    end.
+    conf(Name).
 
 -spec update(gaffer:queue(), map()) -> ok.
 update(Name, Updates) ->
     Validated = validate_updates(strip_runtime(Updates)),
     #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Name),
     MergedConf = maps:merge(Conf, Validated),
-    Persisted = validate_conf(strip_runtime(MergedConf)),
+    _ = validate_conf(strip_runtime(MergedConf)),
+    validate_on_discard(MergedConf, Mod, DS),
     _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, update], Updates, fun(U) ->
-        Mod:queue_upsert(Persisted#{name => Name}, DS),
-        persistent_term:put(
-            {gaffer_queue, Name}, MergedConf
-        ),
+        persistent_term:put({gaffer_queue, Name}, MergedConf),
         gaffer_queue_runner:reconfigure(Name),
         U
     end),
@@ -284,19 +281,22 @@ schedule_job(Queue, Id, At) ->
 claim_jobs(Queue, Opts) ->
     Now = erlang:system_time(),
     Changes = #{state => executing, attempted_at => Now},
-    #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
+    #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
+    GlobalMax = maps:get(global_max_workers, Conf),
+    ClaimOpts = Opts#{global_max_workers => GlobalMax},
     gaffer_hooks:with_hooks(
         Hooks,
         [gaffer, job, claim],
-        Opts,
-        fun(_) -> Mod:job_claim(Opts, Changes, DS) end
+        ClaimOpts,
+        fun(_) -> Mod:job_claim(ClaimOpts, Changes, DS) end
     ).
 
 -spec prune_jobs(gaffer:queue(), gaffer_driver:prune_opts()) ->
     non_neg_integer().
 prune_jobs(Queue, Opts) ->
     #{driver := {Mod, DS}} = conf(Queue),
-    Mod:job_prune(Opts, DS).
+    Defaults = #{states => [completed, discarded]},
+    Mod:job_prune(maps:merge(Defaults, Opts), DS).
 
 %--- Internal ------------------------------------------------------------------
 
@@ -327,6 +327,14 @@ check_extra_keys(Map) ->
 
 strip_runtime(Conf) ->
     maps:without([name, driver, worker, poll_interval, hooks], Conf).
+
+validate_on_discard(#{on_discard := Target}, Mod, DS) ->
+    case Mod:queue_exists(Target, DS) of
+        true -> ok;
+        false -> error({on_discard_queue_not_found, Target})
+    end;
+validate_on_discard(_, _, _) ->
+    ok.
 
 apply_defaults(Conf, Template) ->
     maps:fold(

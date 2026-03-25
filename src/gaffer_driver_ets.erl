@@ -8,8 +8,7 @@
 -export([stop/1]).
 % Queues
 -export([queue_insert/2]).
--export([queue_upsert/2]).
--export([queue_get/2]).
+-export([queue_exists/2]).
 -export([queue_delete/2]).
 % Jobs
 -export([job_insert/2]).
@@ -36,7 +35,6 @@
 % Lifecycle
 
 -doc "Starts the driver.".
--spec start(map()) -> driver_state().
 start(#{}) ->
     Queued = ets:new(gaffer_driver_ets_queued, [public, set]),
     Locked = ets:new(gaffer_driver_ets_locked, [public, set]),
@@ -44,7 +42,6 @@ start(#{}) ->
     #{queued => Queued, locked => Locked, queues => Queues}.
 
 -doc "Stops the driver.".
--spec stop(driver_state()) -> ok.
 stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
     ets:delete(Queued),
     ets:delete(Locked),
@@ -54,57 +51,41 @@ stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
 % Queues
 
 -doc false.
--spec queue_insert(gaffer:queue_conf(), driver_state()) ->
+queue_insert(Name, #{queues := Tab}) ->
+    true = ets:insert_new(Tab, {Name, true}) orelse true,
     ok.
-queue_insert(#{name := Name} = Conf, #{queues := Tab}) ->
-    validate_on_discard(Conf, Tab),
-    case ets:lookup(Tab, Name) of
-        [] ->
-            true = ets:insert(Tab, {Name, Conf}),
-            ok;
-        [{_, Conf}] ->
-            ok;
-        [{_, Existing}] ->
-            error(
-                {queue_config_mismatch, Name, #{
-                    expected => Conf, stored => Existing
-                }}
-            )
+
+-doc false.
+queue_exists(Name, #{queues := Tab}) ->
+    ets:member(Tab, Name).
+
+-doc false.
+queue_delete(Name, #{queues := Tab, queued := Queued, locked := Locked}) ->
+    case ets:member(Tab, Name) of
+        false ->
+            {error, not_found};
+        true ->
+            HasJobs = lists:any(
+                fun({_, #{queue := Q}}) -> Q =:= Name end,
+                ets:tab2list(Queued) ++ ets:tab2list(Locked)
+            ),
+            case HasJobs of
+                true ->
+                    {error, has_jobs};
+                false ->
+                    ets:delete(Tab, Name),
+                    ok
+            end
     end.
-
--doc false.
--spec queue_upsert(gaffer:queue_conf(), driver_state()) ->
-    ok.
-queue_upsert(#{name := Name} = Conf, #{queues := Tab}) ->
-    validate_on_discard(Conf, Tab),
-    true = ets:insert(Tab, {Name, Conf}),
-    ok.
-
--doc false.
--spec queue_get(gaffer:queue(), driver_state()) ->
-    gaffer:queue_conf() | not_found.
-queue_get(Name, #{queues := Tab}) ->
-    ets:lookup_element(Tab, Name, 2, not_found).
-
--doc false.
--spec queue_delete(gaffer:queue(), driver_state()) ->
-    ok.
-queue_delete(Name, #{queues := Tab}) ->
-    true = ets:delete(Tab, Name),
-    ok.
 
 % Jobs
 
 -doc false.
--spec job_insert(gaffer:job(), driver_state()) ->
-    gaffer:job().
 job_insert(#{id := Id} = Job, #{queued := Tab}) ->
     true = ets:insert(Tab, {Id, Job}),
     Job.
 
 -doc false.
--spec job_get(gaffer:job_id(), driver_state()) ->
-    gaffer:job() | not_found.
 job_get(Id, #{queued := Queued, locked := Locked}) ->
     case ets:lookup(Locked, Id) of
         [{_, Job}] ->
@@ -114,8 +95,6 @@ job_get(Id, #{queued := Queued, locked := Locked}) ->
     end.
 
 -doc false.
--spec job_list(gaffer:job_filter(), driver_state()) ->
-    [gaffer:job()].
 job_list(Opts, #{queued := Queued, locked := Locked}) ->
     Pattern = {'_', Opts},
     [Job || {_, Job} <:- ets:match_object(Queued, Pattern)] ++
@@ -125,8 +104,6 @@ job_list(Opts, #{queued := Queued, locked := Locked}) ->
         ].
 
 -doc false.
--spec job_delete(gaffer:job_id(), driver_state()) ->
-    ok | not_found.
 job_delete(Id, #{queued := Queued, locked := Locked}) ->
     case {ets:member(Queued, Id), ets:member(Locked, Id)} of
         {false, false} ->
@@ -138,25 +115,19 @@ job_delete(Id, #{queued := Queued, locked := Locked}) ->
     end.
 
 -doc false.
--spec job_claim(
-    gaffer_driver:claim_opts(), gaffer_driver:job_changes(), driver_state()
-) ->
-    [gaffer:job()].
 job_claim(
-    Opts,
+    #{queue := Queue, limit := Limit0, global_max_workers := GlobalMax},
     Changes,
-    #{queued := Queued, locked := Locked, queues := Queues}
+    #{queued := Queued, locked := Locked}
 ) ->
-    Queue = maps:get(queue, Opts, undefined),
-    Limit0 = maps:get(limit, Opts, 1),
-    Limit = apply_global_max(Queue, Limit0, Locked, Queues),
+    Limit = apply_global_max(Queue, Limit0, GlobalMax, Locked),
     Now = erlang:system_time(),
     All = [Job || {_, Job} <:- ets:tab2list(Queued)],
     Available = [
         Job
-     || #{state := St} = Job <:- All,
+     || #{state := St, queue := Q} = Job <:- All,
         St =:= available,
-        matches_queue(Queue, Job),
+        Q =:= Queue,
         not is_scheduled_future(Job, Now)
     ],
     Sorted = lists:sort(fun compare_priority/2, Available),
@@ -164,8 +135,6 @@ job_claim(
     claim_jobs(ToFetch, Changes, Queued, Locked, []).
 
 -doc false.
--spec job_update(gaffer:job(), driver_state()) ->
-    ok.
 job_update(
     #{id := Id, state := JobState} = Job,
     #{queued := Queued, locked := Locked}
@@ -182,10 +151,7 @@ job_update(
     ok.
 
 -doc false.
--spec job_prune(gaffer_driver:prune_opts(), driver_state()) ->
-    non_neg_integer().
-job_prune(Opts, #{queued := Queued, locked := Locked}) ->
-    States = maps:get(states, Opts, [completed, discarded]),
+job_prune(#{states := States}, #{queued := Queued, locked := Locked}) ->
     AllQ = [
         {Id, Job}
      || {Id, #{state := St} = Job} <:- ets:tab2list(Queued),
@@ -204,8 +170,6 @@ job_prune(Opts, #{queued := Queued, locked := Locked}) ->
 % Introspection
 
 -doc false.
--spec info(gaffer:queue(), driver_state()) ->
-    #{jobs := #{gaffer:job_state() => gaffer:state_info()}}.
 info(Queue, #{queued := Queued, locked := Locked}) ->
     Empty = #{
         available => #{count => 0},
@@ -253,33 +217,13 @@ info_timestamp(_, _) -> undefined.
 
 %--- Internal ------------------------------------------------------------------
 
-validate_on_discard(#{on_discard := Target}, Tab) ->
-    case ets:member(Tab, Target) of
-        true -> ok;
-        false -> error({on_discard_queue_not_found, Target})
-    end;
-validate_on_discard(_, _Tab) ->
-    ok.
-
-apply_global_max(undefined, Limit, _Locked, _Queues) ->
-    Limit;
-apply_global_max(Queue, Limit, Locked, Queues) ->
-    case ets:lookup(Queues, Queue) of
-        [{_, #{global_max_workers := Max}}] ->
-            Executing = length([
-                J
-             || {_, #{queue := Q} = J} <:-
-                    ets:tab2list(Locked),
-                Q =:= Queue
-            ]),
-            min(Limit, Max - Executing);
-        _ ->
-            Limit
-    end.
-
-matches_queue(undefined, _Job) -> true;
-matches_queue(Q, #{queue := Q}) -> true;
-matches_queue(_, _) -> false.
+apply_global_max(Queue, Limit, Max, Locked) ->
+    Executing = length([
+        J
+     || {_, #{queue := Q} = J} <:- ets:tab2list(Locked),
+        Q =:= Queue
+    ]),
+    min(Limit, Max - Executing).
 
 is_scheduled_future(#{scheduled_at := At}, Now) -> At > Now;
 is_scheduled_future(_, _Now) -> false.

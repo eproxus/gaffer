@@ -10,8 +10,9 @@
 
 -doc "Options for claiming jobs.".
 -type claim_opts() :: #{
-    queue => gaffer:queue(),
-    limit => pos_integer()
+    queue := gaffer:queue(),
+    limit := pos_integer(),
+    global_max_workers := pos_integer()
 }.
 
 -doc "Fields to update when transitioning a job.".
@@ -22,13 +23,17 @@
 
 -doc "Options for pruning jobs.".
 -type prune_opts() :: #{
-    states => [gaffer:job_state()]
+    states := [gaffer:job_state()]
 }.
+
+-doc "Errors returned by queue operations.".
+-type queue_error() :: not_found | has_jobs.
 
 -export_type([driver_state/0]).
 -export_type([claim_opts/0]).
 -export_type([job_changes/0]).
 -export_type([prune_opts/0]).
+-export_type([queue_error/0]).
 
 %--- Callbacks -----------------------------------------------------------------
 
@@ -40,18 +45,29 @@
 -callback stop(driver_state()) -> any().
 
 % Queues
--doc "Persists a new queue configuration.".
--callback queue_insert(gaffer:queue_conf(), driver_state()) -> ok.
+-doc """
+Registers a queue name in storage.
 
--doc "Inserts or updates a queue configuration.".
--callback queue_upsert(gaffer:queue_conf(), driver_state()) -> ok.
+This operation is idempotent: if the queue name is already registered, the
+call must succeed without error.
+""".
+-callback queue_insert(gaffer:queue(), driver_state()) -> ok.
 
--doc "Fetches a queue configuration by name.".
--callback queue_get(gaffer:queue(), driver_state()) ->
-    gaffer:queue_conf() | not_found.
+-doc """
+Checks whether a queue name is registered in storage.
 
--doc "Deletes a queue configuration by name.".
--callback queue_delete(gaffer:queue(), driver_state()) -> ok.
+Used to validate `on_discard` references when creating or updating queues.
+""".
+-callback queue_exists(gaffer:queue(), driver_state()) -> boolean().
+
+-doc """
+Removes a queue name from storage.
+
+Returns `{error, not_found}` if the queue name is not registered, or
+`{error, has_jobs}` if the queue still has associated jobs in storage.
+""".
+-callback queue_delete(gaffer:queue(), driver_state()) ->
+    ok | {error, queue_error()}.
 
 % Jobs
 -doc "Inserts a job into storage and returns it.".
@@ -67,9 +83,7 @@
 -callback job_delete(gaffer:job_id(), driver_state()) -> ok | not_found.
 
 -doc "Atomically claims available jobs for execution.".
--callback job_claim(
-    claim_opts(), job_changes(), driver_state()
-) ->
+-callback job_claim(claim_opts(), job_changes(), driver_state()) ->
     [gaffer:job()].
 
 -doc "Updates a job in storage.".
