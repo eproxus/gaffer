@@ -10,7 +10,123 @@
 
 A reliable job queue implemented in Erlang.
 
+## Features
+
+- [x] Priority-based execution
+- [x] Per-queue concurrency limits (local and global)
+- [x] Pluggable storage drivers (ETS for dev/test, Postgres for production)
+- [x] Lifecycle hooks (pre/post on queue and job events)
+- [x] Dead-letter queues (`on_discard`)
+- [x] Queue introspection and manual job pruning
+- [x] Delayed job scheduling
+- [ ] Automatic retries with backoff
+- [ ] Drain and flush (graceful shutdown)
+- [ ] Job execution timeouts
+- [ ] Worker shutdown timeouts
+
 ## Usage
+
+### Application
+
+#### Define a worker
+
+Implement the `gaffer_worker` behaviour:
+
+```erlang
+-module(email_sender).
+-behaviour(gaffer_worker).
+-export([perform/1]).
+
+perform(#{payload := #{~"to" := To, ~"body" := Body}}) ->
+    logger:info(~"Sending email to ~s: ~s", [To, Body]),
+    complete.
+```
+
+The `perform/1` callback can return:
+
+- `complete` - mark the job as completed
+- `{complete, Result}` - complete with a result
+- `{fail, Reason}` - fail and retry (up to `max_attempts`)
+- `{cancel, Reason}` - cancel the job permanently
+- `{schedule, Timestamp}` - reschedule the job for later
+
+Crashes are treated as failures and their reason recorded.
+
+#### Create a queue
+
+```erlang
+Driver = gaffer_driver_pgo:start(#{
+    pool => my_pool,
+    start => #{host => ~"localhost", database => ~"my_app", pool_size => 5}
+}),
+gaffer:ensure_queue(#{
+    name => emails,
+    driver => {gaffer_driver_pgo, Driver},
+    worker => email_sender
+}).
+```
+
+#### Insert a job
+
+```erlang
+Job = gaffer:insert(emails, #{~"to" => ~"user@example.com", ~"body" => ~"Welcome!"}).
+```
+
+## Configuration
+
+Queues are configured via `gaffer:queue_conf()` maps:
+
+- `name` (`atom()`, **required**)
+
+  Queue identifier.
+
+- `worker` (`module()`, **required**)
+
+  Worker callback module.
+
+- `driver` (`{module(), state()}`)
+
+  Storage driver.
+
+- `max_workers` (`pos_integer()`, default = `5`)
+
+  Max concurrent workers per node.
+
+- `global_max_workers` (`pos_integer()`, default = `25`)
+
+  Max concurrent workers across all nodes.
+
+- `poll_interval` (`pos_integer() | infinity`, default = `1000`).
+
+  Polling interval in ms.
+
+- `max_attempts` (`pos_integer()`, default = `3`).
+
+  Max execution attempts.
+
+- `timeout` (`pos_integer()`, default = `30000`).
+
+  Execution timeout in ms.
+
+- `backoff` (`[non_neg_integer()]`, default = `[1000]`).
+
+  Retry backoff schedule in ms.
+
+- `priority` (`non_neg_integer()`, default = `0`).
+
+  Default job priority (lower = higher).
+
+- `shutdown_timeout` (`pos_integer()`, default = `5000`).
+
+  Worker shutdown grace period in ms.
+
+- `on_discard` (`atom()`).
+
+  Dead-letter queue name.
+
+- `hooks` (`[hook()]`, default = `[]`).
+
+  Lifecycle hook modules or funs.
 
 ## Changelog
 
@@ -24,7 +140,7 @@ Find this project's code of conduct in [Contributor Covenant Code of Conduct](CO
 
 First of all, thank you for contributing with your time and energy.
 
-If you want to request a new feature make sure to [open an issue](https://github.com/eproxus/gaffer/issues/new?template=bug_report.md)
+If you want to request a new feature make sure to [open an issue](https://github.com/eproxus/gaffer/issues/new?template=feature_request.md)
 so we can discuss it first.
 
 Bug reports and questions are also welcome, but do check you're using the latest version of the

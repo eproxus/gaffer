@@ -27,13 +27,16 @@
 - [X] Add a feature to introspect queues
     - [X] Count actual items in storage. How to make performant?
 - [X] Document public API using `-moduledoc` and `-doc` attributes
+- [ ] Allow `worker` funs
+- [ ] Define priority (should allow negative and make higher higher)
+- [ ] Implement retries and backoff
+- [ ] Handle timeouts in runner
 - [ ] Refactor the strange dispatch lookup in gaffer_queue_runner
 - [ ] Do not expose the internal driver configuration in the exposed queue config
 - [ ] Add a public `migrations/1` function to the PGO driver to use together
       with rollback
 - [ ] Make job ID output format configurable (hex, type_id etc.)
-- [ ] Make job ID UUID format configurable (v4 etc.)
-- [ ] Handle backoff and timeout in runner
+- [ ] Make job ID UUID format configurable (`v4` etc.)
 - [ ] Implement drain and flush
 - [ ] Make queue config defaults an application environment variable
 - [ ] Review and deduplicate tests
