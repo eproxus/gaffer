@@ -138,7 +138,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -doc "Queue configuration.".
 -type queue_conf() :: #{
     name := queue(),
-    driver => {module(), gaffer_driver:driver_state()},
+    driver => gaffer_driver:driver(),
     worker := gaffer_worker:worker(),
     global_max_workers => pos_integer(),
     max_workers => pos_integer(),
@@ -206,11 +206,14 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -doc false.
 start(_StartType, _StartArgs) ->
     gaffer_queue:init(),
+    _ = gaffer_driver_ets:start(#{}),
     gaffer_sup:start_link().
 
 -doc false.
 stop(_State) ->
-    gaffer_queue:teardown().
+    gaffer_queue:teardown(),
+    {_, DS} = gaffer_driver:lookup(ets),
+    gaffer_driver_ets:stop(DS).
 
 %--- API -----------------------------------------------------------------------
 

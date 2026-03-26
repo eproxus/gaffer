@@ -308,8 +308,8 @@ timestamp(Native) when is_integer(Native) -> Native.
 % erlfmt-ignore
 queue_conf_defaults() ->
     #{
-        global_max_workers => 25,
-        max_workers        => 5,
+        global_max_workers => 1,
+        max_workers        => 1,
         shutdown_timeout   => 5000,
         max_attempts       => 3,
         timeout            => 30000,
@@ -483,7 +483,12 @@ maybe_forward(_, _) ->
     ok.
 
 with_defaults(Conf) ->
-    maps:merge(#{hooks => [], poll_interval => 1000}, Conf).
+    resolve_driver(maps:merge(#{hooks => [], poll_interval => 1000}, Conf)).
+
+resolve_driver(#{driver := {_Mod, _DS}} = Conf) ->
+    Conf;
+resolve_driver(#{driver := Name} = Conf) when is_atom(Name) ->
+    Conf#{driver := gaffer_driver:lookup(Name)}.
 
 ensure_runner(Name, Conf) ->
     case gaffer_sup:start_queue(Name, Conf) of

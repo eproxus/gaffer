@@ -39,10 +39,13 @@ start(#{}) ->
     Queued = ets:new(gaffer_driver_ets_queued, [public, set]),
     Locked = ets:new(gaffer_driver_ets_locked, [public, set]),
     Queues = ets:new(gaffer_driver_ets_queues, [public, set]),
-    #{queued => Queued, locked => Locked, queues => Queues}.
+    State = #{queued => Queued, locked => Locked, queues => Queues},
+    gaffer_driver:register(ets, {?MODULE, State}),
+    State.
 
 -doc "Stops the driver.".
 stop(#{queued := Queued, locked := Locked, queues := Queues}) ->
+    gaffer_driver:unregister(ets),
     ets:delete(Queued),
     ets:delete(Locked),
     ets:delete(Queues),

@@ -3,10 +3,16 @@
 
 -hank([unused_callbacks]).
 
+% API
+-export([register/2, unregister/1, lookup/1]).
+
 %--- Types ---------------------------------------------------------------------
 
 -doc "Opaque driver state, defined by each implementation.".
 -type driver_state() :: term().
+
+-doc "A driver reference: either a registered name or a `{module, state}` tuple.".
+-type driver() :: atom() | {module(), driver_state()}.
 
 -doc "Options for claiming jobs.".
 -type claim_opts() :: #{
@@ -29,6 +35,7 @@
 -doc "Errors returned by queue operations.".
 -type queue_error() :: not_found | has_jobs.
 
+-export_type([driver/0]).
 -export_type([driver_state/0]).
 -export_type([claim_opts/0]).
 -export_type([job_changes/0]).
@@ -96,3 +103,25 @@ Returns `{error, not_found}` if the queue name is not registered, or
 -doc "Returns aggregate job counts and timestamps per state for a queue.".
 -callback info(gaffer:queue(), driver_state()) ->
     #{jobs := #{gaffer:job_state() => gaffer:state_info()}}.
+
+%--- API -----------------------------------------------------------------------
+
+-doc "Registers a driver under a name for later lookup.".
+-spec register(atom(), {module(), driver_state()}) -> ok.
+register(Name, {_Mod, _DS} = Driver) ->
+    persistent_term:put({gaffer_driver, Name}, Driver),
+    ok.
+
+-doc "Unregisters a previously registered driver.".
+-spec unregister(atom()) -> ok.
+unregister(Name) ->
+    _ = persistent_term:erase({gaffer_driver, Name}),
+    ok.
+
+-doc "Looks up a registered driver by name.".
+-spec lookup(atom()) -> {module(), driver_state()}.
+lookup(Name) ->
+    case persistent_term:get({gaffer_driver, Name}, undefined) of
+        undefined -> error({unknown_driver, Name});
+        Driver -> Driver
+    end.

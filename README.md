@@ -31,19 +31,16 @@ A reliable job queue implemented in Erlang.
 For simple jobs, pass an anonymous function as a worker:
 
 ```erlang
-1> D = gaffer_driver_ets:start(#{}).
-% Driver state
-#{...}
-2> ok = gaffer:ensure_queue(#{
+1> ok = gaffer:ensure_queue(#{
        name => greetings,
-       driver => {gaffer_driver_ets, D},
+       driver => ets,
        worker => fun(#{payload := #{~"name" := Name}}) ->
            io:format(~"Hello, ~s!~n", [Name]),
-          complete
-      end
-  }).
+           complete
+       end
+   }).
 ok
-3> gaffer:insert(greetings, #{~"name" => ~"world"}).
+2> gaffer:insert(greetings, #{~"name" => ~"world"}).
 #{id => <<...>>, queue => greetings, state => available, ...}
 Hello, world!
 ```
