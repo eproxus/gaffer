@@ -65,6 +65,8 @@ gaffer_test_() ->
         fun cancel_discarded_error/1,
         % Complete
         fun complete/1,
+        fun complete_with_result/1,
+        fun complete_without_result/1,
         fun complete_not_found/1,
         % Fail
         fun fail_retryable/1,
@@ -86,6 +88,7 @@ gaffer_test_() ->
         % Polling
         fun poll_worker_lifecycle/1,
         fun poll_worker_crash_fails_job/1,
+        fun poll_worker_complete_with_result/1,
         fun poll_auto_executes/1,
         fun worker_fun/1,
         fun driver_shorthand/1,
@@ -405,6 +408,28 @@ complete(Driver) ->
         #{state := completed, attempt := 1, completed_at := _}, Completed
     ).
 
+complete_with_result(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    Result = #{~"status" => ~"ok", ~"value" => 42},
+    {ok, Completed} = gaffer_queue_runner:complete(?Q, Id, Result),
+    ?assertMatch(
+        #{state := completed, attempt := 1, result := Result}, Completed
+    ),
+    % Verify persistence round-trip
+    ?assertMatch(#{result := Result}, gaffer:get(?Q, Id)).
+
+complete_without_result(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    #{id := Id} = gaffer:insert(?Q, #{task => 1}),
+    [_] = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 1}),
+    {ok, Completed} = gaffer_queue_runner:complete(?Q, Id),
+    ?assertMatch(#{state := completed, result := undefined}, Completed),
+    % Verify result key absent before completion
+    #{id := Id2} = gaffer:insert(?Q, #{task => 2}),
+    ?assertNot(maps:is_key(result, gaffer:get(?Q, Id2))).
+
 complete_not_found(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     ?assertEqual(
@@ -608,6 +633,25 @@ poll_worker_crash_fails_job(Driver) ->
     ok = gaffer_queue_runner:poll(?Q),
     gaffer_test_helpers:await_hook(),
     ?assertMatch(#{state := failed}, gaffer:get(?Q, Id)).
+
+poll_worker_complete_with_result(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    ExpectedResult = #{~"computed" => ~"value"},
+    #{id := Id} = gaffer:insert(?Q, #{
+        ~"action" => ~"complete_with_result",
+        ~"test_pid" => gaffer_test_worker:encode_pid(self()),
+        ~"result" => ExpectedResult
+    }),
+    ok = gaffer_queue_runner:poll(?Q),
+    receive
+        {job_executed, _} -> ok
+    after 5000 -> error(timeout)
+    end,
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{state := completed, result := ExpectedResult}, gaffer:get(?Q, Id)
+    ).
 
 poll_auto_executes(Driver) ->
     Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),

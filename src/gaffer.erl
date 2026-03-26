@@ -107,6 +107,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     timeout := timeout_ms(),
     backoff := backoff(),
     shutdown_timeout := shutdown_timeout(),
+    result => term(),
     scheduled_at => timestamp(),
     inserted_at := timestamp(),
     attempted_at => timestamp(),

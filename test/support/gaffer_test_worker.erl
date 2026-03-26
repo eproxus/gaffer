@@ -5,6 +5,18 @@
 -export([perform/1]).
 -export([encode_pid/1]).
 
+perform(
+    #{
+        payload := #{
+            ~"action" := ~"complete_with_result",
+            ~"test_pid" := PidBin,
+            ~"result" := Result
+        }
+    } = Job
+) ->
+    Pid = binary_to_term(base64:decode(PidBin)),
+    Pid ! {job_executed, metadata(Job)},
+    {complete, Result};
 perform(#{payload := #{~"action" := ~"complete", ~"test_pid" := PidBin}} = Job) ->
     Pid = binary_to_term(base64:decode(PidBin)),
     Pid ! {job_executed, metadata(Job)},

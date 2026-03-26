@@ -34,15 +34,17 @@
 - [X] `gaffer:list` should be always be per queue
     - [X] `gaffer:list(Queue)`
     - [X] `gaffer:list(Queue, Filters)`
+- [X] Store `{complete, Result}` persistently per job
+- [ ] Refactor the strange dispatch lookup in gaffer_queue_runner
+    - Do we need to go through the runner for these at all? Is this API really
+      needed?
 - [ ] `gaffer_driver_ets` could be reactive by triggering a poll
     - Should it only be reactive, i.e. we don't need poll_interval at all...
-- [ ] Store `{complete, Result}` persistently per job
 - [ ] Starting pools using `gaffer_driver_pgo` crashes
 - [ ] Investigate if we can remove the `idx_gaffer_jobs_state` index?
 - [ ] Define priority (should allow negative and make higher higher)
 - [ ] Implement retries and backoff
 - [ ] Handle timeouts in runner
-- [ ] Refactor the strange dispatch lookup in gaffer_queue_runner
 - [ ] Do not expose the internal driver configuration in the exposed queue config
 - [ ] Add a public `migrations/1` function to the PGO driver to use together
       with rollback

@@ -22,6 +22,7 @@
 -export([delete_job/2]).
 % Jobs (runner)
 -export([complete_job/2]).
+-export([complete_job/3]).
 -export([fail_job/3]).
 -export([schedule_job/3]).
 -export([claim_jobs/2]).
@@ -234,10 +235,15 @@ cancel_job(Queue, JobId) ->
 -spec complete_job(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, not_found}.
 complete_job(Queue, Id) ->
+    complete_job(Queue, Id, undefined).
+
+-spec complete_job(gaffer:queue(), gaffer:job_id(), term()) ->
+    {ok, gaffer:job()} | {error, not_found}.
+complete_job(Queue, Id, Result) ->
     Conf = conf(Queue),
     modify_job(Conf, Id, [gaffer, job, complete], fun(#{attempt := A} = Job) ->
         {ok, C} = transition(Job, completed),
-        {ok, C#{attempt := A + 1}}
+        {ok, C#{attempt := A + 1, result => Result}}
     end).
 
 -spec fail_job(gaffer:queue(), gaffer:job_id(), term()) ->

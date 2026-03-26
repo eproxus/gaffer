@@ -267,6 +267,8 @@ encode_job(Job) ->
             (K, V) when K =:= queue; K =:= state -> atom_to_binary(V);
             (payload, V) -> json:encode(V);
             (backoff, V) -> json:encode(V);
+            (result, undefined) -> json:encode(null);
+            (result, V) -> json:encode(V);
             (errors, V) -> json:encode(encode_errors(V));
             (K, V) when ?IS_TIMESTAMP(K) -> encode_timestamp(V);
             (_K, V) -> V
@@ -324,12 +326,16 @@ decode_job(Row) ->
             (state, V) -> {true, binary_to_existing_atom(V)};
             (payload, V) -> {true, json:decode(V)};
             (backoff, V) -> {true, json:decode(V)};
+            (result, V) -> {true, decode_result(json:decode(V))};
             (errors, V) -> {true, decode_errors(json:decode(V))};
             (K, V) when ?IS_TIMESTAMP(K) -> {true, decode_timestamp(V)};
             (_K, V) -> {true, V}
         end,
         Row
     ).
+
+decode_result(null) -> undefined;
+decode_result(V) -> V.
 
 decode_errors(Errors) ->
     [decode_error_entry(E) || E <:- Errors].

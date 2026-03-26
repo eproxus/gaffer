@@ -70,6 +70,7 @@ migrations(#{}) ->
                     timeout          INTEGER,
                     backoff          JSONB,
                     shutdown_timeout INTEGER,
+                    result           JSONB,
                     errors           JSONB NOT NULL,
                     scheduled_at     TIMESTAMPTZ,
                     inserted_at      TIMESTAMPTZ NOT NULL,
@@ -252,6 +253,7 @@ job_columns(Prefix) ->
         [Prefix, ~"timeout"],
         [Prefix, ~"backoff"],
         [Prefix, ~"shutdown_timeout"],
+        [Prefix, ~"result"],
         [Prefix, ~"errors"]
         | [
             ts_column([Prefix, C], C)

@@ -10,6 +10,8 @@
 -export([poll/1]).
 -ignore_xref(complete/2).
 -export([complete/2]).
+-ignore_xref(complete/3).
+-export([complete/3]).
 -ignore_xref(fail/3).
 -export([fail/3]).
 -ignore_xref(schedule/3).
@@ -41,6 +43,10 @@ poll(Name) -> call(Name, poll).
 -spec complete(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
 complete(Name, Id) -> call(Name, {complete, Id}).
+
+-spec complete(gaffer:queue(), gaffer:job_id(), term()) ->
+    {ok, gaffer:job()} | {error, term()}.
+complete(Name, Id, Result) -> call(Name, {complete, Id, Result}).
 
 -spec fail(gaffer:queue(), gaffer:job_id(), term()) ->
     {ok, gaffer:job()} | {error, term()}.
@@ -154,7 +160,7 @@ handle_worker_result(JobId, _Queue, CrashReason, Name) ->
     dispatch(fail_cmd(JobId, CrashReason), Name).
 
 worker_cmd(JobId, _Queue, complete) -> {complete, JobId};
-worker_cmd(JobId, _Queue, {complete, _}) -> {complete, JobId};
+worker_cmd(JobId, _Queue, {complete, Result}) -> {complete, JobId, Result};
 worker_cmd(JobId, _Queue, {fail, Reason}) -> fail_cmd(JobId, Reason);
 worker_cmd(JobId, Queue, {cancel, _}) -> {cancel, Queue, JobId};
 worker_cmd(JobId, _Queue, {schedule, At}) -> {schedule, JobId, At}.
@@ -164,6 +170,8 @@ fail_cmd(JobId, Reason) ->
 
 dispatch({complete, Id}, Name) ->
     gaffer_queue:complete_job(Name, Id);
+dispatch({complete, Id, Result}, Name) ->
+    gaffer_queue:complete_job(Name, Id, Result);
 dispatch({fail, Id, Reason}, Name) ->
     gaffer_queue:fail_job(Name, Id, Reason);
 dispatch({schedule, Id, At}, Name) ->
