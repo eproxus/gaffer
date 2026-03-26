@@ -119,7 +119,7 @@ poll_timeout(#{poll_interval := infinity}) -> [];
 poll_timeout(#{poll_interval := Interval}) -> [{state_timeout, Interval, poll}].
 
 do_poll(
-    #{max_workers := MaxWorkers, worker := WorkerMod},
+    #{max_workers := MaxWorkers, worker := Worker},
     #{name := Name, workers := Workers} = Data
 ) ->
     Limit = MaxWorkers - map_size(Workers),
@@ -131,20 +131,20 @@ do_poll(
                 queue => Name,
                 limit => Limit
             }),
-            NewWorkers = spawn_workers(WorkerMod, Jobs, Workers),
+            NewWorkers = spawn_workers(Worker, Jobs, Workers),
             Data#{workers := NewWorkers}
     end.
 
-spawn_workers(_WorkerMod, [], Workers) ->
+spawn_workers(_Worker, [], Workers) ->
     Workers;
 spawn_workers(
-    WorkerMod, [#{id := JobId, queue := Queue} = Job | Rest], Workers
+    Worker, [#{id := JobId, queue := Queue} = Job | Rest], Workers
 ) ->
     {Pid, _Ref} = spawn_monitor(fun() ->
-        Result = gaffer_worker:perform(WorkerMod, Job),
+        Result = gaffer_worker:perform(Worker, Job),
         exit({gaffer_result, Result})
     end),
-    spawn_workers(WorkerMod, Rest, Workers#{Pid => {JobId, Queue}}).
+    spawn_workers(Worker, Rest, Workers#{Pid => {JobId, Queue}}).
 
 handle_worker_result(JobId, Queue, {gaffer_result, Result}, Name) ->
     dispatch(worker_cmd(JobId, Queue, Result), Name);

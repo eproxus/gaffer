@@ -26,6 +26,28 @@ A reliable job queue implemented in Erlang.
 
 ## Usage
 
+### Shell
+
+For simple jobs, pass an anonymous function as a worker:
+
+```erlang
+1> D = gaffer_driver_ets:start(#{}).
+% Driver state
+#{...}
+2> ok = gaffer:ensure_queue(#{
+       name => greetings,
+       driver => {gaffer_driver_ets, D},
+       worker => fun(#{payload := #{~"name" := Name}}) ->
+           io:format(~"Hello, ~s!~n", [Name]),
+          complete
+      end
+  }).
+ok
+3> gaffer:insert(greetings, #{~"name" => ~"world"}).
+#{id => <<...>>, queue => greetings, state => available, ...}
+Hello, world!
+```
+
 ### Application
 
 #### Define a worker
@@ -80,9 +102,9 @@ Queues are configured via `gaffer:queue_conf()` maps:
 
   Queue identifier.
 
-- `worker` (`module()`, **required**)
+- `worker` (`module() | fun/1`, **required**)
 
-  Worker callback module.
+  Worker callback module or function.
 
 - `driver` (`{module(), state()}`)
 

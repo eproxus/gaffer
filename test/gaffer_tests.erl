@@ -84,6 +84,7 @@ gaffer_test_() ->
         fun poll_worker_lifecycle/1,
         fun poll_worker_crash_fails_job/1,
         fun poll_auto_executes/1,
+        fun worker_fun/1,
         % --- Hooks ---
         fun hook_cancel/1,
         fun hook_complete/1,
@@ -605,6 +606,26 @@ poll_auto_executes(Driver) ->
     % No manual poll — the timer should trigger it
     gaffer_test_helpers:await_hook(),
     ?assertMatch(#{state := completed}, gaffer:get(?Q, Id)).
+
+worker_fun(Driver) ->
+    TestPid = self(),
+    Worker = fun(#{payload := Payload}) ->
+        TestPid ! {worker_fun_executed, Payload},
+        complete
+    end,
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{worker => Worker, hooks => [Hook]})
+    ),
+    #{id := Id} = gaffer:insert(?Q, #{~"hello" => ~"world"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(#{state := completed}, gaffer:get(?Q, Id)),
+    receive
+        {worker_fun_executed, Payload} ->
+            ?assertEqual(#{~"hello" => ~"world"}, Payload)
+    after 1000 -> error(timeout)
+    end.
 
 %--- Defaults tests -----------------------------------------------------------
 

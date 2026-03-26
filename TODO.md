@@ -28,6 +28,8 @@
     - [X] Count actual items in storage. How to make performant?
 - [X] Document public API using `-moduledoc` and `-doc` attributes
 - [ ] Allow `worker` funs
+- [ ] Make ETS driver start with Gaffer
+    - How to handle the driver arguments? Store centrally somewhere?
 - [ ] Define priority (should allow negative and make higher higher)
 - [ ] Implement retries and backoff
 - [ ] Handle timeouts in runner

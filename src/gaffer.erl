@@ -139,7 +139,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -type queue_conf() :: #{
     name := queue(),
     driver => {module(), gaffer_driver:driver_state()},
-    worker := module(),
+    worker := gaffer_worker:worker(),
     global_max_workers => pos_integer(),
     max_workers => pos_integer(),
     poll_interval => pos_integer() | infinity,
