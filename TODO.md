@@ -35,9 +35,7 @@
     - [X] `gaffer:list(Queue)`
     - [X] `gaffer:list(Queue, Filters)`
 - [X] Store `{complete, Result}` persistently per job
-- [ ] Refactor the strange dispatch lookup in gaffer_queue_runner
-    - Do we need to go through the runner for these at all? Is this API really
-      needed?
+- [X] Refactor the strange dispatch lookup in gaffer_queue_runner
 - [ ] `gaffer_driver_ets` could be reactive by triggering a poll
     - Should it only be reactive, i.e. we don't need poll_interval at all...
 - [ ] Starting pools using `gaffer_driver_pgo` crashes

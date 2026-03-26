@@ -78,8 +78,8 @@ handle_event(
     #{name := Name, workers := Workers} = Data
 ) ->
     case maps:take(Pid, Workers) of
-        {{JobId, Queue}, Workers1} ->
-            _ = handle_worker_result(JobId, Queue, Reason, Name),
+        {JobId, Workers1} ->
+            _ = handle_worker_result(JobId, Reason, Name),
             {keep_state, Data#{workers := Workers1}};
         error ->
             {keep_state, Data}
@@ -104,8 +104,7 @@ do_poll(
             Data;
         Limit ->
             Jobs = gaffer_queue:claim_jobs(Name, #{
-                queue => Name,
-                limit => Limit
+                queue => Name, limit => Limit
             }),
             NewWorkers = spawn_workers(Worker, Jobs, Workers),
             Data#{workers := NewWorkers}
@@ -116,39 +115,25 @@ poll_limit(Max, Active) -> max(0, Max - Active).
 
 spawn_workers(_Worker, [], Workers) ->
     Workers;
-spawn_workers(
-    Worker, [#{id := JobId, queue := Queue} = Job | Rest], Workers
-) ->
+spawn_workers(Worker, [#{id := JobId} = Job | Rest], Workers) ->
     {Pid, _Ref} = spawn_monitor(fun() ->
         Result = gaffer_worker:perform(Worker, Job),
         exit({gaffer_result, Result})
     end),
-    spawn_workers(Worker, Rest, Workers#{Pid => {JobId, Queue}}).
+    spawn_workers(Worker, Rest, Workers#{Pid => JobId}).
 
-handle_worker_result(JobId, Queue, {gaffer_result, Result}, Name) ->
-    dispatch(worker_cmd(JobId, Queue, Result), Name);
-handle_worker_result(JobId, _Queue, CrashReason, Name) ->
-    dispatch(fail_cmd(JobId, CrashReason), Name).
-
-worker_cmd(JobId, _Queue, complete) -> {complete, JobId};
-worker_cmd(JobId, _Queue, {complete, Result}) -> {complete, JobId, Result};
-worker_cmd(JobId, _Queue, {fail, Reason}) -> fail_cmd(JobId, Reason);
-worker_cmd(JobId, Queue, {cancel, _}) -> {cancel, Queue, JobId};
-worker_cmd(JobId, _Queue, {schedule, At}) -> {schedule, JobId, At}.
-
-fail_cmd(JobId, Reason) ->
-    {fail, JobId, Reason}.
-
-dispatch({complete, Id}, Name) ->
-    gaffer_queue:complete_job(Name, Id);
-dispatch({complete, Id, Result}, Name) ->
-    gaffer_queue:complete_job(Name, Id, Result);
-dispatch({fail, Id, Reason}, Name) ->
-    gaffer_queue:fail_job(Name, Id, Reason);
-dispatch({schedule, Id, At}, Name) ->
-    gaffer_queue:schedule_job(Name, Id, At);
-dispatch({cancel, Queue, Id}, _Name) ->
-    gaffer_queue:cancel_job(Queue, Id).
+handle_worker_result(JobId, {gaffer_result, complete}, Name) ->
+    gaffer_queue:complete_job(Name, JobId);
+handle_worker_result(JobId, {gaffer_result, {complete, Result}}, Name) ->
+    gaffer_queue:complete_job(Name, JobId, Result);
+handle_worker_result(JobId, {gaffer_result, {fail, Reason}}, Name) ->
+    gaffer_queue:fail_job(Name, JobId, Reason);
+handle_worker_result(JobId, {gaffer_result, {cancel, _}}, Name) ->
+    gaffer_queue:cancel_job(Name, JobId);
+handle_worker_result(JobId, {gaffer_result, {schedule, At}}, Name) ->
+    gaffer_queue:schedule_job(Name, JobId, At);
+handle_worker_result(JobId, CrashReason, Name) ->
+    gaffer_queue:fail_job(Name, JobId, CrashReason).
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input
