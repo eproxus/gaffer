@@ -122,11 +122,10 @@ do_poll(
     #{max_workers := MaxWorkers, worker := Worker},
     #{name := Name, workers := Workers} = Data
 ) ->
-    Limit = MaxWorkers - map_size(Workers),
-    case Limit > 0 of
-        false ->
+    case poll_limit(MaxWorkers, map_size(Workers)) of
+        0 ->
             Data;
-        true ->
+        Limit ->
             Jobs = gaffer_queue:claim_jobs(Name, #{
                 queue => Name,
                 limit => Limit
@@ -134,6 +133,9 @@ do_poll(
             NewWorkers = spawn_workers(Worker, Jobs, Workers),
             Data#{workers := NewWorkers}
     end.
+
+poll_limit(infinity, _Active) -> infinity;
+poll_limit(Max, Active) -> max(0, Max - Active).
 
 spawn_workers(_Worker, [], Workers) ->
     Workers;

@@ -111,7 +111,7 @@ Queues are configured via `gaffer:queue_conf()` maps:
 
   Max concurrent workers per node.
 
-- `global_max_workers` (`pos_integer()`, default = `25`)
+- `global_max_workers` (`pos_integer() | infinity`, default = `infinity`)
 
   Max concurrent workers across all nodes.
 

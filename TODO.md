@@ -30,7 +30,12 @@
 - [X] Allow `worker` funs
 - [X] Make ETS driver start with Gaffer
     - How to handle the driver arguments? Store centrally somewhere?
-- [ ] Allow `infinity` as value to `global_max_workers` and set that to default
+- [X] Allow `infinity` as value to `global_max_workers` and set that to default
+- [ ] `gaffer:list` should be always be per queue
+    - [ ] `gaffer:list(Queue)`
+    - [ ] `gaffer:list(Queue, Filters)`
+- [ ] `gaffer_driver_ets` could be reactive by triggering a poll
+    - Should it only be reactive, i.e. we don't need poll_interval at all...
 - [ ] Store `{complete, Result}` persistently per job
 - [ ] Starting pools using `gaffer_driver_pgo` crashes
 - [ ] Investigate if we can remove the `idx_gaffer_jobs_state` index?

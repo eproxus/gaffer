@@ -280,7 +280,8 @@ claim_jobs(Queue, Opts) ->
     Changes = #{state => executing, attempted_at => Now},
     #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
     GlobalMax = maps:get(global_max_workers, Conf),
-    ClaimOpts = Opts#{global_max_workers => GlobalMax},
+    Limit = clamp_limit(maps:get(limit, Opts), GlobalMax),
+    ClaimOpts = Opts#{limit := Limit, global_max_workers => GlobalMax},
     gaffer_hooks:with_hooks(
         Hooks,
         [gaffer, job, claim],
@@ -297,6 +298,10 @@ prune_jobs(Queue, Opts) ->
 
 %--- Internal ------------------------------------------------------------------
 
+clamp_limit(infinity, infinity) -> infinity;
+clamp_limit(infinity, GlobalMax) -> GlobalMax;
+clamp_limit(Limit, _) -> Limit.
+
 is_gaffer_key({gaffer_queue, _}) -> true;
 is_gaffer_key(_) -> false.
 
@@ -308,7 +313,7 @@ timestamp(Native) when is_integer(Native) -> Native.
 % erlfmt-ignore
 queue_conf_defaults() ->
     #{
-        global_max_workers => 1,
+        global_max_workers => infinity,
         max_workers        => 1,
         shutdown_timeout   => 5000,
         max_attempts       => 3,

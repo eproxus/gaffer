@@ -17,8 +17,8 @@
 -doc "Options for claiming jobs.".
 -type claim_opts() :: #{
     queue := gaffer:queue(),
-    limit := pos_integer(),
-    global_max_workers := pos_integer()
+    limit := pos_integer() | infinity,
+    global_max_workers := gaffer:max_workers()
 }.
 
 -doc "Fields to update when transitioning a job.".

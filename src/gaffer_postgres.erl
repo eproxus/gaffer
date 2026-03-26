@@ -288,31 +288,25 @@ job_claim(
     #{state := State, attempted_at := AttemptedAt}
 ) ->
     Now = AttemptedAt,
+    {LimitClause, LimitParams} = job_claim_effective_limit(Limit, GlobalMax),
     SQL = [
         ~"""
-        WITH executing_count AS (
-            SELECT count(*) AS cnt FROM gaffer_jobs
-            WHERE queue = $1 AND state = 'executing'
-        ),
-        effective_limit AS (
-            SELECT LEAST(
-                $3,
-                $6 - (SELECT cnt FROM executing_count)
-            ) AS lim
-        ),
-        candidates AS (
+        WITH candidates AS (
             SELECT id FROM gaffer_jobs
             WHERE queue = $1
               AND state = 'available'
               AND (scheduled_at IS NULL
                    OR scheduled_at <= to_timestamp($2::bigint / 1000000.0))
             ORDER BY priority ASC, inserted_at ASC
-            LIMIT GREATEST(0, (SELECT lim FROM effective_limit))
+        """,
+        LimitClause,
+        ~"""
+
             FOR UPDATE SKIP LOCKED
         )
         UPDATE gaffer_jobs j
-        SET state = $4,
-            attempted_at = to_timestamp($5::bigint / 1000000.0)
+        SET state = $3,
+            attempted_at = to_timestamp($4::bigint / 1000000.0)
         FROM candidates c
         WHERE j.id = c.id
         RETURNING
@@ -320,7 +314,7 @@ job_claim(
         ~" ",
         job_columns(~"j.")
     ],
-    [{SQL, [Queue, Now, Limit, State, Now, GlobalMax]}].
+    [{SQL, [Queue, Now, State, Now | LimitParams]}].
 
 -doc "Query to update a job's fields.".
 -spec job_update(map()) -> queries().
@@ -349,6 +343,23 @@ job_prune(#{states := States}) ->
     ].
 
 %--- Internal ------------------------------------------------------------------
+
+job_claim_effective_limit(infinity, infinity) ->
+    {~"", []};
+job_claim_effective_limit(Limit, infinity) ->
+    {~"\n        LIMIT $5::bigint", [Limit]};
+job_claim_effective_limit(Limit, GlobalMax) ->
+    {
+        ~"""
+
+                LIMIT GREATEST(0, (
+                    SELECT LEAST($5::bigint, $6::bigint - count(*))
+                    FROM gaffer_jobs
+                    WHERE queue = $1 AND state = 'executing'
+                ))
+        """,
+        [Limit, GlobalMax]
+    }.
 
 set_clause(Map) ->
     {Cols, Phs, Vals} = columns_and_values(Map),

@@ -79,6 +79,8 @@ gaffer_test_() ->
         fun claim/1,
         fun claim_empty/1,
         fun claim_global_max/1,
+        fun claim_global_max_infinity/1,
+        fun claim_max_workers_infinity/1,
         % Prune
         fun prune/1,
         % Polling
@@ -203,7 +205,7 @@ get_queue(Driver) ->
             name := get_queue,
             driver := _,
             worker := gaffer_test_worker,
-            global_max_workers := 1,
+            global_max_workers := infinity,
             max_workers := 1,
             priority := 0
         },
@@ -540,6 +542,18 @@ claim_global_max(Driver) ->
     Claimed = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 10}),
     ?assertEqual(2, length(Claimed)).
 
+claim_global_max_infinity(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    [gaffer:insert(?Q, #{task => N}) || N <:- lists:seq(1, 5)],
+    Claimed = gaffer_queue_runner:claim(?Q, #{queue => ?Q, limit => 10}),
+    ?assertEqual(5, length(Claimed)).
+
+claim_max_workers_infinity(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{max_workers => infinity})),
+    [gaffer:insert(?Q, #{task => N}) || N <:- lists:seq(1, 5)],
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertEqual(5, length(gaffer:list(#{queue => ?Q, state => executing}))).
+
 %--- Prune tests --------------------------------------------------------------
 
 prune(Driver) ->
@@ -803,7 +817,7 @@ info_empty_queue(Driver) ->
     ?assertNot(maps:is_key(oldest, maps:get(available, Jobs))),
     ?assertNot(maps:is_key(newest, maps:get(available, Jobs))),
     ?assertMatch(
-        #{active := 0, max := #{local := 1, global := 1}},
+        #{active := 0, max := #{local := 1, global := infinity}},
         Workers
     ).
 

@@ -135,13 +135,17 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 }.
 
 -doc #{group => "Queue Types"}.
+-doc "Maximum number of concurrent workers.".
+-type max_workers() :: pos_integer() | infinity.
+
+-doc #{group => "Queue Types"}.
 -doc "Queue configuration.".
 -type queue_conf() :: #{
     name := queue(),
     driver => gaffer_driver:driver(),
     worker := gaffer_worker:worker(),
-    global_max_workers => pos_integer(),
-    max_workers => pos_integer(),
+    global_max_workers => max_workers(),
+    max_workers => max_workers(),
     poll_interval => pos_integer() | infinity,
     shutdown_timeout => shutdown_timeout(),
     max_attempts => max_attempts(),
@@ -173,7 +177,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     },
     workers := #{
         active := non_neg_integer(),
-        max := #{local := pos_integer(), global := pos_integer()}
+        max := #{local := max_workers(), global := max_workers()}
     }
 }.
 
@@ -196,6 +200,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -export_type([job/0]).
 -export_type([job_opts/0]).
 -export_type([job_error/0]).
+-export_type([max_workers/0]).
 -export_type([queue_conf/0]).
 -export_type([job_filter/0]).
 -export_type([state_info/0]).

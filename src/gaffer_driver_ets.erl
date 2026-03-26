@@ -134,7 +134,7 @@ job_claim(
         not is_scheduled_future(Job, Now)
     ],
     Sorted = lists:sort(fun compare_priority/2, Available),
-    ToFetch = lists:sublist(Sorted, max(0, Limit)),
+    ToFetch = take(Sorted, Limit),
     claim_jobs(ToFetch, Changes, Queued, Locked, []).
 
 -doc false.
@@ -220,6 +220,8 @@ info_timestamp(_, _) -> undefined.
 
 %--- Internal ------------------------------------------------------------------
 
+apply_global_max(_Queue, Limit, infinity, _Locked) ->
+    Limit;
 apply_global_max(Queue, Limit, Max, Locked) ->
     Executing = length([
         J
@@ -227,6 +229,9 @@ apply_global_max(Queue, Limit, Max, Locked) ->
         Q =:= Queue
     ]),
     min(Limit, Max - Executing).
+
+take(List, infinity) -> List;
+take(List, N) -> lists:sublist(List, max(0, N)).
 
 is_scheduled_future(#{scheduled_at := At}, Now) -> At > Now;
 is_scheduled_future(_, _Now) -> false.
