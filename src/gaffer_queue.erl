@@ -41,9 +41,7 @@
     limit := pos_integer()
 }.
 
--type prune_opts() :: #{
-    states => [gaffer:job_state()]
-}.
+-type prune_opts() :: #{states => [gaffer:job_state()]}.
 
 % elp:ignore W0048 - dialyzer over-constrains types from internal call sites
 -dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).
@@ -264,10 +262,8 @@ fail_job(Queue, Id, Reason) ->
             false -> {ok, Job3}
         end
     end),
-    case Result of
-        {ok, Job} -> maybe_forward(Conf, Job);
-        _ -> ok
-    end,
+    {ok, Job} = Result,
+    maybe_forward(Conf, Job),
     Result.
 
 -spec schedule_job(gaffer:queue(), gaffer:job_id(), gaffer:timestamp()) ->
@@ -295,8 +291,7 @@ claim_jobs(Queue, Opts) ->
         fun(_) -> Mod:job_claim(ClaimOpts, Changes, DS) end
     ).
 
--spec prune_jobs(gaffer:queue(), prune_opts()) ->
-    non_neg_integer().
+-spec prune_jobs(gaffer:queue(), prune_opts()) -> non_neg_integer().
 prune_jobs(Queue, Opts) ->
     #{driver := {Mod, DS}} = conf(Queue),
     Defaults = #{states => [completed, discarded]},

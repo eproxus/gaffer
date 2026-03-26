@@ -5,36 +5,48 @@
 -export([perform/1]).
 -export([encode_pid/1]).
 
-perform(
-    #{
-        payload := #{
-            ~"action" := ~"complete_with_result",
-            ~"test_pid" := PidBin,
-            ~"result" := Result
-        }
-    } = Job
-) ->
-    Pid = binary_to_term(base64:decode(PidBin)),
-    Pid ! {job_executed, metadata(Job)},
+% API
+
+perform(#{payload := #{~"action" := Action, ~"test_pid" := PidBin}} = Job) ->
+    perform(Action, Job, decode_pid(PidBin));
+perform(#{payload := #{~"action" := Action}} = Job) ->
+    perform(Action, Job, undefined);
+perform(#{id := Id}) ->
+    error({no_matching_action, Id}).
+
+-spec encode_pid(pid()) -> binary().
+encode_pid(Pid) -> base64:encode(term_to_binary(Pid)).
+
+% Internal
+
+perform(~"complete_result", #{payload := #{~"result" := Result}} = Job, Pid) ->
+    notify(Pid, job_executed, Job),
     {complete, Result};
-perform(#{payload := #{~"action" := ~"complete", ~"test_pid" := PidBin}} = Job) ->
-    Pid = binary_to_term(base64:decode(PidBin)),
-    Pid ! {job_executed, metadata(Job)},
+perform(~"complete", Job, Pid) ->
+    notify(Pid, job_executed, Job),
     complete;
-perform(#{payload := #{~"action" := ~"crash"}} = Job) ->
+perform(~"crash", Job, _Pid) ->
     error({test_crash, metadata(Job)});
-perform(#{payload := #{~"action" := ~"block", ~"test_pid" := PidBin}} = Job) ->
-    Pid = binary_to_term(base64:decode(PidBin)),
-    Pid ! {job_started, metadata(Job)},
+perform(~"fail", _Job, _Pid) ->
+    {fail, [#{reason => {badrpc, nodedown}}]};
+perform(~"schedule", #{payload := #{~"offset_seconds" := Seconds}} = Job, Pid) ->
+    At =
+        erlang:system_time() +
+            erlang:convert_time_unit(Seconds, second, native),
+    notify(Pid, job_executed, Job),
+    {schedule, At};
+perform(~"block", Job, Pid) ->
+    notify(Pid, job_started, Job),
     receive
         continue ->
-            Pid ! {job_executed, metadata(Job)},
+            notify(Pid, job_executed, Job),
             complete
     after 30000 ->
         error({test_timeout, metadata(Job)})
     end.
 
--spec encode_pid(pid()) -> binary().
-encode_pid(Pid) -> base64:encode(term_to_binary(Pid)).
+decode_pid(Bin) -> binary_to_term(base64:decode(Bin)).
+
+notify(Pid, Event, Job) -> Pid ! {Event, metadata(Job)}.
 
 metadata(#{id := Id}) -> #{id => Id, worker => self(), node => node()}.

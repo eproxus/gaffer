@@ -8,16 +8,6 @@
 -export([start_link/2]).
 -ignore_xref(poll/1).
 -export([poll/1]).
--ignore_xref(complete/2).
--export([complete/2]).
--ignore_xref(complete/3).
--export([complete/3]).
--ignore_xref(fail/3).
--export([fail/3]).
--ignore_xref(schedule/3).
--export([schedule/3]).
--ignore_xref(claim/2).
--export([claim/2]).
 -ignore_xref(prune/2).
 -export([prune/2]).
 -ignore_xref(reconfigure/1).
@@ -39,25 +29,6 @@ start_link(Name, _Conf) ->
 
 -spec poll(gaffer:queue()) -> ok.
 poll(Name) -> call(Name, poll).
-
--spec complete(gaffer:queue(), gaffer:job_id()) ->
-    {ok, gaffer:job()} | {error, term()}.
-complete(Name, Id) -> call(Name, {complete, Id}).
-
--spec complete(gaffer:queue(), gaffer:job_id(), term()) ->
-    {ok, gaffer:job()} | {error, term()}.
-complete(Name, Id, Result) -> call(Name, {complete, Id, Result}).
-
--spec fail(gaffer:queue(), gaffer:job_id(), term()) ->
-    {ok, gaffer:job()} | {error, term()}.
-fail(Name, Id, Reason) -> call(Name, {fail, Id, Reason}).
-
--spec schedule(gaffer:queue(), gaffer:job_id(), gaffer:timestamp()) ->
-    {ok, gaffer:job()} | {error, term()}.
-schedule(Name, Id, At) -> call(Name, {schedule, Id, At}).
-
--spec claim(gaffer:queue(), gaffer_queue:claim_opts()) -> [gaffer:job()].
-claim(Name, Opts) -> call(Name, {claim, Opts}).
 
 -spec prune(gaffer:queue(), gaffer_queue:prune_opts()) -> non_neg_integer().
 prune(Name, Opts) -> call(Name, {prune, Opts}).
@@ -98,8 +69,8 @@ handle_event({call, From}, reconfigure, _State, #{name := Name}) ->
     ]};
 handle_event({call, From}, info, _State, #{workers := Workers}) ->
     {keep_state_and_data, [{reply, From, map_size(Workers)}]};
-handle_event({call, From}, Cmd, _State, #{name := Name} = Data) ->
-    {keep_state, Data, [{reply, From, dispatch(Cmd, Name)}]};
+handle_event({call, From}, {prune, Opts}, _State, #{name := Name}) ->
+    {keep_state_and_data, [{reply, From, gaffer_queue:prune_jobs(Name, Opts)}]};
 handle_event(
     info,
     {'DOWN', _Ref, process, Pid, Reason},
@@ -177,11 +148,7 @@ dispatch({fail, Id, Reason}, Name) ->
 dispatch({schedule, Id, At}, Name) ->
     gaffer_queue:schedule_job(Name, Id, At);
 dispatch({cancel, Queue, Id}, _Name) ->
-    gaffer_queue:cancel_job(Queue, Id);
-dispatch({claim, #{queue := Queue} = Opts}, _Name) ->
-    gaffer_queue:claim_jobs(Queue, Opts);
-dispatch({prune, Opts}, Name) ->
-    gaffer_queue:prune_jobs(Name, Opts).
+    gaffer_queue:cancel_job(Queue, Id).
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input

@@ -7,14 +7,16 @@
 %--- API ----------------------------------------------------------------------
 
 harness(DriverMod, Parallel, Sequential) ->
-    {setup, fun() -> setup(DriverMod) end, fun teardown/1, fun(
-        #{driver := Driver}
-    ) ->
-        {inorder, [
-            {inparallel, [{with, Driver, [T]} || T <:- Parallel]},
+    Setup = fun() -> setup(DriverMod) end,
+    Teardown = fun teardown/1,
+    [
+        {setup, Setup, Teardown, fun(#{driver := Driver}) ->
+            {inparallel, [{with, Driver, [T]} || T <:- Parallel]}
+        end},
+        {setup, Setup, Teardown, fun(#{driver := Driver}) ->
             [{with, Driver, [T]} || T <:- Sequential]
-        ]}
-    end}.
+        end}
+    ].
 
 notify_hook(Pid, Events) ->
     fun
