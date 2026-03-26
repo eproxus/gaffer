@@ -47,6 +47,8 @@
 -export([get/2]).
 -ignore_xref(list/1).
 -export([list/1]).
+-ignore_xref(list/2).
+-export([list/2]).
 -ignore_xref(delete/2).
 -export([delete/2]).
 
@@ -184,7 +186,6 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -doc #{group => "Job Types"}.
 -doc "Filter options for listing jobs.".
 -type job_filter() :: #{
-    queue => queue(),
     state => job_state()
 }.
 
@@ -338,10 +339,15 @@ get(Queue, JobId) ->
     end.
 
 -doc #{group => "Job Management"}.
--doc "Lists jobs matching the given filter options.".
--spec list(job_filter()) -> [job()].
-list(Opts) ->
-    gaffer_queue:list_jobs(Opts).
+-doc "Lists all jobs in the given queue.".
+-spec list(queue()) -> [job()].
+list(Queue) -> list(Queue, #{}).
+
+-doc #{group => "Job Management"}.
+-doc "Lists jobs in the given queue matching the filter options.".
+-spec list(queue(), job_filter()) -> [job()].
+list(Queue, Filters) ->
+    gaffer_queue:list_jobs(Filters#{queue => Queue}).
 
 -doc #{group => "Job Management"}.
 -doc "Deletes a job.".

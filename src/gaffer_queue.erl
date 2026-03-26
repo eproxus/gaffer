@@ -199,7 +199,7 @@ get_job(Queue, JobId) ->
     #{driver := {Mod, DS}} = conf(Queue),
     Mod:job_get(JobId, DS).
 
--spec list_jobs(gaffer:job_filter()) ->
+-spec list_jobs(#{queue := gaffer:queue(), _ => _}) ->
     [gaffer:job()].
 list_jobs(#{queue := Queue} = Opts) ->
     #{driver := {Mod, DS}} = conf(Queue),
