@@ -85,23 +85,16 @@
 - [ ] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
 - [ ] Implement 'priority' support
 - [ ] Add support for LISTEN/NOTIFY
+- [ ] Performance tests
+    - [ ] Test queries with EXPLAIN ANALYZE and large datasets
+    - [ ] Performance test Erlang code with erlperf
 - [ ] Add a global job pruner process that deletes stale/orphaned jobs
     - Completed jobs that are older than X
     - Jobs that failed and haven't been transferred to a DLQ
     - Jobs belonging to queues that are no longer used (how to detect?)
         - If many nodes upgrade to new config that abandons a queue, how do we
           detect this? There is no cluster query
-- [ ] Improve tests
-    - [ ] Verify life cycle / runner more carefully
-        - Figure out a way to timestep the world? Are we already doing this?
-            - Manually call poll somehow?
-            - This could replace all calls to gaffer_queue_runner:claim in the tests
-    - [ ] Explore scenarios with shared queue config
-        - Nodes booting up with existing queues, differing configs etc.
-        - What about a rolling app deployment that updates a queue config?
-        - What about config updates to persistent storage? Should other runners
-          pick them up?
-    - [ ] Add property based tests
+- [ ] Add property based tests
 - [ ] Document driver quirks
     - Postgres
         - JSON fields return binary keys
