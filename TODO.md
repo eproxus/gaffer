@@ -27,9 +27,13 @@
 - [X] Add a feature to introspect queues
     - [X] Count actual items in storage. How to make performant?
 - [X] Document public API using `-moduledoc` and `-doc` attributes
-- [ ] Allow `worker` funs
-- [ ] Make ETS driver start with Gaffer
+- [X] Allow `worker` funs
+- [X] Make ETS driver start with Gaffer
     - How to handle the driver arguments? Store centrally somewhere?
+- [ ] Allow `infinity` as value to `global_max_workers` and set that to default
+- [ ] Store `{complete, Result}` persistently per job
+- [ ] Starting pools using `gaffer_driver_pgo` crashes
+- [ ] Investigate if we can remove the `idx_gaffer_jobs_state` index?
 - [ ] Define priority (should allow negative and make higher higher)
 - [ ] Implement retries and backoff
 - [ ] Handle timeouts in runner
@@ -40,7 +44,22 @@
 - [ ] Make job ID output format configurable (hex, type_id etc.)
 - [ ] Make job ID UUID format configurable (`v4` etc.)
 - [ ] Implement drain and flush
+- [ ] Review gaffer_queue_runner job functions that are only used in tests
+    - Should they be exported like this? Are they needed?
 - [ ] Make queue config defaults an application environment variable
+- [ ] Handle raw (e.g. non-UTF) binaries in JSON normalization:
+      ```erlang
+      jsonify(B) when is_binary(B) ->
+          try
+              json:encode(B),
+              B
+          catch
+              error:{invalid_byte, _} ->
+                  print_term_to_binary(B);
+              error:unexpected_end ->
+                  print_term_to_binary(B)
+          end;
+      ```
 - [ ] Review and deduplicate tests
     - Use queue info to verify test state?
 - [ ] More hooks
