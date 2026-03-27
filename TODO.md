@@ -83,6 +83,8 @@
     - What about discarded state? What is it used for? (cleanup)
     - [ ] Handle deleting a queue that is referenced in on_discard
 - [ ] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
+    - Implement `job_upsert/1` that takes multiple jobs and atomically inserts/updates
+      them
 - [ ] Implement 'priority' support
 - [ ] Add support for LISTEN/NOTIFY
 - [ ] Performance tests
