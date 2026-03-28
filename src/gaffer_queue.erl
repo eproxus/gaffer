@@ -260,7 +260,13 @@ fail_job(Queue, Id, Reason) ->
             true ->
                 transition(Job2, discarded);
             false ->
-                transition(Job2, available)
+                {ok, Available} = transition(Job2, available),
+                Backoff = backoff(Attempt, maps:get(backoff, Job)),
+                {ok, Available#{
+                    scheduled_at => timestamp(
+                        {millisecond, erlang:system_time(millisecond) + Backoff}
+                    )
+                }}
         end
     end),
     {ok, Job} = Result,
@@ -309,6 +315,11 @@ is_gaffer_key(_) -> false.
 
 timestamp({Unit, V}) -> erlang:convert_time_unit(V, Unit, native);
 timestamp(Native) when is_integer(Native) -> Native.
+
+backoff(_Attempt, [Backoff]) ->
+    Backoff;
+backoff(Attempt, Backoff) when is_list(Backoff) ->
+    lists:nth(Attempt, Backoff).
 
 % Config validation
 

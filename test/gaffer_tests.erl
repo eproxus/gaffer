@@ -69,6 +69,9 @@ gaffer_test_() ->
         fun fail_retryable/1,
         fun fail_discarded/1,
         fun fail_error_normalization/1,
+        % Retries
+        fun retries_multiple_times/1,
+        fun retries_backoff/1,
         % Schedule
         fun schedule/1,
         % Claim
@@ -459,6 +462,7 @@ fail_error_normalization(Driver) ->
     % which exercises all normalize_error_term clauses (list, map, atom, tuple)
     ?assertMatch(
         #{
+            state := available,
             errors := [
                 #{
                     attempt := 1,
@@ -469,6 +473,108 @@ fail_error_normalization(Driver) ->
         } when is_integer(At),
         atomize_keys(gaffer:get(?Q, Id))
     ).
+
+%--- Retries tests ------------------------------------------------------------
+
+retries_multiple_times(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    MaxAttempts = 4,
+    #{id := Id} = gaffer:insert(?Q, #{~"action" => ~"crash"}, #{
+        max_attempts => MaxAttempts, backoff => [0]
+    }),
+    [
+        (begin
+            ok = gaffer_queue_runner:poll(?Q),
+            gaffer_test_helpers:await_hook(),
+            Q = gaffer:get(?Q, Id),
+            ?assertMatch(
+                #{
+                    state := State,
+                    attempt := N,
+                    errors := _
+                } when
+                    State == available andalso N < MaxAttempts orelse
+                        State == discarded andalso N == MaxAttempts,
+                Q
+            ),
+            [
+                ?assertMatch(
+                    #{
+                        error := _,
+                        at := _,
+                        attempt := A
+                    },
+                    E
+                )
+             || E <- maps:get(errors, Q) && A <- lists:seq(N, 1, -1)
+            ]
+        end)
+     || N <- lists:seq(1, MaxAttempts)
+    ].
+
+retries_backoff(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    MaxAttempts = 3,
+    Backoff = [300, 350, 400],
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            poll_interval => 100,
+            max_attempts => MaxAttempts,
+            backoff => Backoff,
+            hooks => [Hook]
+        })
+    ),
+    #{id := Id} = gaffer:insert(
+        ?Q, #{
+            ~"action" => ~"crash",
+            ~"test_pid" => gaffer_test_worker:encode_pid(self())
+        }
+    ),
+    % first attempt (not retry)
+    gaffer_test_helpers:await_hook(),
+    % retries
+    [
+        (begin
+            gaffer_test_helpers:await_hook(),
+            Q = gaffer:get(?Q, Id),
+            ?assertMatch(
+                #{
+                    state := State,
+                    attempt := N,
+                    errors := [#{at := _} | _]
+                } when
+                    State == available andalso N < MaxAttempts orelse
+                        State == discarded andalso N == MaxAttempts,
+                Q
+            ),
+            [
+                ?assertMatch(
+                    #{
+                        error := _,
+                        at := _,
+                        attempt := A
+                    },
+                    E
+                )
+             || E <- maps:get(errors, Q) && A <- lists:seq(N, 1, -1)
+            ],
+            InsertedAt = timestamp(maps:get(inserted_at, Q)),
+            AttemptedAt = timestamp(maps:get(attempted_at, Q)),
+            CurrentBackoff = erlang:convert_time_unit(
+                lists:sum(lists:sublist(Backoff, N - 1)), millisecond, native
+            ),
+            ?assert(
+                erlang:convert_time_unit(
+                    AttemptedAt - (InsertedAt + CurrentBackoff),
+                    native,
+                    millisecond
+                ) > 0,
+                "Retries should not be attempted earlier than backoff time"
+            )
+        end)
+     || N <- lists:seq(2, MaxAttempts)
+    ].
 
 %--- Schedule tests -----------------------------------------------------------
 
@@ -1197,6 +1303,9 @@ flush(Acc) ->
 
 flush_events() ->
     [{Tag, Phase, Event} || {Tag, Phase, Event, _} <:- flush()].
+
+timestamp({Unit, V}) -> erlang:convert_time_unit(V, Unit, native);
+timestamp(Native) when is_integer(Native) -> Native.
 
 % gaffer_hooks behaviour callback
 gaffer_hook(Phase, Event, Data) ->
