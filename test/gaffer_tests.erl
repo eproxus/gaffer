@@ -69,6 +69,9 @@ gaffer_test_() ->
         fun fail_retryable/1,
         fun fail_discarded/1,
         fun fail_error_normalization/1,
+        % Retries
+        fun retries_backoff/1,
+        fun retries_only_one_value/1,
         % Schedule
         fun schedule/1,
         % Claim
@@ -459,6 +462,7 @@ fail_error_normalization(Driver) ->
     % which exercises all normalize_error_term clauses (list, map, atom, tuple)
     ?assertMatch(
         #{
+            state := available,
             errors := [
                 #{
                     attempt := 1,
@@ -468,6 +472,125 @@ fail_error_normalization(Driver) ->
             ]
         } when is_integer(At),
         atomize_keys(gaffer:get(?Q, Id))
+    ).
+
+%--- Retries tests ------------------------------------------------------------
+
+retries_backoff(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    MaxAttempts = 5,
+    Backoff = [10, 20, 30],
+    [B1, B2, B3] = [
+        erlang:convert_time_unit(T, millisecond, native)
+     || T <- Backoff
+    ],
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            poll_interval => 10,
+            max_attempts => MaxAttempts,
+            backoff => Backoff,
+            hooks => [Hook]
+        })
+    ),
+    #{id := Id, inserted_at := InsertedAt} = gaffer:insert(
+        ?Q, #{
+            ~"action" => ~"crash",
+            ~"test_pid" => gaffer_test_worker:encode_pid(self())
+        }
+    ),
+    % first attempt (not retry)
+    gaffer_test_helpers:await_hook(),
+    % retry 1
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{
+            attempt := 2,
+            state := available,
+            errors := [#{at := At}, _]
+        } when At > (InsertedAt + B1),
+        gaffer:get(?Q, Id)
+    ),
+    % retry 2
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{
+            attempt := 3,
+            state := available,
+            errors := [#{at := At}, _, _]
+        } when At > (InsertedAt + B1 + B2),
+        gaffer:get(?Q, Id)
+    ),
+    % retry 3
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{
+            attempt := 4,
+            state := available,
+            errors := [#{at := At}, _, _, _]
+        } when At > (InsertedAt + B1 + B2 + B3),
+        gaffer:get(?Q, Id)
+    ),
+    % retry 5
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{
+            attempt := 5,
+            state := discarded,
+            errors := [#{at := At}, _, _, _, _]
+        } when At > (InsertedAt + B1 + B2 + B3 + B3),
+        gaffer:get(?Q, Id)
+    ).
+
+retries_only_one_value(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    MaxAttempts = 4,
+    Backoff = 10,
+    BackoffNative = erlang:convert_time_unit(10, native, millisecond),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            poll_interval => 10,
+            max_attempts => MaxAttempts,
+            backoff => Backoff,
+            hooks => [Hook]
+        })
+    ),
+    #{id := Id, inserted_at := InsertedAt} = gaffer:insert(
+        ?Q, #{
+            ~"action" => ~"crash",
+            ~"test_pid" => gaffer_test_worker:encode_pid(self())
+        }
+    ),
+    % first attempt (not retry)
+    gaffer_test_helpers:await_hook(),
+    % retry 1
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{
+            attempt := 2,
+            state := available,
+            errors := [#{at := At}, _]
+        } when At > (InsertedAt + BackoffNative),
+        gaffer:get(?Q, Id)
+    ),
+    % retry 2
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{
+            attempt := 3,
+            state := available,
+            errors := [#{at := At}, _, _]
+        } when At > (InsertedAt + BackoffNative * 2),
+        gaffer:get(?Q, Id)
+    ),
+    % retry 3
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{
+            attempt := 4,
+            state := discarded,
+            errors := [#{at := At}, _, _, _]
+        } when At > (InsertedAt + BackoffNative * 3),
+        gaffer:get(?Q, Id)
     ).
 
 %--- Schedule tests -----------------------------------------------------------

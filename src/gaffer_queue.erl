@@ -248,22 +248,25 @@ complete_job(Queue, Id, Result) ->
     {ok, gaffer:job()} | {error, not_found}.
 fail_job(Queue, Id, Reason) ->
     Conf = conf(Queue),
-    Result = modify_job(Conf, Id, [gaffer, job, fail], fun(Job) ->
-        Attempt = maps:get(attempt, Job) + 1,
-        MaxAttempts = maps:get(max_attempts, Job),
-        Job1 = Job#{attempt := Attempt},
-        Error = #{
-            attempt => Attempt, error => Reason, at => erlang:system_time()
-        },
-        Job2 = add_error(Job1, Error),
-        case Attempt >= MaxAttempts of
-            true -> transition(Job2, discarded);
-            false -> transition(Job2, available)
-        end
-    end),
+    Result =
+        modify_job(Conf, Id, [gaffer, job, fail], fun(
+            #{attempt := Attempt} = Job
+        ) ->
+            case add_error(Job#{attempt := Attempt + 1}, Reason) of
+                #{attempt := A, max_attempts := M} = Job1 when A >= M ->
+                    transition(Job1, discarded);
+                Job1 ->
+                    transition(schedule_backoff(Job1), available)
+            end
+        end),
     {ok, Job} = Result,
     maybe_forward(Conf, Job),
     Result.
+
+schedule_backoff(#{backoff := Backoff, attempt := Attempt} = Job) ->
+    Now = erlang:system_time(millisecond),
+    Time = timestamp({millisecond, Now + backoff(Attempt, Backoff)}),
+    Job#{scheduled_at => Time}.
 
 -spec schedule_job(gaffer:queue(), gaffer:job_id(), gaffer:timestamp()) ->
     {ok, gaffer:job()} | {error, not_found}.
@@ -307,6 +310,11 @@ is_gaffer_key(_) -> false.
 
 timestamp({Unit, V}) -> erlang:convert_time_unit(V, Unit, native);
 timestamp(Native) when is_integer(Native) -> Native.
+
+backoff(_Attempt, Backoff) when is_integer(Backoff) -> Backoff;
+backoff(_Attempt, [Backoff]) -> Backoff;
+backoff(1, [Backoff | _]) -> Backoff;
+backoff(Attempt, [_ | Tail]) -> backoff(Attempt - 1, Tail).
 
 % Config validation
 
@@ -406,7 +414,8 @@ transition(#{state := From} = Job, To) ->
             {error, {invalid_transition, {From, To}}}
     end.
 
-add_error(#{errors := Errors} = Job, Error) ->
+add_error(#{errors := Errors, attempt := Attempt} = Job, Reason) ->
+    Error = #{attempt => Attempt, error => Reason, at => erlang:system_time()},
     Job#{errors := [normalize_error(Error) | Errors]}.
 
 normalize_error(#{error := Err} = Error) ->
