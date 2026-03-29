@@ -132,7 +132,6 @@ info(Queue, #{pool := Pool}) ->
         available => #{count => 0},
         executing => #{count => 0},
         completed => #{count => 0},
-        failed => #{count => 0},
         cancelled => #{count => 0},
         discarded => #{count => 0}
     },

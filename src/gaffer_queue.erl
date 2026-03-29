@@ -256,10 +256,11 @@ fail_job(Queue, Id, Reason) ->
             attempt => Attempt, error => Reason, at => erlang:system_time()
         },
         Job2 = add_error(Job1, Error),
-        {ok, Job3} = transition(Job2, failed),
         case Attempt >= MaxAttempts of
-            true -> transition(Job3, discarded);
-            false -> {ok, Job3}
+            true ->
+                transition(Job2, discarded);
+            false ->
+                transition(Job2, available)
         end
     end),
     {ok, Job} = Result,
@@ -433,11 +434,9 @@ normalize_error_term(T) ->
 valid_transition(available, executing) -> true;
 valid_transition(available, cancelled) -> true;
 valid_transition(executing, completed) -> true;
-valid_transition(executing, failed) -> true;
 valid_transition(executing, cancelled) -> true;
 valid_transition(executing, available) -> true;
-valid_transition(failed, discarded) -> true;
-valid_transition(failed, available) -> true;
+valid_transition(executing, discarded) -> true;
 valid_transition(_, _) -> false.
 
 -spec set_timestamp(gaffer:job_state(), integer(), gaffer:job()) ->

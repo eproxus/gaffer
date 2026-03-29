@@ -61,7 +61,7 @@ migrations(#{}) ->
                                          REFERENCES gaffer_queues(name),
                     state            TEXT NOT NULL
                                          CHECK (state IN ('available', 'executing',
-                                                          'completed', 'failed', 'cancelled',
+                                                          'completed', 'cancelled',
                                                           'discarded')),
                     payload          JSONB NOT NULL,
                     attempt          INTEGER NOT NULL,
@@ -169,7 +169,6 @@ info(Queue) ->
         WHEN 'available' THEN inserted_at
         WHEN 'executing' THEN attempted_at
         WHEN 'completed' THEN completed_at
-        WHEN 'failed'    THEN attempted_at
         WHEN 'cancelled' THEN cancelled_at
         WHEN 'discarded' THEN discarded_at
     END

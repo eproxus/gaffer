@@ -63,7 +63,6 @@
     available
     | executing
     | completed
-    | failed
     | cancelled
     | discarded.
 -doc #{group => "Queue Types"}.
@@ -174,7 +173,6 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
         available := state_info(),
         executing := state_info(),
         completed := state_info(),
-        failed := state_info(),
         cancelled := state_info(),
         discarded := state_info()
     },
