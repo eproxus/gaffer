@@ -82,6 +82,7 @@ gaffer_test_() ->
         % Polling
         fun poll_worker_lifecycle/1,
         fun poll_worker_crash_fails_job/1,
+        fun poll_worker_killed_fails_job/1,
         fun poll_worker_complete_result/1,
         fun poll_auto_executes/1,
         fun worker_fun/1,
@@ -272,7 +273,7 @@ insert(Driver) ->
             max_attempts := 3,
             attempt := 0
         },
-        atomize_keys(Job)
+        normalize(Job)
     ).
 
 insert_with_opts(Driver) ->
@@ -286,7 +287,7 @@ insert_with_opts(Driver) ->
             priority := 5,
             max_attempts := 10
         },
-        atomize_keys(Job)
+        normalize(Job)
     ).
 
 insert_scheduled(Driver) ->
@@ -309,7 +310,7 @@ get_job(Driver) ->
     Job = gaffer:get(?Q, Id),
     ?assertMatch(
         #{id := Id, queue := get_job, payload := #{task := 1}},
-        atomize_keys(Job)
+        normalize(Job)
     ).
 
 get_not_found(Driver) ->
@@ -471,7 +472,7 @@ fail_error_normalization(Driver) ->
                 }
             ]
         } when is_integer(At),
-        atomize_keys(gaffer:get(?Q, Id))
+        normalize(gaffer:get(?Q, Id))
     ).
 
 %--- Retries tests ------------------------------------------------------------
@@ -736,6 +737,30 @@ poll_worker_crash_fails_job(Driver) ->
     gaffer_test_helpers:await_hook(),
     ?assertMatch(#{state := available}, gaffer:get(?Q, Id)).
 
+poll_worker_killed_fails_job(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    #{id := Id} = gaffer:insert(?Q, #{
+        ~"action" => ~"block", ~"test_pid" => TestPid
+    }),
+    ok = gaffer_queue_runner:poll(?Q),
+    WorkerPid =
+        receive
+            {job_started, #{id := Id, worker := P}} -> P
+        after 5000 -> error(timeout)
+        end,
+    exit(WorkerPid, kill),
+    gaffer_test_helpers:await_hook(),
+    ?assertMatch(
+        #{
+            state := available,
+            attempt := 1,
+            errors := [#{attempt := 1, error := killed, at := _}]
+        },
+        normalize(gaffer:get(?Q, Id))
+    ).
+
 poll_worker_complete_result(Driver) ->
     Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
     ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
@@ -871,17 +896,17 @@ forward_on_discard(Driver) ->
     ok = gaffer_queue_runner:poll(?Q),
     gaffer_test_helpers:await_hook(),
     ?assertMatch(#{state := discarded}, gaffer:get(?Q, Id)),
-    Wrapped = atomize_keys(maps:get(payload, hd(gaffer:list(fwd_dlq)))),
+    Wrapped = normalize(maps:get(payload, hd(gaffer:list(fwd_dlq)))),
     ?assertMatch(
         #{
-            payload := #{action := ~"crash"},
+            payload := #{action := crash},
             attempt := 1,
             errors := [_],
             discarded_at := _
         },
         Wrapped
     ),
-    ?assertEqual(forward_on_discard, to_atom(maps:get(queue, Wrapped))).
+    ?assertEqual(forward_on_discard, maps:get(queue, Wrapped)).
 
 forward_on_discard_chain(Driver) ->
     Q3Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, insert]]),
@@ -909,10 +934,10 @@ forward_on_discard_chain(Driver) ->
     % Wait for Q3 insert hook (fired by Q2's maybe_forward)
     gaffer_test_helpers:await_hook(),
     % Job should now be in Q3 with nested wrapping
-    Outer = atomize_keys(maps:get(payload, hd(gaffer:list(fwd_chain_q3)))),
+    Outer = normalize(maps:get(payload, hd(gaffer:list(fwd_chain_q3)))),
     ?assertMatch(#{attempt := 1, errors := [_], discarded_at := _}, Outer),
     ?assertNot(is_map_key(action, Outer), "Wrapped payload has no action"),
-    ?assertEqual(fwd_chain_q2, to_atom(maps:get(queue, Outer))),
+    ?assertEqual(fwd_chain_q2, maps:get(queue, Outer)),
     Inner = maps:get(payload, Outer),
     ?assertMatch(
         #{
@@ -923,7 +948,7 @@ forward_on_discard_chain(Driver) ->
         },
         Inner
     ),
-    ?assertEqual(forward_on_discard_chain, to_atom(maps:get(queue, Inner))).
+    ?assertEqual(forward_on_discard_chain, maps:get(queue, Inner)).
 
 forward_on_discard_retryable(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_retry_dlq})),
@@ -950,13 +975,13 @@ forward_on_discard_fresh(Driver) ->
     _ = gaffer:insert(?Q, #{~"action" => ~"crash"}, #{max_attempts => 1}),
     ok = gaffer_queue_runner:poll(?Q),
     gaffer_test_helpers:await_hook(),
-    Forwarded = atomize_keys(hd(gaffer:list(fwd_fresh_dlq))),
+    Forwarded = normalize(hd(gaffer:list(fwd_fresh_dlq))),
     ?assertMatch(
         #{state := available, attempt := 0, errors := []},
         Forwarded
     ),
     ?assertEqual(
-        #{action => ~"crash"},
+        #{action => crash},
         mapz:deep_get([payload, payload], Forwarded)
     ).
 
@@ -1287,19 +1312,19 @@ hook_global_queue(Driver) ->
 
 %--- Helpers ------------------------------------------------------------------
 
-atomize_keys(Map) when is_map(Map) ->
-    maps:fold(
-        fun(K, V, Acc) -> Acc#{to_atom(K) => atomize_keys(V)} end,
-        #{},
-        Map
-    );
-atomize_keys(List) when is_list(List) ->
-    [atomize_keys(E) || E <:- List];
-atomize_keys(Other) ->
+normalize(Map) when is_map(Map) ->
+    Normalize = fun(K, V, Acc) -> Acc#{normalize(K) => normalize(V)} end,
+    maps:fold(Normalize, #{}, Map);
+normalize(List) when is_list(List) ->
+    [normalize(E) || E <:- List];
+normalize(B) when is_binary(B) ->
+    try
+        binary_to_existing_atom(B)
+    catch
+        error:badarg -> B
+    end;
+normalize(Other) ->
     Other.
-
-to_atom(A) when is_atom(A) -> A;
-to_atom(B) when is_binary(B) -> binary_to_atom(B).
 
 make_hook() -> make_hook(hook).
 make_hook(Tag) ->

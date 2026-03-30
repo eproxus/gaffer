@@ -21,10 +21,7 @@
 -export([cancel_job/2]).
 -export([delete_job/2]).
 % Jobs (runner)
--export([complete_job/2]).
--export([complete_job/3]).
--export([fail_job/3]).
--export([schedule_job/3]).
+-export([write_result/3]).
 -export([claim_jobs/2]).
 -export([prune_jobs/2]).
 
@@ -42,9 +39,6 @@
 }.
 
 -type prune_opts() :: #{states => [gaffer:job_state()]}.
-
-% elp:ignore W0048 - dialyzer over-constrains types from internal call sites
--dialyzer({no_match, [validate/1, valid_transition/2, set_timestamp/3]}).
 
 -export_type([driver/0]).
 -export_type([queue_conf/0]).
@@ -183,8 +177,7 @@ info(Queue) ->
     gaffer:job().
 insert_job(Queue, Payload, Opts) ->
     #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
-    NewJob = build_job(Conf, Payload, Opts),
-    validate(NewJob),
+    NewJob = gaffer_job:create(Conf, Payload, Opts),
     gaffer_hooks:with_hooks(
         Hooks,
         [gaffer, job, insert],
@@ -223,65 +216,45 @@ delete_job(Queue, JobId) ->
 -spec cancel_job(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
 cancel_job(Queue, JobId) ->
-    Conf = conf(Queue),
-    modify_job(Conf, JobId, [gaffer, job, cancel], fun(Job) ->
-        transition(Job, cancelled)
-    end).
+    #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
+    case Mod:job_get(JobId, DS) of
+        not_found ->
+            {error, not_found};
+        Job ->
+            case gaffer_job:transition(Job, cancelled) of
+                {ok, Cancelled} ->
+                    Written = gaffer_hooks:with_hooks(
+                        Hooks,
+                        [gaffer, job, cancel],
+                        Cancelled,
+                        fun(J) ->
+                            Mod:job_update(J, DS),
+                            J
+                        end
+                    ),
+                    {ok, Written};
+                {error, _} = Err ->
+                    Err
+            end
+    end.
 
 % Job (runner)
 
--spec complete_job(gaffer:queue(), gaffer:job_id()) ->
-    {ok, gaffer:job()} | {error, not_found}.
-complete_job(Queue, Id) ->
-    complete_job(Queue, Id, undefined).
-
--spec complete_job(gaffer:queue(), gaffer:job_id(), term()) ->
-    {ok, gaffer:job()} | {error, not_found}.
-complete_job(Queue, Id, Result) ->
-    Conf = conf(Queue),
-    modify_job(Conf, Id, [gaffer, job, complete], fun(#{attempt := A} = Job) ->
-        {ok, C} = transition(Job, completed),
-        {ok, C#{attempt := A + 1, result => Result}}
-    end).
-
--spec fail_job(gaffer:queue(), gaffer:job_id(), term()) ->
-    {ok, gaffer:job()} | {error, not_found}.
-fail_job(Queue, Id, Reason) ->
-    Conf = conf(Queue),
-    Result =
-        modify_job(Conf, Id, [gaffer, job, fail], fun(
-            #{attempt := Attempt} = Job
-        ) ->
-            case add_error(Job#{attempt := Attempt + 1}, Reason) of
-                #{attempt := A, max_attempts := M} = Job1 when A >= M ->
-                    transition(Job1, discarded);
-                Job1 ->
-                    transition(schedule_backoff(Job1), available)
-            end
-        end),
-    {ok, Job} = Result,
-    maybe_forward(Conf, Job),
-    Result.
-
-schedule_backoff(#{backoff := Backoff, attempt := Attempt} = Job) ->
-    Now = erlang:system_time(millisecond),
-    Time = timestamp({millisecond, Now + backoff(Attempt, Backoff)}),
-    Job#{scheduled_at => Time}.
-
--spec schedule_job(gaffer:queue(), gaffer:job_id(), gaffer:timestamp()) ->
-    {ok, gaffer:job()} | {error, not_found}.
-schedule_job(Queue, Id, At) ->
-    Conf = conf(Queue),
-    modify_job(Conf, Id, [gaffer, job, schedule], fun(Job) ->
-        {ok, Available} = transition(Job, available),
-        {ok, Available#{scheduled_at => timestamp(At)}}
-    end).
+-spec write_result(gaffer:queue(), gaffer_hooks:event(), gaffer:job()) ->
+    {ok, gaffer:job()}.
+write_result(Queue, Event, Job) ->
+    #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
+    Written = gaffer_hooks:with_hooks(Hooks, Event, Job, fun(J) ->
+        Mod:job_update(J, DS),
+        J
+    end),
+    maybe_forward(Conf, Written),
+    {ok, Written}.
 
 -spec claim_jobs(gaffer:queue(), claim_opts()) ->
     [gaffer:job()].
 claim_jobs(Queue, Opts) ->
-    Now = erlang:system_time(),
-    Changes = #{state => executing, attempted_at => Now},
+    Changes = gaffer_job:claim_changes(),
     #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
     GlobalMax = maps:get(global_max_workers, Conf),
     Limit = clamp_limit(maps:get(limit, Opts), GlobalMax),
@@ -307,14 +280,6 @@ clamp_limit(Limit, _) -> Limit.
 
 is_gaffer_key({gaffer_queue, _}) -> true;
 is_gaffer_key(_) -> false.
-
-timestamp({Unit, V}) -> erlang:convert_time_unit(V, Unit, native);
-timestamp(Native) when is_integer(Native) -> Native.
-
-backoff(_Attempt, Backoff) when is_integer(Backoff) -> Backoff;
-backoff(_Attempt, [Backoff]) -> Backoff;
-backoff(1, [Backoff | _]) -> Backoff;
-backoff(Attempt, [_ | Tail]) -> backoff(Attempt - 1, Tail).
 
 % Config validation
 
@@ -358,138 +323,10 @@ validate_on_discard(#{on_discard := Target}, Mod, DS) ->
 validate_on_discard(_, _, _) ->
     ok.
 
-% Job construction
-
-build_job(#{name := Queue} = Conf, Payload, Opts) ->
-    Now = erlang:system_time(),
-    ScheduledAt = maybe_scheduled_at(Opts),
-    JobKeys = [max_attempts, priority, timeout, backoff, shutdown_timeout],
-    Defaults = maps:with(JobKeys, Conf),
-    JobOpts = maps:merge(Defaults, maps:without([scheduled_at], Opts)),
-    Job = maps:merge(JobOpts, #{
-        id => keysmith:uuid(7, binary),
-        queue => Queue,
-        payload => Payload,
-        state => available,
-        attempt => 0,
-        inserted_at => Now,
-        errors => []
-    }),
-    maybe_put(scheduled_at, ScheduledAt, Job).
-
--spec validate(gaffer:job()) -> ok.
-validate(#{queue := Queue} = Job) ->
-    Checks = [
-        {
-            fun() -> is_atom(Queue) end,
-            {invalid_queue, Queue}
-        },
-        {
-            fun() -> maps:get(max_attempts, Job, 1) >= 1 end,
-            invalid_max_attempts
-        },
-        {
-            fun() -> maps:get(priority, Job, 0) >= 0 end,
-            invalid_priority
-        }
-    ],
-    run_checks(Checks).
-
-run_checks([]) ->
-    ok;
-run_checks([{Check, Reason} | Rest]) ->
-    case Check() of
-        true -> run_checks(Rest);
-        false -> error({invalid_job, Reason})
-    end.
-
-% Job state machine
-
-transition(#{state := From} = Job, To) ->
-    case valid_transition(From, To) of
-        true ->
-            Now = erlang:system_time(),
-            {ok, set_timestamp(To, Now, Job#{state := To})};
-        false ->
-            {error, {invalid_transition, {From, To}}}
-    end.
-
-add_error(#{errors := Errors, attempt := Attempt} = Job, Reason) ->
-    Error = #{attempt => Attempt, error => Reason, at => erlang:system_time()},
-    Job#{errors := [normalize_error(Error) | Errors]}.
-
-normalize_error(#{error := Err} = Error) ->
-    Error#{error := normalize_error_term(Err)}.
-
-normalize_error_term(T) when is_atom(T); is_binary(T); is_number(T) ->
-    T;
-normalize_error_term(T) when is_list(T) ->
-    [normalize_error_term(E) || E <:- T];
-normalize_error_term(T) when is_map(T) ->
-    maps:fold(
-        fun(K, V, Acc) ->
-            Key = normalize_error_term(K),
-            Acc#{Key => normalize_error_term(V)}
-        end,
-        #{},
-        T
-    );
-normalize_error_term(T) ->
-    iolist_to_binary(io_lib:format(~"~0tp", [T])).
-
--spec valid_transition(gaffer:job_state(), gaffer:job_state()) -> boolean().
-valid_transition(available, executing) -> true;
-valid_transition(available, cancelled) -> true;
-valid_transition(executing, completed) -> true;
-valid_transition(executing, cancelled) -> true;
-valid_transition(executing, available) -> true;
-valid_transition(executing, discarded) -> true;
-valid_transition(_, _) -> false.
-
--spec set_timestamp(gaffer:job_state(), integer(), gaffer:job()) ->
-    gaffer:job().
-set_timestamp(executing, TS, Job) -> Job#{attempted_at => TS};
-set_timestamp(completed, TS, Job) -> Job#{completed_at => TS};
-set_timestamp(cancelled, TS, Job) -> Job#{cancelled_at => TS};
-set_timestamp(discarded, TS, Job) -> Job#{discarded_at => TS};
-set_timestamp(_State, _TS, Job) -> Job.
-
-maybe_scheduled_at(#{scheduled_at := At}) -> timestamp(At);
-maybe_scheduled_at(#{}) -> undefined.
-
-maybe_put(_Key, undefined, Map) -> Map;
-maybe_put(Key, Value, Map) -> Map#{Key => Value}.
-
-% Driver dispatch
-
-modify_job(#{driver := {Mod, DS}, hooks := Hooks}, JobId, Event, Fun) ->
-    case Mod:job_get(JobId, DS) of
-        not_found ->
-            {error, not_found};
-        Job ->
-            case Fun(Job) of
-                {ok, Updated} ->
-                    {ok,
-                        gaffer_hooks:with_hooks(
-                            Hooks,
-                            Event,
-                            Updated,
-                            fun(J) ->
-                                Mod:job_update(J, DS),
-                                J
-                            end
-                        )};
-                {error, _} = Err ->
-                    Err
-            end
-    end.
-
 % Forwarding
 
 maybe_forward(#{on_discard := Target}, #{state := discarded} = Job) ->
-    MetaKeys = [payload, queue, attempt, errors, discarded_at],
-    WrappedPayload = maps:with(MetaKeys, Job),
-    _ = insert_job(Target, WrappedPayload, #{}),
+    _ = insert_job(Target, gaffer_job:forward_payload(Job), #{}),
     ok;
 maybe_forward(_, _) ->
     ok.

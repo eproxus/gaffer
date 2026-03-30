@@ -1,7 +1,6 @@
 -module(gaffer_worker).
 -moduledoc "Worker behaviour for gaffer job queues.".
 
-% API
 -export([perform/2]).
 -export_type([worker/0, result/0]).
 

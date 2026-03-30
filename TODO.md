@@ -36,6 +36,9 @@
     - [X] `gaffer:list(Queue, Filters)`
 - [X] Store `{complete, Result}` persistently per job
 - [X] Refactor the strange dispatch lookup in gaffer_queue_runner
+- [X] Implement 'priority' support
+- [X] Review gaffer_queue_runner job functions that are only used in tests
+    - Should they be exported like this? Are they needed?
 - [ ] `gaffer_driver_ets` could be reactive by triggering a poll
     - Should it only be reactive, i.e. we don't need poll_interval at all...
 - [ ] Starting pools using `gaffer_driver_pgo` crashes
@@ -49,8 +52,6 @@
 - [ ] Make job ID output format configurable (hex, type_id etc.)
 - [ ] Make job ID UUID format configurable (`v4` etc.)
 - [ ] Implement drain and flush
-- [ ] Review gaffer_queue_runner job functions that are only used in tests
-    - Should they be exported like this? Are they needed?
 - [ ] Make queue config defaults an application environment variable
 - [ ] Handle raw (e.g. non-UTF) binaries in JSON normalization:
       ```erlang
@@ -85,7 +86,6 @@
 - [ ] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
     - Implement `job_upsert/1` that takes multiple jobs and atomically inserts/updates
       them
-- [ ] Implement 'priority' support
 - [ ] Add support for LISTEN/NOTIFY
 - [ ] Performance tests
     - [ ] Test queries with EXPLAIN ANALYZE and large datasets

@@ -78,8 +78,8 @@ handle_event(
     #{name := Name, workers := Workers} = Data
 ) ->
     case maps:take(Pid, Workers) of
-        {JobId, Workers1} ->
-            _ = handle_worker_result(JobId, Reason, Name),
+        {OriginalJob, Workers1} ->
+            _ = handle_worker_result(Reason, OriginalJob, Name),
             {keep_state, Data#{workers := Workers1}};
         error ->
             {keep_state, Data}
@@ -113,27 +113,21 @@ do_poll(
 poll_limit(infinity, _Active) -> infinity;
 poll_limit(Max, Active) -> max(0, Max - Active).
 
+% elp:ignore W0048 - spawn_workers calls gaffer_job:execute which is no_return
+-dialyzer({no_return, [spawn_workers/3]}).
 spawn_workers(_Worker, [], Workers) ->
     Workers;
-spawn_workers(Worker, [#{id := JobId} = Job | Rest], Workers) ->
+spawn_workers(Worker, [Job | Rest], Workers) ->
     {Pid, _Ref} = spawn_monitor(fun() ->
-        Result = gaffer_worker:perform(Worker, Job),
-        exit({gaffer_result, Result})
+        gaffer_job:execute(Worker, Job)
     end),
-    spawn_workers(Worker, Rest, Workers#{Pid => JobId}).
+    spawn_workers(Worker, Rest, Workers#{Pid => Job}).
 
-handle_worker_result(JobId, {gaffer_result, complete}, Name) ->
-    gaffer_queue:complete_job(Name, JobId);
-handle_worker_result(JobId, {gaffer_result, {complete, Result}}, Name) ->
-    gaffer_queue:complete_job(Name, JobId, Result);
-handle_worker_result(JobId, {gaffer_result, {fail, Reason}}, Name) ->
-    gaffer_queue:fail_job(Name, JobId, Reason);
-handle_worker_result(JobId, {gaffer_result, {cancel, _}}, Name) ->
-    gaffer_queue:cancel_job(Name, JobId);
-handle_worker_result(JobId, {gaffer_result, {schedule, At}}, Name) ->
-    gaffer_queue:schedule_job(Name, JobId, At);
-handle_worker_result(JobId, CrashReason, Name) ->
-    gaffer_queue:fail_job(Name, JobId, CrashReason).
+handle_worker_result({gaffer_job, Event, Job}, _OriginalJob, Name) ->
+    gaffer_queue:write_result(Name, Event, Job);
+handle_worker_result(Reason, OriginalJob, Name) ->
+    {Event, Job} = gaffer_job:handle_crash(OriginalJob, Reason),
+    gaffer_queue:write_result(Name, Event, Job).
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input
