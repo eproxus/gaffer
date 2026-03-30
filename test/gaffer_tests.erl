@@ -533,7 +533,32 @@ retries_backoff(Driver) ->
     ),
     % first attempt (not retry)
     gaffer_test_helpers:await_hook(),
+
+    gaffer_test_helpers:await_hook(),
+    Q = gaffer:get(?Q, Id),
+    ?assertMatch(
+        #{state := available, attempt := 1, errors := [#{error := _, at := _, attempt := A}]} when Q
+    ),
+            InsertedAt = timestamp(maps:get(inserted_at, Q)),
+            AttemptedAt = timestamp(maps:get(attempted_at, Q)),
+            CurrentBackoff = erlang:convert_time_unit(
+                lists:sum(lists:sublist(Backoff, N - 1)), millisecond, native
+            ),
+            ?assert(
+                erlang:convert_time_unit(
+                    AttemptedAt - (InsertedAt + CurrentBackoff),
+                    native,
+                    millisecond
+                ) > 0,
+                "Retries should not be attempted earlier than backoff time"
+            )
+
     % retries
+    %
+    %
+    %
+    %
+    %
     [
         (begin
             gaffer_test_helpers:await_hook(),
@@ -1306,6 +1331,8 @@ flush_events() ->
 
 timestamp({Unit, V}) -> erlang:convert_time_unit(V, Unit, native);
 timestamp(Native) when is_integer(Native) -> Native.
+
+backoff_delay(Q, ) ->
 
 % gaffer_hooks behaviour callback
 gaffer_hook(Phase, Event, Data) ->
