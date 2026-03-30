@@ -256,10 +256,17 @@ fail_job(Queue, Id, Reason) ->
             attempt => Attempt, error => Reason, at => erlang:system_time()
         },
         Job2 = add_error(Job1, Error),
-        {ok, Job3} = transition(Job2, failed),
         case Attempt >= MaxAttempts of
-            true -> transition(Job3, discarded);
-            false -> {ok, Job3}
+            true ->
+                transition(Job2, discarded);
+            false ->
+                {ok, Available} = transition(Job2, available),
+                Backoff = backoff(Attempt, maps:get(backoff, Job)),
+                {ok, Available#{
+                    scheduled_at => timestamp(
+                        {millisecond, erlang:system_time(millisecond) + Backoff}
+                    )
+                }}
         end
     end),
     {ok, Job} = Result,
@@ -308,6 +315,11 @@ is_gaffer_key(_) -> false.
 
 timestamp({Unit, V}) -> erlang:convert_time_unit(V, Unit, native);
 timestamp(Native) when is_integer(Native) -> Native.
+
+backoff(_Attempt, [Backoff]) ->
+    Backoff;
+backoff(Attempt, Backoff) when is_list(Backoff) ->
+    lists:nth(Attempt, Backoff).
 
 % Config validation
 
@@ -433,11 +445,9 @@ normalize_error_term(T) ->
 valid_transition(available, executing) -> true;
 valid_transition(available, cancelled) -> true;
 valid_transition(executing, completed) -> true;
-valid_transition(executing, failed) -> true;
 valid_transition(executing, cancelled) -> true;
 valid_transition(executing, available) -> true;
-valid_transition(failed, discarded) -> true;
-valid_transition(failed, available) -> true;
+valid_transition(executing, discarded) -> true;
 valid_transition(_, _) -> false.
 
 -spec set_timestamp(gaffer:job_state(), integer(), gaffer:job()) ->

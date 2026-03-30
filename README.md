@@ -19,7 +19,7 @@ A reliable job queue implemented in Erlang.
 - [x] Dead-letter queues (`on_discard`)
 - [x] Queue introspection and manual job pruning
 - [x] Delayed job scheduling
-- [ ] Automatic retries with backoff
+- [x] Automatic retries with backoff
 - [ ] Drain and flush (graceful shutdown)
 - [ ] Job execution timeouts
 - [ ] Worker shutdown timeouts
@@ -107,7 +107,7 @@ Queues are configured via `gaffer:queue_conf()` maps:
 
   Storage driver.
 
-- `max_workers` (`pos_integer()`, default = `5`)
+- `max_workers` (`pos_integer()`, default = `1`)
 
   Max concurrent workers per node.
 
