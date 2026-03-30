@@ -434,7 +434,7 @@ fail_retryable(Driver) ->
     gaffer_test_helpers:await_hook(),
     Failed = gaffer:get(?Q, Id),
     ?assertMatch(
-        #{state := failed, attempt := 1, errors := [#{attempt := 1}]}, Failed
+        #{state := available, attempt := 1, errors := [#{attempt := 1}]}, Failed
     ).
 
 fail_discarded(Driver) ->
@@ -611,7 +611,7 @@ poll_worker_crash_fails_job(Driver) ->
     #{id := Id} = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
     gaffer_test_helpers:await_hook(),
-    ?assertMatch(#{state := failed}, gaffer:get(?Q, Id)).
+    ?assertMatch(#{state := available}, gaffer:get(?Q, Id)).
 
 poll_worker_complete_result(Driver) ->
     Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
@@ -813,7 +813,7 @@ forward_on_discard_retryable(Driver) ->
     }),
     ok = gaffer_queue_runner:poll(?Q),
     gaffer_test_helpers:await_hook(),
-    ?assertMatch(#{state := failed}, gaffer:get(?Q, Id)),
+    ?assertMatch(#{state := available}, gaffer:get(?Q, Id)),
     ?assertEqual([], gaffer:list(fwd_retry_dlq)).
 
 forward_on_discard_fresh(Driver) ->
@@ -848,7 +848,6 @@ info_empty_queue(Driver) ->
             available := #{count := 0},
             executing := #{count := 0},
             completed := #{count := 0},
-            failed := #{count := 0},
             cancelled := #{count := 0},
             discarded := #{count := 0}
         },

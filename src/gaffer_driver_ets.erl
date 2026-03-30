@@ -178,7 +178,6 @@ info(Queue, #{queued := Queued, locked := Locked}) ->
         available => #{count => 0},
         executing => #{count => 0},
         completed => #{count => 0},
-        failed => #{count => 0},
         cancelled => #{count => 0},
         discarded => #{count => 0}
     },
@@ -213,7 +212,6 @@ accumulate_info(#{state := State} = Job, Acc) ->
 info_timestamp(available, #{inserted_at := T}) -> T;
 info_timestamp(executing, #{attempted_at := T}) -> T;
 info_timestamp(completed, #{completed_at := T}) -> T;
-info_timestamp(failed, #{attempted_at := T}) -> T;
 info_timestamp(cancelled, #{cancelled_at := T}) -> T;
 info_timestamp(discarded, #{discarded_at := T}) -> T;
 info_timestamp(_, _) -> undefined.
