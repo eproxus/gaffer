@@ -88,7 +88,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -type timeout_ms() :: pos_integer().
 -doc #{group => "Job Types"}.
 -doc "Retry backoff strategy.".
--type backoff() :: [non_neg_integer()].
+-type backoff() :: non_neg_integer() | [non_neg_integer()].
 -doc #{group => "Job Types"}.
 -doc "Grace period for worker shutdown in milliseconds.".
 -type shutdown_timeout() :: pos_integer().
