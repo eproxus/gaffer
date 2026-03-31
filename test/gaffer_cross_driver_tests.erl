@@ -10,7 +10,8 @@ cross_driver_test_() ->
     {setup, fun setup/0, fun teardown/1, fun(Drivers) ->
         [
             {with, Drivers, [fun forward_ets_to_pgo/1]},
-            {with, Drivers, [fun forward_pgo_to_ets/1]}
+            {with, Drivers, [fun forward_pgo_to_ets/1]},
+            {with, Drivers, [fun forward_survives_source_failure/1]}
         ]
     end}.
 
@@ -21,6 +22,54 @@ forward_ets_to_pgo(#{ets := Ets, pgo := Pgo}) ->
 
 forward_pgo_to_ets(#{ets := Ets, pgo := Pgo}) ->
     forward(Pgo, Ets, forward_pgo_to_ets, forward_pgo_to_ets_dlq).
+
+forward_survives_source_failure(#{ets := Ets, pgo := Pgo}) ->
+    FailingSource = gaffer_test_driver:wrap(Ets, #{
+        job_write => fun
+            (_Inner, [#{state := discarded} | _]) -> error(simulated_crash);
+            (Inner, Jobs) -> Inner(Jobs)
+        end
+    }),
+    ok = gaffer:create_queue(#{
+        name => survive_dlq,
+        driver => Pgo,
+        worker => gaffer_test_worker,
+        poll_interval => infinity
+    }),
+    gaffer_test_helpers:register_queue(survive_dlq, Ets),
+    ok = gaffer:create_queue(#{
+        name => survive_src,
+        driver => FailingSource,
+        worker => gaffer_test_worker,
+        poll_interval => infinity,
+        max_attempts => 1,
+        on_discard => survive_dlq
+    }),
+    _ = gaffer:insert(survive_src, #{~"action" => ~"crash"}),
+    ok = gaffer_queue_runner:poll(survive_src),
+    % Target queue has the forwarded job despite source write crashing
+    Forwarded = gaffer_test_helpers:wait_for(
+        fun(S) ->
+            case gaffer:list(survive_dlq) of
+                [] -> {wait, S};
+                Jobs -> {result, Jobs}
+            end
+        end,
+        []
+    ),
+    [Job] = normalize(Forwarded),
+    ?assertMatch(
+        #{
+            state := available,
+            payload := #{
+                payload := #{action := crash},
+                queue := survive_src,
+                attempt := 1,
+                errors := [_]
+            }
+        },
+        Job
+    ).
 
 %--- Internal -----------------------------------------------------------------
 

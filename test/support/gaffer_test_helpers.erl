@@ -5,6 +5,7 @@
 -export([pgo_pool_config/0, reset_database/1, stop_pool/1]).
 -export([register_queue/2]).
 -export([normalize/1]).
+-export([wait_for/2, wait_for/3]).
 
 %--- API ----------------------------------------------------------------------
 
@@ -64,6 +65,27 @@ stop_pool(Pool) ->
     end.
 
 register_queue(Name, {Mod, DS}) -> Mod:queue_insert(Name, DS).
+
+wait_for(Fun, Init) -> wait_for(Fun, Init, #{}).
+
+wait_for(Fun, Init, Opts) ->
+    Timeout = maps:get(timeout, Opts, 5000),
+    Deadline = erlang:monotonic_time(millisecond) + Timeout,
+    wait_loop(Fun, Init, maps:get(interval, Opts, 10), Deadline).
+
+wait_loop(Fun, State, Interval, Deadline) ->
+    case Fun(State) of
+        {result, Result} ->
+            Result;
+        {wait, NewState} ->
+            case erlang:monotonic_time(millisecond) < Deadline of
+                true ->
+                    timer:sleep(Interval),
+                    wait_loop(Fun, NewState, Interval, Deadline);
+                false ->
+                    error(timeout)
+            end
+    end.
 
 normalize(Map) when is_map(Map) ->
     maps:fold(
