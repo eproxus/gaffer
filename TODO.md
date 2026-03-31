@@ -39,12 +39,21 @@
 - [X] Implement 'priority' support
 - [X] Review gaffer_queue_runner job functions that are only used in tests
     - Should they be exported like this? Are they needed?
+- [X] Implement retries and backoff
+- [X] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
+    - Implement `job_upsert/1` that takes multiple jobs and atomically inserts/updates
+      them
+- [ ] Define priority (should allow negative and make higher higher)
+- [ ] Add a global job pruner process that deletes stale/orphaned jobs
+    - Completed jobs that are older than X
+    - Jobs that failed and haven't been transferred to a DLQ
+    - Jobs belonging to queues that are no longer used (how to detect?)
+        - If many nodes upgrade to new config that abandons a queue, how do we
+          detect this? There is no cluster query
+    - Investigate if we can remove the `idx_gaffer_jobs_state` index?
 - [ ] `gaffer_driver_ets` could be reactive by triggering a poll
     - Should it only be reactive, i.e. we don't need poll_interval at all...
 - [ ] Starting pools using `gaffer_driver_pgo` crashes
-- [ ] Investigate if we can remove the `idx_gaffer_jobs_state` index?
-- [ ] Define priority (should allow negative and make higher higher)
-- [ ] Implement retries and backoff
 - [ ] Handle timeouts in runner
 - [ ] Do not expose the internal driver configuration in the exposed queue config
 - [ ] Add a public `migrations/1` function to the PGO driver to use together
@@ -83,19 +92,10 @@
     - on_success?
     - What about discarded state? What is it used for? (cleanup)
     - [ ] Handle deleting a queue that is referenced in on_discard
-- [ ] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
-    - Implement `job_upsert/1` that takes multiple jobs and atomically inserts/updates
-      them
 - [ ] Add support for LISTEN/NOTIFY
 - [ ] Performance tests
     - [ ] Test queries with EXPLAIN ANALYZE and large datasets
     - [ ] Performance test Erlang code with erlperf
-- [ ] Add a global job pruner process that deletes stale/orphaned jobs
-    - Completed jobs that are older than X
-    - Jobs that failed and haven't been transferred to a DLQ
-    - Jobs belonging to queues that are no longer used (how to detect?)
-        - If many nodes upgrade to new config that abandons a queue, how do we
-          detect this? There is no cluster query
 - [ ] Add property based tests
 - [ ] Document driver quirks
     - Postgres
