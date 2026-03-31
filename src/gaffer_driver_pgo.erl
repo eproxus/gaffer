@@ -13,12 +13,11 @@
 -export([queue_exists/2]).
 -export([queue_delete/2]).
 % Jobs
--export([job_insert/2]).
+-export([job_write/2]).
 -export([job_get/2]).
 -export([job_list/2]).
 -export([job_delete/2]).
 -export([job_claim/3]).
--export([job_update/2]).
 -export([job_prune/2]).
 % Introspection
 -export([info/2]).
@@ -156,11 +155,13 @@ decode_info_row(#{state := State, count := Count} = Row, Acc) ->
 % Jobs
 
 -doc false.
-job_insert(Job, #{pool := Pool}) ->
-    Encoded = encode_job(Job),
-    [#{rows := [Row]}] =
-        transaction(Pool, gaffer_postgres:job_insert(Encoded)),
-    decode_job(Row).
+job_write(Jobs, #{pool := Pool}) ->
+    Queries = lists:flatmap(
+        fun(Job) -> gaffer_postgres:job_write(encode_job(Job)) end,
+        Jobs
+    ),
+    Results = transaction(Pool, Queries),
+    [decode_job(Row) || #{rows := [Row]} <:- Results].
 
 -doc false.
 job_get(Id, #{pool := Pool}) ->
@@ -195,12 +196,6 @@ job_claim(Opts, Changes, #{pool := Pool}) ->
             Pool, gaffer_postgres:job_claim(EncodedOpts, EncodedChanges)
         ),
     [decode_job(R) || R <:- Rows].
-
--doc false.
-job_update(Job, #{pool := Pool}) ->
-    Encoded = encode_job(Job),
-    transaction(Pool, gaffer_postgres:job_update(Encoded)),
-    ok.
 
 -doc false.
 job_prune(Opts, #{pool := Pool}) ->

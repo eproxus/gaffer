@@ -3,6 +3,8 @@
 -export([harness/3]).
 -export([notify_hook/2, await_hook/0, await_hooks/1]).
 -export([pgo_pool_config/0, reset_database/1, stop_pool/1]).
+-export([register_queue/2]).
+-export([normalize/1]).
 
 %--- API ----------------------------------------------------------------------
 
@@ -60,6 +62,23 @@ stop_pool(Pool) ->
         undefined -> ok;
         Pid -> supervisor:terminate_child(pgo_sup, Pid)
     end.
+
+register_queue(Name, {Mod, DS}) -> Mod:queue_insert(Name, DS).
+
+normalize(Map) when is_map(Map) ->
+    maps:fold(
+        fun(K, V, Acc) -> Acc#{normalize(K) => normalize(V)} end, #{}, Map
+    );
+normalize(List) when is_list(List) ->
+    [normalize(E) || E <:- List];
+normalize(B) when is_binary(B) ->
+    try
+        binary_to_existing_atom(B)
+    catch
+        error:badarg -> B
+    end;
+normalize(Other) ->
+    Other.
 
 %--- Internal -----------------------------------------------------------------
 

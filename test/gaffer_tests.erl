@@ -3,6 +3,8 @@
 -behaviour(gaffer_hooks).
 -hank([{unnecessary_function_arguments, [driver_shorthand]}]).
 
+-import(gaffer_test_helpers, [normalize/1]).
+
 -export([gaffer_hook/3]).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -1311,20 +1313,6 @@ hook_global_queue(Driver) ->
     end.
 
 %--- Helpers ------------------------------------------------------------------
-
-normalize(Map) when is_map(Map) ->
-    Normalize = fun(K, V, Acc) -> Acc#{normalize(K) => normalize(V)} end,
-    maps:fold(Normalize, #{}, Map);
-normalize(List) when is_list(List) ->
-    [normalize(E) || E <:- List];
-normalize(B) when is_binary(B) ->
-    try
-        binary_to_existing_atom(B)
-    catch
-        error:badarg -> B
-    end;
-normalize(Other) ->
-    Other.
 
 make_hook() -> make_hook(hook).
 make_hook(Tag) ->

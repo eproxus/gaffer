@@ -77,8 +77,13 @@ Returns `{error, not_found}` if the queue name is not registered, or
     ok | {error, queue_error()}.
 
 % Jobs
--doc "Inserts a job into storage and returns it.".
--callback job_insert(gaffer:job(), driver_state()) -> gaffer:job().
+-doc """
+Writes a list of jobs to storage atomically.
+
+The driver determines insert-vs-update per job internally.
+Returns the written jobs in input order.
+""".
+-callback job_write([gaffer:job()], driver_state()) -> [gaffer:job()].
 
 -doc "Fetches a job by ID.".
 -callback job_get(gaffer:job_id(), driver_state()) -> gaffer:job() | not_found.
@@ -92,9 +97,6 @@ Returns `{error, not_found}` if the queue name is not registered, or
 -doc "Atomically claims available jobs for execution.".
 -callback job_claim(claim_opts(), job_changes(), driver_state()) ->
     [gaffer:job()].
-
--doc "Updates a job in storage.".
--callback job_update(gaffer:job(), driver_state()) -> ok.
 
 -doc "Prunes jobs in terminal states and returns the count removed.".
 -callback job_prune(prune_opts(), driver_state()) -> non_neg_integer().

@@ -15,12 +15,11 @@
 % Introspection
 -export([info/1]).
 % Jobs
--export([job_insert/1]).
+-export([job_write/1]).
 -export([job_get/1]).
 -export([job_list/1]).
 -export([job_delete/1]).
 -export([job_claim/2]).
--export([job_update/1]).
 -export([job_prune/1]).
 
 -doc """
@@ -184,16 +183,20 @@ info(Queue) ->
 
 % Jobs
 
--doc "Returns a query to insert a job and return the inserted row.".
--spec job_insert(map()) -> queries().
-job_insert(Encoded) ->
+-doc "Returns upsert queries for a single encoded job.".
+-spec job_write(map()) -> queries().
+job_write(Encoded) ->
     {Cols, Phs, Vals} = columns_and_values(Encoded),
+    Mutable = [C || C <:- Cols, not lists:member(C, immutable_columns())],
+    Sets = lists:join(~", ", [[C, ~" = EXCLUDED.", C] || C <:- Mutable]),
     SQL = [
         ~"INSERT INTO gaffer_jobs (",
         lists:join(~", ", Cols),
         ~") VALUES (",
         lists:join(~", ", Phs),
-        ~") RETURNING ",
+        ~") ON CONFLICT (id) DO UPDATE SET ",
+        Sets,
+        ~" RETURNING ",
         job_columns()
     ],
     [{SQL, Vals}].
@@ -317,21 +320,6 @@ job_claim(
     ],
     [{SQL, [Queue, Now, State, Now | LimitParams]}].
 
--doc "Query to update a job's fields.".
--spec job_update(map()) -> queries().
-job_update(Encoded) ->
-    #{id := Id} = Encoded,
-    Fields = maps:remove(id, Encoded),
-    {Sets, Vals} = set_clause(Fields),
-    N = length(Vals) + 1,
-    SQL = [
-        ~"UPDATE gaffer_jobs SET ",
-        Sets,
-        ~" WHERE id = $",
-        integer_to_binary(N)
-    ],
-    [{SQL, Vals ++ [Id]}].
-
 -doc "Query to delete jobs in terminal states.".
 -spec job_prune(map()) -> queries().
 job_prune(#{states := States}) ->
@@ -344,6 +332,8 @@ job_prune(#{states := States}) ->
     ].
 
 %--- Internal ------------------------------------------------------------------
+
+immutable_columns() -> [~"id", ~"queue", ~"inserted_at"].
 
 job_claim_effective_limit(infinity, infinity) ->
     {~"", []};
@@ -361,11 +351,6 @@ job_claim_effective_limit(Limit, GlobalMax) ->
         """,
         [Limit, GlobalMax]
     }.
-
-set_clause(Map) ->
-    {Cols, Phs, Vals} = columns_and_values(Map),
-    Sets = lists:join(~", ", [[C, ~" = ", P] || {C, P} <:- lists:zip(Cols, Phs)]),
-    {Sets, Vals}.
 
 columns_and_values(Map) ->
     Pairs = maps:to_list(Map),

@@ -11,12 +11,11 @@
 -export([queue_exists/2]).
 -export([queue_delete/2]).
 % Jobs
--export([job_insert/2]).
+-export([job_write/2]).
 -export([job_get/2]).
 -export([job_list/2]).
 -export([job_delete/2]).
 -export([job_claim/3]).
--export([job_update/2]).
 -export([job_prune/2]).
 % Introspection
 -export([info/2]).
@@ -84,9 +83,15 @@ queue_delete(Name, #{queues := Tab, queued := Queued, locked := Locked}) ->
 % Jobs
 
 -doc false.
-job_insert(#{id := Id} = Job, #{queued := Tab}) ->
-    true = ets:insert(Tab, {Id, Job}),
-    Job.
+job_write(Jobs, #{queued := Queued, locked := Locked}) ->
+    {QueuedJobs, LockedJobs} = lists:partition(
+        fun(#{state := S}) -> S =/= executing end, Jobs
+    ),
+    ets:insert(Queued, [{Id, J} || #{id := Id} = J <:- QueuedJobs]),
+    ets:insert(Locked, [{Id, J} || #{id := Id} = J <:- LockedJobs]),
+    [ets:delete(Locked, Id) || #{id := Id} <:- QueuedJobs],
+    [ets:delete(Queued, Id) || #{id := Id} <:- LockedJobs],
+    Jobs.
 
 -doc false.
 job_get(Id, #{queued := Queued, locked := Locked}) ->
@@ -136,22 +141,6 @@ job_claim(
     Sorted = lists:sort(fun compare_priority/2, Available),
     ToFetch = take(Sorted, Limit),
     claim_jobs(ToFetch, Changes, Queued, Locked, []).
-
--doc false.
-job_update(
-    #{id := Id, state := JobState} = Job,
-    #{queued := Queued, locked := Locked}
-) ->
-    % Move job to appropriate table based on state
-    case JobState of
-        executing ->
-            ets:delete(Queued, Id),
-            true = ets:insert(Locked, {Id, Job});
-        _ ->
-            ets:delete(Locked, Id),
-            true = ets:insert(Queued, {Id, Job})
-    end,
-    ok.
 
 -doc false.
 job_prune(#{states := States}, #{queued := Queued, locked := Locked}) ->

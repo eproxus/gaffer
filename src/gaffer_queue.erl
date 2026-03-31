@@ -182,7 +182,7 @@ insert_job(Queue, Payload, Opts) ->
         Hooks,
         [gaffer, job, insert],
         NewJob,
-        fun(Job) -> Mod:job_insert(Job, DS) end
+        fun(Job) -> hd(Mod:job_write([Job], DS)) end
     ).
 
 -spec get_job(gaffer:queue(), gaffer:job_id()) ->
@@ -227,10 +227,7 @@ cancel_job(Queue, JobId) ->
                         Hooks,
                         [gaffer, job, cancel],
                         Cancelled,
-                        fun(J) ->
-                            Mod:job_update(J, DS),
-                            J
-                        end
+                        fun(J) -> hd(Mod:job_write([J], DS)) end
                     ),
                     {ok, Written};
                 {error, _} = Err ->
@@ -243,12 +240,12 @@ cancel_job(Queue, JobId) ->
 -spec write_result(gaffer:queue(), gaffer_hooks:event(), gaffer:job()) ->
     {ok, gaffer:job()}.
 write_result(Queue, Event, Job) ->
-    #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
+    #{hooks := Hooks} = Conf = conf(Queue),
     Written = gaffer_hooks:with_hooks(Hooks, Event, Job, fun(J) ->
-        Mod:job_update(J, DS),
+        write_result_jobs(Conf, J),
         J
     end),
-    maybe_forward(Conf, Written),
+    run_forward_hooks(Conf, Written),
     {ok, Written}.
 
 -spec claim_jobs(gaffer:queue(), claim_opts()) ->
@@ -323,12 +320,39 @@ validate_on_discard(#{on_discard := Target}, Mod, DS) ->
 validate_on_discard(_, _, _) ->
     ok.
 
-% Forwarding
+write_result_jobs(#{driver := Driver} = Conf, #{state := discarded} = Job) ->
+    case Conf of
+        #{on_discard := Target} ->
+            #{driver := TargetDriver} = conf(Target),
+            Forwarded = gaffer_job:create(
+                conf(Target), gaffer_job:forward_payload(Job), #{}
+            ),
+            write_atomic(Driver, [Job], TargetDriver, [Forwarded]);
+        _ ->
+            write(Driver, [Job])
+    end;
+write_result_jobs(#{driver := Driver}, Job) ->
+    write(Driver, [Job]).
 
-maybe_forward(#{on_discard := Target}, #{state := discarded} = Job) ->
-    _ = insert_job(Target, gaffer_job:forward_payload(Job), #{}),
-    ok;
-maybe_forward(_, _) ->
+% Same driver: single atomic write
+write_atomic(Same, Jobs1, Same, Jobs2) ->
+    write(Same, Jobs2 ++ Jobs1);
+% Cross-driver: target first for at-least-once delivery
+write_atomic(Source, Jobs1, Target, Jobs2) ->
+    write(Target, Jobs2),
+    write(Source, Jobs1).
+
+write({Mod, DS}, Jobs) -> Mod:job_write(Jobs, DS).
+
+run_forward_hooks(#{on_discard := Target}, #{state := discarded} = Job) ->
+    #{hooks := Hooks} = conf(Target),
+    Forwarded = gaffer_job:create(
+        conf(Target), gaffer_job:forward_payload(Job), #{}
+    ),
+    gaffer_hooks:with_hooks(Hooks, [gaffer, job, insert], Forwarded, fun(J) ->
+        J
+    end);
+run_forward_hooks(_, _) ->
     ok.
 
 with_defaults(Conf) ->
