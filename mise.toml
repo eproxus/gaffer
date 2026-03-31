@@ -66,3 +66,8 @@ run = "rebar3 ex_doc"
 description = "Run all tests"
 env = { QUIET = "1" }
 run = "rebar3 eunit --cover"
+
+[tasks.uncovered]
+description = "Show uncovered lines in the current workspace"
+env = { QUIET = "1" }
+run = "rebar3 uncovered --format=raw --context=0 --git --counts=false"

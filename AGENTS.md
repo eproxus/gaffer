@@ -11,6 +11,7 @@ Gaffer is a reliable job queue implemented in Erlang/OTP.
 ```sh
 mise run --output=keep-order verify             # Run all linting
 mise run --output=keep-order test               # Run all tests (requires Docker for CT)
+mise run uncovered                              # Show uncovered lines for the current change
 mise run format                                 # Format all code
 mise run docs                                   # Generate documentation
 rebar3 eunit --module=gaffer_tests              # Run a single eunit module
@@ -122,7 +123,7 @@ After every change
 * Lint: `mise run --output=keep-order verify`
 * Docs: `mise run docs`
 * Test: `mise run --output=keep-order test`
-* Ensure all modified code is covered by tests using `rebar3 uncovered --format
-  raw --context 0 --git` to check coverage of changed lines
+* Ensure all modified code is covered by tests using `mise run uncovered` to
+  check coverage of changed lines
 * For substantial changes or new features, verify that total coverage did not go
   down from the baseline
