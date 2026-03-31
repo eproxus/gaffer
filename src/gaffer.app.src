@@ -5,7 +5,8 @@
     {applications, [
         kernel,
         stdlib,
-        keysmith
+        keysmith,
+        mapz
     ]},
     {optional_applications, [pgo]},
     {licenses, ["MIT"]},
