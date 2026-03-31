@@ -8,11 +8,16 @@
 -export([claim_changes/0]).
 -export([handle_crash/2]).
 -export([forward_payload/1]).
+-export([all_states/0]).
 
 % elp:ignore W0048 - dialyzer over-constrains types from internal call sites
 -dialyzer({no_match, [validate/1, create/3]}).
 
 %--- API -----------------------------------------------------------------------
+
+-doc false.
+-spec all_states() -> [gaffer:job_state()].
+all_states() -> [available, executing, completed, cancelled, discarded].
 
 -doc false.
 -spec execute(gaffer_worker:worker(), gaffer:job()) -> no_return().

@@ -8,6 +8,8 @@
 -export([create/1]).
 -export([ensure/1]).
 -export([delete/1]).
+-export([delete/2]).
+-export([orphaned/1]).
 -export([get/1]).
 -export([update/2]).
 -export([list/0]).
@@ -38,7 +40,7 @@
     limit := pos_integer()
 }.
 
--type prune_opts() :: #{states => [gaffer:job_state()]}.
+-type prune_opts() :: gaffer:max_age().
 
 -export_type([driver/0]).
 -export_type([queue_conf/0]).
@@ -79,7 +81,7 @@ create(Conf0) ->
                         {gaffer_queue, Name},
                         maps:merge(Conf, Validated)
                     ),
-                    {ok, _Pid} = gaffer_sup:start_queue(Name, Conf),
+                    {ok, _Pid} = gaffer_sup:start_queue(Name),
                     C
                 end
             ),
@@ -99,7 +101,7 @@ ensure(Conf0) ->
         {gaffer_queue, Name},
         maps:merge(Conf, Validated)
     ),
-    case ensure_runner(Name, Conf) of
+    case gaffer_queue_sup:ensure(Name) of
         created ->
             _ = gaffer_hooks:with_hooks(
                 Hooks, [gaffer, queue, create], Conf, fun(C) -> C end
@@ -126,6 +128,31 @@ delete(Name) ->
         end
     end),
     ok.
+
+-spec delete(gaffer:queue(), gaffer_driver:driver()) -> ok.
+delete(Name, {Mod, DS}) ->
+    % Stop supervisor and erase config if the queue is active
+    case persistent_term:get({gaffer_queue, Name}, undefined) of
+        undefined ->
+            ok;
+        #{hooks := Hooks} ->
+            _ = gaffer_hooks:with_hooks(
+                Hooks, [gaffer, queue, delete], Name, fun(N) -> N end
+            ),
+            ok = gaffer_sup:stop_queue(gaffer_queue_sup:pid(Name)),
+            persistent_term:erase({gaffer_queue, Name})
+    end,
+    % Delete all jobs, then the queue from storage
+    prune(Name, #{'_' => 0}, {Mod, DS}),
+    case Mod:queue_delete(Name, DS) of
+        ok -> ok;
+        {error, not_found} -> ok
+    end.
+
+-spec orphaned(gaffer_driver:driver()) -> [gaffer:queue()].
+orphaned({Mod, DS}) ->
+    ActiveQueues = [Name || {Name, _} <:- list()],
+    Mod:queue_list(DS) -- ActiveQueues.
 
 -spec list() -> [{gaffer:queue(), gaffer:queue_conf()}].
 list() -> lists:filtermap(fun queue_entry/1, persistent_term:get()).
@@ -263,13 +290,36 @@ claim_jobs(Queue, Opts) ->
         fun(_) -> Mod:job_claim(ClaimOpts, Changes, DS) end
     ).
 
--spec prune_jobs(gaffer:queue(), prune_opts()) -> non_neg_integer().
-prune_jobs(Queue, Opts) ->
-    #{driver := {Mod, DS}} = conf(Queue),
-    Defaults = #{states => [completed, discarded]},
-    Mod:job_prune(maps:merge(Defaults, Opts), DS).
+-spec prune_jobs(gaffer:queue(), prune_opts()) -> [gaffer:job_id()].
+prune_jobs(Queue, MaxAge) ->
+    #{driver := Driver, hooks := Hooks} = conf(Queue),
+    Ids = prune(Queue, MaxAge, Driver),
+    Event = [gaffer, job, delete],
+    _ = [gaffer_hooks:run_post_hooks(Hooks, Event, Id) || Id <:- Ids],
+    Ids.
 
 %--- Internal ------------------------------------------------------------------
+
+prune(Queue, MaxAge, Driver) ->
+    do_prune(Queue, normalize_max_age(MaxAge), Driver).
+
+do_prune(_Queue, Cutoffs, _Driver) when map_size(Cutoffs) =:= 0 -> [];
+do_prune(Queue, Cutoffs, {Mod, DS}) -> Mod:job_prune(Queue, Cutoffs, DS).
+
+normalize_max_age(MaxAge) ->
+    Default = maps:get('_', MaxAge, infinity),
+    Now = erlang:system_time(),
+    #{
+        S => cutoff(Age, Now)
+     || S <:- gaffer_job:all_states(),
+        Age <:- [maps:get(S, MaxAge, Default)],
+        Age =/= infinity
+    }.
+
+cutoff(0, _Now) ->
+    all;
+cutoff(AgeMs, Now) ->
+    Now - erlang:convert_time_unit(AgeMs, millisecond, native).
 
 clamp_limit(infinity, infinity) -> infinity;
 clamp_limit(infinity, GlobalMax) -> GlobalMax;
@@ -310,7 +360,7 @@ check_extra_keys(Map) ->
     end.
 
 strip_runtime(Conf) ->
-    maps:without([name, driver, worker, poll_interval, hooks], Conf).
+    maps:without([name, driver, worker, poll_interval, hooks, prune], Conf).
 
 validate_on_discard(#{on_discard := Target}) ->
     case persistent_term:get({gaffer_queue, Target}, undefined) of
@@ -356,21 +406,29 @@ run_forward_hooks(_, _) ->
     ok.
 
 with_defaults(Conf) ->
-    resolve_driver(maps:merge(#{hooks => [], poll_interval => 1000}, Conf)).
+    resolve_driver(
+        mapz:deep_merge(
+            #{
+                hooks => [],
+                poll_interval => 10,
+                prune => #{
+                    interval => 100,
+                    max_age => #{
+                        '_' => infinity,
+                        completed => 0,
+                        discarded => 0,
+                        cancelled => 0
+                    }
+                }
+            },
+            Conf
+        )
+    ).
 
 resolve_driver(#{driver := {_Mod, _DS}} = Conf) ->
     Conf;
 resolve_driver(#{driver := Name} = Conf) when is_atom(Name) ->
     Conf#{driver := gaffer_driver:lookup(Name)}.
-
-ensure_runner(Name, Conf) ->
-    case gaffer_sup:start_queue(Name, Conf) of
-        {ok, _Pid} ->
-            created;
-        {error, {already_started, _Pid}} ->
-            gaffer_queue_runner:reconfigure(Name),
-            updated
-    end.
 
 -spec conf(gaffer:queue()) -> queue_conf().
 conf(Name) ->

@@ -27,10 +27,14 @@
     attempted_at := gaffer:timestamp()
 }.
 
--doc "Options for pruning jobs.".
--type prune_opts() :: #{
-    states := [gaffer:job_state()]
-}.
+-doc """
+Options for pruning jobs.
+
+A map from job state to a cutoff time or `all`. Jobs matching the state whose
+state-specific timestamp is older than the cutoff time are deleted. `all` deletes
+every job in that state regardless of age.
+""".
+-type prune_opts() :: #{gaffer:job_state() => gaffer:timestamp() | all}.
 
 -doc "Errors returned by queue operations.".
 -type queue_error() :: not_found | has_jobs.
@@ -67,6 +71,9 @@ Used to validate `on_discard` references when creating or updating queues.
 """.
 -callback queue_exists(gaffer:queue(), driver_state()) -> boolean().
 
+-doc "Lists all queue names registered in storage.".
+-callback queue_list(driver_state()) -> [gaffer:queue()].
+
 -doc """
 Removes a queue name from storage.
 
@@ -98,8 +105,9 @@ Returns the written jobs in input order.
 -callback job_claim(claim_opts(), job_changes(), driver_state()) ->
     [gaffer:job()].
 
--doc "Prunes jobs in terminal states and returns the count removed.".
--callback job_prune(prune_opts(), driver_state()) -> non_neg_integer().
+-doc "Prunes jobs in terminal states for a queue and returns the pruned IDs.".
+-callback job_prune(gaffer:queue(), prune_opts(), driver_state()) ->
+    [gaffer:job_id()].
 
 % Introspection
 -doc "Returns aggregate job counts and timestamps per state for a queue.".

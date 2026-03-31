@@ -4,12 +4,10 @@
 -behaviour(gen_statem).
 
 % API
--ignore_xref(start_link/2).
--export([start_link/2]).
+-ignore_xref(start_link/1).
+-export([start_link/1]).
 -ignore_xref(poll/1).
 -export([poll/1]).
--ignore_xref(prune/2).
--export([prune/2]).
 -ignore_xref(reconfigure/1).
 -export([reconfigure/1]).
 -ignore_xref(info/1).
@@ -21,16 +19,12 @@
 
 %--- API -----------------------------------------------------------------------
 
--spec start_link(gaffer:queue(), gaffer_queue:queue_conf()) ->
-    gen_statem:start_ret().
-start_link(Name, _Conf) ->
+-spec start_link(gaffer:queue()) -> gen_statem:start_ret().
+start_link(Name) ->
     gen_statem:start_link({local, proc_name(Name)}, ?MODULE, Name, []).
 
 -spec poll(gaffer:queue()) -> ok.
 poll(Name) -> call(Name, poll).
-
--spec prune(gaffer:queue(), gaffer_queue:prune_opts()) -> non_neg_integer().
-prune(Name, Opts) -> call(Name, {prune, Opts}).
 
 -spec reconfigure(gaffer:queue()) -> ok.
 reconfigure(Name) -> call(Name, reconfigure).
@@ -62,8 +56,6 @@ handle_event({call, From}, reconfigure, _State, #{name := Name}) ->
     ]};
 handle_event({call, From}, info, _State, #{workers := Workers}) ->
     {keep_state_and_data, [{reply, From, map_size(Workers)}]};
-handle_event({call, From}, {prune, Opts}, _State, #{name := Name}) ->
-    {keep_state_and_data, [{reply, From, gaffer_queue:prune_jobs(Name, Opts)}]};
 handle_event(
     info,
     {'DOWN', _Ref, process, Pid, Reason},

@@ -11,6 +11,7 @@
 % Queues
 -export([queue_insert/1]).
 -export([queue_exists/1]).
+-export([queue_list/0]).
 -export([queue_delete/1]).
 % Introspection
 -export([info/1]).
@@ -20,7 +21,7 @@
 -export([job_list/1]).
 -export([job_delete/1]).
 -export([job_claim/2]).
--export([job_prune/1]).
+-export([job_prune/2]).
 
 -doc """
 A parameterized SQL query.
@@ -152,6 +153,10 @@ queue_insert(Name) ->
 queue_exists(Name) ->
     [{~"SELECT 1 FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
 
+-doc "Query to list all registered queue names.".
+-spec queue_list() -> queries().
+queue_list() -> [{~"SELECT name FROM gaffer_queues", []}].
+
 -doc "Query to delete a queue by name.".
 -spec queue_delete(gaffer:queue()) -> queries().
 queue_delete(Name) ->
@@ -162,16 +167,7 @@ queue_delete(Name) ->
 -doc "Query that aggregates job counts and timestamps per state.".
 -spec info(gaffer:queue()) -> queries().
 info(Queue) ->
-    TSCase =
-        ~"""
-    CASE state
-        WHEN 'available' THEN inserted_at
-        WHEN 'executing' THEN attempted_at
-        WHEN 'completed' THEN completed_at
-        WHEN 'cancelled' THEN cancelled_at
-        WHEN 'discarded' THEN discarded_at
-    END
-    """,
+    TSCase = ts_case_for_state(),
     SQL = [
         ~"SELECT state, COUNT(*) AS count, ",
         ts_column([~"MIN(", TSCase, ~")"], ~"oldest"),
@@ -320,18 +316,50 @@ job_claim(
     ],
     [{SQL, [Queue, Now, State, Now | LimitParams]}].
 
--doc "Query to delete jobs in terminal states.".
--spec job_prune(map()) -> queries().
-job_prune(#{states := States}) ->
-    TextArray = [atom_to_binary(S) || S <:- States],
-    [
-        {
-            ~"DELETE FROM gaffer_jobs WHERE state = ANY($1::text[]) RETURNING id",
-            [TextArray]
-        }
-    ].
+-doc "Query to delete jobs older than per-state cutoffs for a queue.".
+-spec job_prune(gaffer:queue(), map()) -> queries().
+job_prune(Queue, Opts) ->
+    {Clauses, Params, N} = maps:fold(fun prune_clause/3, {[], [], 1}, Opts),
+    QueueParam = [~"$", integer_to_binary(N)],
+    SQL = [
+        ~"DELETE FROM gaffer_jobs WHERE queue = ",
+        QueueParam,
+        ~" AND (",
+        lists:join(~" OR ", lists:reverse(Clauses)),
+        ~")",
+        ~" RETURNING id"
+    ],
+    [{SQL, lists:reverse(Params, [atom_to_binary(Queue)])}].
+
+prune_clause(State, all, {Cs, Ps, N}) ->
+    {[[~"(state = '", atom_to_binary(State), ~"')"] | Cs], Ps, N};
+prune_clause(State, Cutoff, {Cs, Ps, N}) ->
+    Col = state_timestamp_column(State),
+    StateName = atom_to_binary(State),
+    C = [~"(state = '", StateName, ~"' AND ", Col, older_than(N), ~")"],
+    {[C | Cs], [Cutoff | Ps], N + 1}.
+
+older_than(N) ->
+    [~" < to_timestamp($", integer_to_binary(N), ~"::bigint / 1000000.0)"].
 
 %--- Internal ------------------------------------------------------------------
+
+ts_case_for_state() ->
+    ~"""
+    CASE state
+        WHEN 'available' THEN inserted_at
+        WHEN 'executing' THEN attempted_at
+        WHEN 'completed' THEN completed_at
+        WHEN 'cancelled' THEN cancelled_at
+        WHEN 'discarded' THEN discarded_at
+    END
+    """.
+
+state_timestamp_column(available) -> ~"inserted_at";
+state_timestamp_column(executing) -> ~"attempted_at";
+state_timestamp_column(completed) -> ~"completed_at";
+state_timestamp_column(cancelled) -> ~"cancelled_at";
+state_timestamp_column(discarded) -> ~"discarded_at".
 
 immutable_columns() -> [~"id", ~"queue", ~"inserted_at"].
 

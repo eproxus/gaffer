@@ -9,6 +9,7 @@
 % Queues
 -export([queue_insert/2]).
 -export([queue_exists/2]).
+-export([queue_list/1]).
 -export([queue_delete/2]).
 % Jobs
 -export([job_write/2]).
@@ -16,7 +17,7 @@
 -export([job_list/2]).
 -export([job_delete/2]).
 -export([job_claim/3]).
--export([job_prune/2]).
+-export([job_prune/3]).
 % Introspection
 -export([info/2]).
 
@@ -58,8 +59,10 @@ queue_insert(Name, #{queues := Tab}) ->
     ok.
 
 -doc false.
-queue_exists(Name, #{queues := Tab}) ->
-    ets:member(Tab, Name).
+queue_exists(Name, #{queues := Tab}) -> ets:member(Tab, Name).
+
+-doc false.
+queue_list(#{queues := Tab}) -> ets:select(Tab, [{{'$1', '_'}, [], ['$1']}]).
 
 -doc false.
 queue_delete(Name, #{queues := Tab, queued := Queued, locked := Locked}) ->
@@ -143,21 +146,13 @@ job_claim(
     claim_jobs(ToFetch, Changes, Queued, Locked, []).
 
 -doc false.
-job_prune(#{states := States}, #{queued := Queued, locked := Locked}) ->
-    AllQ = [
-        {Id, Job}
-     || {Id, #{state := St} = Job} <:- ets:tab2list(Queued),
-        lists:member(St, States)
-    ],
-    AllL = [
-        {Id, Job}
-     || {Id, #{state := St} = Job} <:- ets:tab2list(Locked),
-        lists:member(St, States)
-    ],
-    Count = length(AllQ) + length(AllL),
-    _ = [ets:delete(Queued, Id) || {Id, _} <:- AllQ],
-    _ = [ets:delete(Locked, Id) || {Id, _} <:- AllL],
-    Count.
+job_prune(Queue, Opts, #{queued := Queued, locked := Locked}) ->
+    MS = prune_match_spec(Queue, Opts),
+    QueuedIds = ets:select(Queued, MS),
+    LockedIds = ets:select(Locked, MS),
+    [ets:delete(Queued, Id) || Id <:- QueuedIds],
+    [ets:delete(Locked, Id) || Id <:- LockedIds],
+    QueuedIds ++ LockedIds.
 
 % Introspection
 
@@ -206,6 +201,27 @@ info_timestamp(discarded, #{discarded_at := T}) -> T;
 info_timestamp(_, _) -> undefined.
 
 %--- Internal ------------------------------------------------------------------
+
+prune_match_spec(Queue, Opts) ->
+    {_, MS} = maps:fold(fun prune_clause/3, {Queue, []}, Opts),
+    MS.
+
+prune_clause(State, all, {Q, Clauses}) ->
+    {Q, [{{'$1', #{queue => Q, state => State}}, [], ['$1']} | Clauses]};
+prune_clause(State, Cutoff, {Q, Clauses}) ->
+    TSKey = state_timestamp_key(State),
+    Clause = {
+        {'$1', #{queue => Q, state => State, TSKey => '$2'}},
+        [{'<', '$2', Cutoff}],
+        ['$1']
+    },
+    {Q, [Clause | Clauses]}.
+
+state_timestamp_key(available) -> inserted_at;
+state_timestamp_key(executing) -> attempted_at;
+state_timestamp_key(completed) -> completed_at;
+state_timestamp_key(cancelled) -> cancelled_at;
+state_timestamp_key(discarded) -> discarded_at.
 
 apply_global_max(_Queue, Limit, infinity, _Locked) ->
     Limit;

@@ -11,6 +11,7 @@
 % Queues
 -export([queue_insert/2]).
 -export([queue_exists/2]).
+-export([queue_list/1]).
 -export([queue_delete/2]).
 % Jobs
 -export([job_write/2]).
@@ -18,7 +19,7 @@
 -export([job_list/2]).
 -export([job_delete/2]).
 -export([job_claim/3]).
--export([job_prune/2]).
+-export([job_prune/3]).
 % Introspection
 -export([info/2]).
 
@@ -112,6 +113,11 @@ queue_exists(Name, #{pool := Pool}) ->
     Rows =/= [].
 
 -doc false.
+queue_list(#{pool := Pool}) ->
+    [#{rows := Rows}] = transaction(Pool, gaffer_postgres:queue_list()),
+    [binary_to_existing_atom(Name) || #{name := Name} <:- Rows].
+
+-doc false.
 queue_delete(Name, #{pool := Pool}) ->
     try transaction(Pool, gaffer_postgres:queue_delete(Name)) of
         [#{num_rows := 1}] -> ok;
@@ -198,10 +204,12 @@ job_claim(Opts, Changes, #{pool := Pool}) ->
     [decode_job(R) || R <:- Rows].
 
 -doc false.
-job_prune(Opts, #{pool := Pool}) ->
-    [#{num_rows := Count}] =
-        transaction(Pool, gaffer_postgres:job_prune(Opts)),
-    Count.
+job_prune(Queue, Opts, #{pool := Pool}) ->
+    Encoded = maps:map(fun(_State, TS) -> encode_timestamp(TS) end, Opts),
+    [#{rows := Rows}] = transaction(
+        Pool, gaffer_postgres:job_prune(Queue, Encoded)
+    ),
+    [Id || #{id := Id} <:- Rows].
 
 %--- Internal ------------------------------------------------------------------
 
@@ -306,6 +314,8 @@ encode_list_opts(Opts) ->
         Opts
     ).
 
+encode_timestamp(all) ->
+    all;
 encode_timestamp(Native) ->
     erlang:convert_time_unit(Native, native, microsecond).
 

@@ -5,7 +5,7 @@
 
 % API
 -export([start_link/0]).
--export([start_queue/2]).
+-export([start_queue/1]).
 -export([stop_queue/1]).
 
 % Callbacks
@@ -16,10 +16,10 @@
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, _InitArgs = {}).
 
--spec start_queue(gaffer:queue(), gaffer_queue:queue_conf()) ->
+-spec start_queue(gaffer:queue()) ->
     {ok, pid()} | {error, {already_started, pid()}}.
-start_queue(Name, Conf) ->
-    case supervisor:start_child(?MODULE, [Name, Conf]) of
+start_queue(Name) ->
+    case supervisor:start_child(?MODULE, [Name]) of
         {ok, Pid} when is_pid(Pid) ->
             {ok, Pid};
         {error, {already_started, Pid}} when is_pid(Pid) ->

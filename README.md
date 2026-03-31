@@ -17,7 +17,7 @@ A reliable job queue implemented in Erlang.
 - [x] Pluggable storage drivers (ETS for dev/test, Postgres for production)
 - [x] Lifecycle hooks (pre/post on queue and job events)
 - [x] Dead-letter queues (`on_discard`)
-- [x] Queue introspection and manual job pruning
+- [x] Queue introspection and automatic/manual job pruning
 - [x] Delayed job scheduling
 - [x] Automatic retries with backoff
 - [ ] Drain and flush (graceful shutdown)
@@ -147,6 +147,23 @@ Queues are configured via `gaffer:queue_conf()` maps:
 - `hooks` (`[hook()]`, default = `[]`).
 
   Lifecycle hook modules or funs.
+
+- `prune` (`prune_conf()`)
+
+  Pruning configuration. A per-queue pruner periodically deletes jobs in
+  terminal states older than the configured max age.
+
+  - `interval` (`pos_integer() | infinity`)
+
+    Prune interval in ms.
+
+  - `max_age` (`#{job_state() | '_' => age()}`)
+
+    Per-state max age in milliseconds. `infinity` means never prune. `'_'` sets
+    a default for all states.
+
+    Default: `completed`, `discarded`, and `cancelled` jobs are pruned
+    immediately, others are kept indefinitely.
 
 ## Changelog
 

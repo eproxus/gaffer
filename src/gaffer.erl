@@ -21,6 +21,10 @@
 -export([update_queue/2]).
 -ignore_xref(delete_queue/1).
 -export([delete_queue/1]).
+-ignore_xref(delete_queue/2).
+-export([delete_queue/2]).
+-ignore_xref(orphaned_queues/1).
+-export([orphaned_queues/1]).
 -ignore_xref(list_queues/0).
 -export([list_queues/0]).
 % Enqueueing
@@ -39,6 +43,8 @@
 -export([flush/1]).
 -ignore_xref(flush/2).
 -export([flush/2]).
+-ignore_xref(prune/1).
+-export([prune/1]).
 % Queue Introspection
 -ignore_xref(info/1).
 -export([info/1]).
@@ -76,6 +82,10 @@ Job timestamp.
 An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 """.
 -type timestamp() :: integer() | {erlang:time_unit(), integer()}.
+
+-doc #{group => "Job Types"}.
+-doc "An age in milliseconds.".
+-type age() :: non_neg_integer() | infinity.
 
 -doc #{group => "Job Types"}.
 -doc "Maximum execution attempts for a job.".
@@ -141,6 +151,23 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -type max_workers() :: pos_integer() | infinity.
 
 -doc #{group => "Queue Types"}.
+-doc "An interval in milliseconds.".
+-type interval() :: pos_integer() | infinity.
+
+-doc #{group => "Queue Types"}.
+-doc "Maximum age per job state, in milliseconds.".
+-type max_age() :: #{job_state() | '_' => age()}.
+
+-doc #{group => "Queue Types"}.
+-doc """
+Pruning configuration for a queue.
+
+When set, a per-queue pruner process periodically deletes jobs in terminal
+states older than the configured `max_age` (in milliseconds).
+""".
+-type prune_conf() :: #{interval := interval(), max_age => max_age()}.
+
+-doc #{group => "Queue Types"}.
 -doc "Queue configuration.".
 -type queue_conf() :: #{
     name := queue(),
@@ -148,14 +175,15 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     worker := gaffer_worker:worker(),
     global_max_workers => max_workers(),
     max_workers => max_workers(),
-    poll_interval => pos_integer() | infinity,
+    poll_interval => interval(),
     shutdown_timeout => shutdown_timeout(),
     max_attempts => max_attempts(),
     timeout => timeout_ms(),
     backoff => backoff(),
     priority => priority(),
     on_discard => queue(),
-    hooks => [gaffer_hooks:hook()]
+    hooks => [gaffer_hooks:hook()],
+    prune => prune_conf()
 }.
 
 -doc #{group => "Queue Types"}.
@@ -192,6 +220,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -export_type([job_state/0]).
 -export_type([queue/0]).
 -export_type([timestamp/0]).
+-export_type([age/0]).
 -export_type([max_attempts/0]).
 -export_type([priority/0]).
 -export_type([timeout_ms/0]).
@@ -201,6 +230,9 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -export_type([job_opts/0]).
 -export_type([job_error/0]).
 -export_type([max_workers/0]).
+-export_type([interval/0]).
+-export_type([max_age/0]).
+-export_type([prune_conf/0]).
 -export_type([queue_conf/0]).
 -export_type([job_filter/0]).
 -export_type([state_info/0]).
@@ -253,6 +285,21 @@ update_queue(Name, Updates) ->
 -spec delete_queue(queue()) -> ok.
 delete_queue(Name) ->
     gaffer_queue:delete(Name).
+
+-doc #{group => "Queue Management"}.
+-doc """
+Deletes a queue using an explicit driver.
+
+Also works for orphaned queues not initialized at runtime, as returned by
+`orphaned_queues/1`.
+""".
+-spec delete_queue(queue(), gaffer_driver:driver()) -> ok.
+delete_queue(Name, Driver) -> gaffer_queue:delete(Name, Driver).
+
+-doc #{group => "Queue Management"}.
+-doc "Lists queues in storage that are not in the runtime configuration.".
+-spec orphaned_queues(gaffer_driver:driver()) -> [queue()].
+orphaned_queues(Driver) -> gaffer_queue:orphaned(Driver).
 
 -doc #{group => "Queue Management"}.
 -doc "Lists all queues.".
@@ -317,6 +364,11 @@ flush(Queue) ->
 flush(_Queue, _Timeout) ->
     % TODO: process all remaining items in the queue until empty
     error(not_implemented).
+
+-doc #{group => "Job Lifecycle"}.
+-doc "Triggers an immediate prune of stale jobs in the given queue.".
+-spec prune(queue()) -> [job_id()].
+prune(Queue) -> gaffer_queue_pruner:prune(Queue).
 
 % Queue Introspection
 

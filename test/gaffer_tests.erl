@@ -14,7 +14,8 @@
     name => ?Q,
     driver => Driver,
     worker => gaffer_test_worker,
-    poll_interval => infinity
+    poll_interval => infinity,
+    prune => #{interval => infinity}
 }).
 -define(CONF(Driver, Extra), maps:merge(?CONF(Driver), Extra)).
 
@@ -82,7 +83,15 @@ gaffer_test_() ->
         % Priority
         fun claim_priority_order/1,
         % Prune
-        fun prune/1,
+        fun prune_max_age/1,
+        fun prune_per_state_cutoffs/1,
+        fun prune_infinity/1,
+        fun prune_zero/1,
+        fun prune_wildcard/1,
+        fun prune_wildcard_infinity_with_override/1,
+        fun prune_wildcard_zero_with_override/1,
+        fun pruner_process/1,
+        fun pruner_manual_trigger/1,
         % Polling
         fun poll_worker_lifecycle/1,
         fun poll_worker_crash_fails_job/1,
@@ -121,7 +130,9 @@ gaffer_test_() ->
     Sequential = [
         % Hook tests that affect global state
         fun hook_module/1,
-        fun hook_global_queue/1
+        fun hook_global_queue/1,
+        % Orphaned queue tests (restart app)
+        fun orphaned_queues/1
     ],
     [
         gaffer_test_helpers:harness(gaffer_driver_ets, Parallel, Sequential),
@@ -651,12 +662,159 @@ claim_priority_order(Driver) ->
 
 %--- Prune tests --------------------------------------------------------------
 
-prune(Driver) ->
-    ok = gaffer:create_queue(?CONF(Driver)),
+prune_max_age(Driver) ->
+    PruneConf = #{interval => infinity, max_age => #{cancelled => 5_000}},
+    ok = gaffer:create_queue(?CONF(Driver, #{prune => PruneConf})),
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    #{id := Id2} = gaffer:insert(?Q, #{task => 2}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    {ok, _} = gaffer:cancel(?Q, Id2),
+    % Jobs are fresh — 5s max_age should not prune them
+    ?assertEqual([], gaffer:prune(?Q)),
+    ?assertEqual(
+        lists:sort([Id1, Id2]),
+        lists:sort([Id || #{id := Id} <:- gaffer:list(?Q)])
+    ),
+    timer:sleep(10),
+    % After sleeping, re-configure to 1ms max_age — now they're old enough
+    PruneConf2 = #{interval => infinity, max_age => #{cancelled => 1}},
+    ok = gaffer:ensure_queue(?CONF(Driver, #{prune => PruneConf2})),
+    ?assertEqual(lists:sort([Id1, Id2]), lists:sort(gaffer:prune(?Q))),
+    ?assertEqual([], gaffer:list(?Q)).
+
+prune_per_state_cutoffs(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    % Create a cancelled job
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    % Create a completed job (need to execute it)
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    _ = gaffer:insert(?Q, #{~"action" => ~"complete", ~"test_pid" => TestPid}),
+    gaffer_queue_runner:poll(?Q),
+    gaffer_test_helpers:await_hook(),
+    % Prune only completed (age 0 = all)
+    ?assertMatch([_], gaffer_queue:prune_jobs(?Q, #{completed => 0})),
+    % The cancelled job should still exist
+    ?assertMatch([#{id := Id1}], gaffer:list(?Q)).
+
+pruner_process(Driver) ->
+    % Short interval so the pruner fires quickly
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, delete]]),
+    PruneConf = #{interval => 10, max_age => #{cancelled => 0}},
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{prune => PruneConf, hooks => [Hook]})
+    ),
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    % Wait for the first prune cycle to delete the job
+    gaffer_test_helpers:await_hook(),
+    ?assertEqual([], gaffer:list(?Q)),
+    % Insert and cancel another job, verify second prune cycle picks it up
+    #{id := Id2} = gaffer:insert(?Q, #{task => 2}),
+    {ok, _} = gaffer:cancel(?Q, Id2),
+    gaffer_test_helpers:await_hook(),
+    ?assertEqual([], gaffer:list(?Q)).
+
+pruner_manual_trigger(Driver) ->
+    PruneConf = #{interval => infinity, max_age => #{cancelled => 0}},
+    ok = gaffer:create_queue(?CONF(Driver, #{prune => PruneConf})),
     #{id := Id} = gaffer:insert(?Q, #{task => 1}),
     {ok, _} = gaffer:cancel(?Q, Id),
-    Count = gaffer_queue_runner:prune(?Q, #{states => [cancelled]}),
-    ?assert(Count >= 1).
+    ?assertMatch([#{id := Id}], gaffer:list(?Q)),
+    % Manual trigger via public API
+    gaffer:prune(?Q),
+    ?assertEqual([], gaffer:list(?Q)).
+
+prune_infinity(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    #{id := Id2} = gaffer:insert(?Q, #{task => 2}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    {ok, _} = gaffer:cancel(?Q, Id2),
+    % infinity = delete nothing (technically "jobs older than infinity")
+    ?assertEqual([], gaffer_queue:prune_jobs(?Q, #{cancelled => infinity})),
+    ?assertEqual(
+        lists:sort([Id1, Id2]),
+        lists:sort([Id || #{id := Id} <:- gaffer:list(?Q)])
+    ).
+
+prune_zero(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    #{id := Id2} = gaffer:insert(?Q, #{task => 2}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    {ok, _} = gaffer:cancel(?Q, Id2),
+    % 0 = delete all cancelled older than 0
+    ?assertEqual(
+        lists:sort([Id1, Id2]),
+        lists:sort(gaffer_queue:prune_jobs(?Q, #{cancelled => 0}))
+    ),
+    ?assertEqual([], gaffer:list(?Q)).
+
+prune_wildcard(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    % Create a cancelled job
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    % Create a completed job
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    #{id := Id2} = gaffer:insert(?Q, #{
+        ~"action" => ~"complete", ~"test_pid" => TestPid
+    }),
+    gaffer_queue_runner:poll(?Q),
+    gaffer_test_helpers:await_hook(),
+    % Also an available job still in the queue
+    #{id := Id3} = gaffer:insert(?Q, #{task => 3}),
+    % '_' => infinity deletes nothing
+    ?assertEqual([], gaffer_queue:prune_jobs(?Q, #{'_' => infinity})),
+    ?assertEqual(
+        lists:sort([Id1, Id2, Id3]),
+        lists:sort([Id || #{id := Id} <:- gaffer:list(?Q)])
+    ),
+    % '_' => 0 deletes everything
+    ?assertEqual(
+        lists:sort([Id1, Id2, Id3]),
+        lists:sort(gaffer_queue:prune_jobs(?Q, #{'_' => 0}))
+    ),
+    ?assertEqual([], gaffer:list(?Q)).
+
+prune_wildcard_infinity_with_override(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    #{id := Id2} = gaffer:insert(?Q, #{task => 2}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    {ok, _} = gaffer:cancel(?Q, Id2),
+    % Also an available job
+    #{id := Id3} = gaffer:insert(?Q, #{task => 3}),
+    % '_' => infinity (keep everything) except cancelled => 0 (override)
+    ?assertEqual(
+        lists:sort([Id1, Id2]),
+        lists:sort(
+            gaffer_queue:prune_jobs(?Q, #{'_' => infinity, cancelled => 0})
+        )
+    ),
+    % The available job should still exist
+    ?assertMatch([#{id := Id3}], gaffer:list(?Q)).
+
+prune_wildcard_zero_with_override(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    #{id := Id1} = gaffer:insert(?Q, #{task => 1}),
+    #{id := Id2} = gaffer:insert(?Q, #{task => 2}),
+    {ok, _} = gaffer:cancel(?Q, Id1),
+    {ok, _} = gaffer:cancel(?Q, Id2),
+    % Also an available job
+    #{id := _Id3} = gaffer:insert(?Q, #{task => 3}),
+    % '_' => 0 (drop everything) except cancelled => infinity (override)
+    ?assertMatch(
+        [_], gaffer_queue:prune_jobs(?Q, #{'_' => 0, cancelled => infinity})
+    ),
+    % The cancelled jobs should still exist
+    ?assertEqual(
+        lists:sort([Id1, Id2]),
+        lists:sort([Id || #{id := Id} <:- gaffer:list(?Q)])
+    ).
 
 %--- Polling tests ------------------------------------------------------------
 
@@ -1276,6 +1434,45 @@ hook_global_queue(Driver) ->
     after
         application:unset_env(gaffer, hooks)
     end.
+
+%--- Orphaned queue tests (sequential) ----------------------------------------
+
+orphaned_queues(Driver) ->
+    % Create two queues with jobs
+    QueueA = orphaned_queues_a,
+    QueueB = orphaned_queues_b,
+    ConfA = #{
+        name => QueueA,
+        driver => Driver,
+        worker => gaffer_test_worker,
+        poll_interval => infinity
+    },
+    ConfB = #{
+        name => QueueB,
+        driver => Driver,
+        worker => gaffer_test_worker,
+        poll_interval => infinity
+    },
+    ok = gaffer:create_queue(ConfA),
+    ok = gaffer:create_queue(ConfB),
+    _ = gaffer:insert(QueueA, #{task => 1}),
+    _ = gaffer:insert(QueueB, #{task => 2}),
+
+    % Simulate restart: stop gaffer, re-start, only ensure queue_a
+    ok = application:stop(gaffer),
+    {ok, _} = application:ensure_all_started(gaffer),
+    ok = gaffer:ensure_queue(ConfA),
+
+    % Verify orphaned
+    Orphaned = gaffer:orphaned_queues(Driver),
+    ?assert(lists:member(QueueB, Orphaned)),
+    ?assertNot(lists:member(QueueA, Orphaned)),
+
+    % Delete the orphaned queue
+    ok = gaffer:delete_queue(QueueB, Driver),
+
+    % Verify gone
+    ?assertNot(lists:member(QueueB, gaffer:orphaned_queues(Driver))).
 
 %--- Helpers ------------------------------------------------------------------
 

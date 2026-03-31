@@ -17,6 +17,7 @@
 
 % API
 -export([with_hooks/4]).
+-export([run_post_hooks/3]).
 
 %--- API -----------------------------------------------------------------------
 
@@ -32,6 +33,11 @@ with_hooks(QueueHooks, Event, Data, Fun) ->
             Data2 = Fun(Data1),
             run_hooks(post, Hooks, Event, Data2)
     end.
+
+-doc false.
+-spec run_post_hooks([hook()], event(), term()) -> term().
+run_post_hooks(QueueHooks, Event, Data) ->
+    run_hooks(post, resolve(QueueHooks), Event, Data).
 
 %--- Internal ------------------------------------------------------------------
 

@@ -44,28 +44,37 @@
     - Implement `job_upsert/1` that takes multiple jobs and atomically inserts/updates
       them
 - [X] Define priority (should allow negative and make higher higher)
-- [ ] Add a global job pruner process that deletes stale/orphaned jobs
+- [X] Add a global job pruner process that deletes stale/orphaned jobs
     - Completed jobs that are older than X
     - Jobs that failed and haven't been transferred to a DLQ
     - Jobs belonging to queues that are no longer used (how to detect?)
         - If many nodes upgrade to new config that abandons a queue, how do we
           detect this? There is no cluster query
     - Should we remove/replace the `idx_gaffer_jobs_state` index?
-- [ ] `gaffer_driver_ets` could be reactive by triggering a poll
-    - Should it only be reactive, i.e. we don't need poll_interval at all...
-- [ ] Starting pools using `gaffer_driver_pgo` crashes
-- [ ] Handle timeouts in runner
-- [ ] Do not expose the internal driver configuration in the exposed queue config
-- [ ] Add a public `migrations/1` function to the PGO driver to use together
-      with rollback
-- [ ] Make job ID output format configurable (hex, type_id etc.)
-- [ ] Make job ID UUID format configurable (`v4` etc.)
-- [ ] Implement drain and flush
+- [ ] Rename `Id` to `ID` throughout the code base
+- [ ] Create Hex release action
+- [ ] Clean up PGO driver to remove the `#{rows := ...}` pattern
+- [ ] Change await_hooks in the tests to wait for a specific hook
+- [ ] Remove the pre-hooks completely
+- [ ] Implement job drainning
     - There has to be a way to pause the runner from claiming new jobs
         - Does a user facing drain make sense without a pause/resume API?
     - Application pre-stop should then drain by default
         - Then we can use short supervisor shutdown times to detect bugs in
           processes that fail to shutdown
+- [ ] Add pause/resume functionality to the queue runner with a public API
+    - `pause(Queue)`, `resume(Queue)`
+    - Running jobs should finish (implicit draining)
+        - Maybe add opts to control this?
+- [ ] Handle timeouts in runner
+- [ ] Add a public `migrations/1` function to the PGO driver to use together
+      with rollback
+- [ ] `gaffer_driver_ets` could be reactive by triggering a poll
+    - Should it only be reactive, i.e. we don't need poll_interval at all...
+- [ ] Starting pools using `gaffer_driver_pgo` crashes
+- [ ] Do not expose the internal driver configuration in the exposed queue config
+- [ ] Make job ID output format configurable (hex, type_id etc.)
+- [ ] Make job ID UUID format configurable (`v4` etc.)
 - [ ] Jobs payloads must be JSON encodable
     - We validate all payloads that the user passes in with an try-encode pass?
     - We figure out a way to do term_to_json and json_to_term?
@@ -83,6 +92,17 @@
                   print_term_to_binary(B)
           end;
       ```
+- [ ] Implement job flushing
+    - In contrast to draining, which just waits for running jobs to finish,
+      flushing waits for the whole queue to be emptied
+- [ ] Evaluate ETS driver atomicity
+    - Currently the pruning is not atomic (multiple asynchronous selects and
+      deletes)
+    - We could do parallel reads against ETS directly and serialize writes
+      through a process
+- [ ] Create Postgres performance test
+    - Should initialize a huge dataset
+    - Run queries with explain and print the result
 - [ ] Review and deduplicate tests
     - Use queue info to verify test state?
 - [ ] More hooks
