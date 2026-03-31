@@ -40,9 +40,10 @@ init({} = _InitArgs) ->
         period => 10
     },
     ChildSpec = #{
-        id => gaffer_queue_runner,
-        start => {gaffer_queue_runner, start_link, []},
+        id => gaffer_queue_sup,
+        start => {gaffer_queue_sup, start_link, []},
         restart => transient,
-        shutdown => 5000
+        shutdown => 10_000,
+        type => supervisor
     },
     {ok, {SupFlags, [ChildSpec]}}.

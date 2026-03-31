@@ -118,7 +118,7 @@ delete(Name) ->
     _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, delete], Name, fun(N) ->
         case Mod:queue_delete(Name, DS) of
             ok ->
-                ok = gaffer_sup:stop_queue(gaffer_queue_runner:pid(Name)),
+                ok = gaffer_sup:stop_queue(gaffer_queue_sup:pid(Name)),
                 persistent_term:erase({gaffer_queue, Name}),
                 N;
             {error, has_jobs} ->

@@ -14,7 +14,6 @@
 -export([reconfigure/1]).
 -ignore_xref(info/1).
 -export([info/1]).
--export([pid/1]).
 % gen_statem Callbacks
 -export([callback_mode/0]).
 -export([init/1]).
@@ -38,12 +37,6 @@ reconfigure(Name) -> call(Name, reconfigure).
 
 -spec info(gaffer:queue()) -> non_neg_integer().
 info(Name) -> call(Name, info).
-
--spec pid(gaffer:queue()) -> pid().
-pid(Name) ->
-    Pid = erlang:whereis(proc_name(Name)),
-    true = is_pid(Pid),
-    Pid.
 
 %--- gen_statem Callbacks ------------------------------------------------------
 
