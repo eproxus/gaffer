@@ -82,7 +82,7 @@ migrations(#{}) ->
                 % Query indexes
                 ~"""
                 CREATE INDEX idx_gaffer_jobs_claimable
-                    ON gaffer_jobs (queue, priority, inserted_at)
+                    ON gaffer_jobs (queue, priority DESC, inserted_at ASC)
                     WHERE state = 'available'
                 """,
                 ~"""
@@ -301,7 +301,7 @@ job_claim(
               AND state = 'available'
               AND (scheduled_at IS NULL
                    OR scheduled_at <= to_timestamp($2::bigint / 1000000.0))
-            ORDER BY priority ASC, inserted_at ASC
+            ORDER BY priority DESC, inserted_at ASC
         """,
         LimitClause,
         ~"""

@@ -43,7 +43,7 @@
 - [X] Figure out a way to make on_discard atomic for Postgres (without messing with ETS)
     - Implement `job_upsert/1` that takes multiple jobs and atomically inserts/updates
       them
-- [ ] Define priority (should allow negative and make higher higher)
+- [X] Define priority (should allow negative and make higher higher)
 - [ ] Add a global job pruner process that deletes stale/orphaned jobs
     - Completed jobs that are older than X
     - Jobs that failed and haven't been transferred to a DLQ

@@ -81,8 +81,8 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -doc "Maximum execution attempts for a job.".
 -type max_attempts() :: pos_integer().
 -doc #{group => "Job Types"}.
--doc "Job priority.".
--type priority() :: non_neg_integer().
+-doc "Job priority. Higher values are processed first.".
+-type priority() :: integer().
 -doc #{group => "Job Types"}.
 -doc "Execution timeout in milliseconds.".
 -type timeout_ms() :: pos_integer().

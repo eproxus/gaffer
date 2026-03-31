@@ -164,7 +164,7 @@ validate(#{queue := Queue} = Job) ->
             invalid_max_attempts
         },
         {
-            fun() -> maps:get(priority, Job, 0) >= 0 end,
+            fun() -> is_integer(maps:get(priority, Job, 0)) end,
             invalid_priority
         }
     ],

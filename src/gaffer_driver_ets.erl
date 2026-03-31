@@ -223,26 +223,19 @@ take(List, N) -> lists:sublist(List, max(0, N)).
 is_scheduled_future(#{scheduled_at := At}, Now) -> At > Now;
 is_scheduled_future(_, _Now) -> false.
 
-compare_priority(#{priority := P1}, #{priority := P2}) when
-    P1 =/= P2
-->
-    P1 < P2;
+compare_priority(#{priority := P1}, #{priority := P2}) when P1 =/= P2 ->
+    P1 > P2;
 compare_priority(A, B) ->
-    maps:get(inserted_at, A, undefined) =<
-        maps:get(inserted_at, B, undefined).
+    maps:get(inserted_at, A, undefined) =< maps:get(inserted_at, B, undefined).
 
 claim_jobs([], _Changes, _Queued, _Locked, Acc) ->
     lists:reverse(Acc);
-claim_jobs(
-    [#{id := Id} | Rest], Changes, Queued, Locked, Acc
-) ->
+claim_jobs([#{id := Id} | Rest], Changes, Queued, Locked, Acc) ->
     case ets:take(Queued, Id) of
         [{Id, Job}] ->
             Updated = maps:merge(Job, Changes),
             true = ets:insert(Locked, {Id, Updated}),
-            claim_jobs(
-                Rest, Changes, Queued, Locked, [Updated | Acc]
-            );
+            claim_jobs(Rest, Changes, Queued, Locked, [Updated | Acc]);
         [] ->
             claim_jobs(Rest, Changes, Queued, Locked, Acc)
     end.

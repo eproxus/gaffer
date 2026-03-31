@@ -131,9 +131,10 @@ Queues are configured via `gaffer:queue_conf()` maps:
 
   Retry backoff schedule in ms.
 
-- `priority` (`non_neg_integer()`, default = `0`).
+- `priority` (`integer()`, default = `0`).
 
-  Default job priority (lower = higher).
+  Default job priority. Can be negative. Jobs with higher values are claimed
+  first.
 
 - `shutdown_timeout` (`pos_integer()`, default = `5000`).
 

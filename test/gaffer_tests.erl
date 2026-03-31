@@ -79,6 +79,8 @@ gaffer_test_() ->
         % Claim
         fun claim_global_max/1,
         fun claim_max_workers_infinity/1,
+        % Priority
+        fun claim_priority_order/1,
         % Prune
         fun prune/1,
         % Polling
@@ -683,6 +685,32 @@ claim_max_workers_infinity(Driver) ->
     ],
     ?assertEqual(5, length(gaffer:list(?Q, #{state => executing}))),
     [P ! continue || P <:- Pids].
+
+%--- Priority tests -----------------------------------------------------------
+
+claim_priority_order(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{max_workers => 1, hooks => [Hook]})
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"block", ~"test_pid" => TestPid},
+    #{id := Id1} = gaffer:insert(?Q, Payload, #{priority => 5}),
+    #{id := Id2} = gaffer:insert(?Q, Payload, #{priority => -1}),
+    #{id := Id3} = gaffer:insert(?Q, Payload, #{priority => 5}),
+    #{id := Id4} = gaffer:insert(?Q, Payload, #{priority => 0}),
+    % Claim and verify order: 5 (first), 5 (second), 0, -1
+    Claim = fun() ->
+        ok = gaffer_queue_runner:poll(?Q),
+        receive
+            {job_started, #{id := Id, worker := W}} ->
+                W ! continue,
+                gaffer_test_helpers:await_hook(),
+                Id
+        after 5000 -> error(timeout)
+        end
+    end,
+    ?assertEqual([Id1, Id3, Id4, Id2], [Claim(), Claim(), Claim(), Claim()]).
 
 %--- Prune tests --------------------------------------------------------------
 
