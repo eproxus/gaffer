@@ -68,7 +68,7 @@ create(Conf0) ->
     case persistent_term:get({gaffer_queue, Name}, undefined) of
         undefined ->
             Validated = validate_conf(strip_runtime(Conf)),
-            validate_on_discard(Conf, Mod, DS),
+            validate_on_discard(Conf),
             _ = gaffer_hooks:with_hooks(
                 Hooks,
                 [gaffer, queue, create],
@@ -93,7 +93,7 @@ ensure(Conf0) ->
     #{name := Name, driver := {Mod, DS}, hooks := Hooks} =
         Conf = with_defaults(Conf0),
     Validated = validate_conf(strip_runtime(Conf)),
-    validate_on_discard(Conf, Mod, DS),
+    validate_on_discard(Conf),
     Mod:queue_insert(Name, DS),
     persistent_term:put(
         {gaffer_queue, Name},
@@ -144,10 +144,10 @@ get(Name) ->
 -spec update(gaffer:queue(), map()) -> ok.
 update(Name, Updates) ->
     Validated = validate_updates(strip_runtime(Updates)),
-    #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Name),
+    #{hooks := Hooks} = Conf = conf(Name),
     MergedConf = maps:merge(Conf, Validated),
     _ = validate_conf(strip_runtime(MergedConf)),
-    validate_on_discard(MergedConf, Mod, DS),
+    validate_on_discard(MergedConf),
     _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, update], Updates, fun(U) ->
         persistent_term:put({gaffer_queue, Name}, MergedConf),
         gaffer_queue_runner:reconfigure(Name),
@@ -312,12 +312,12 @@ check_extra_keys(Map) ->
 strip_runtime(Conf) ->
     maps:without([name, driver, worker, poll_interval, hooks], Conf).
 
-validate_on_discard(#{on_discard := Target}, Mod, DS) ->
-    case Mod:queue_exists(Target, DS) of
-        true -> ok;
-        false -> error({on_discard_queue_not_found, Target})
+validate_on_discard(#{on_discard := Target}) ->
+    case persistent_term:get({gaffer_queue, Target}, undefined) of
+        undefined -> error({on_discard_queue_not_found, Target});
+        _ -> ok
     end;
-validate_on_discard(_, _, _) ->
+validate_on_discard(_) ->
     ok.
 
 write_result_jobs(#{driver := Driver} = Conf, #{state := discarded} = Job) ->

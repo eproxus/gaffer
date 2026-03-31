@@ -3,7 +3,6 @@
 -export([harness/3]).
 -export([notify_hook/2, await_hook/0, await_hooks/1]).
 -export([pgo_pool_config/0, reset_database/1, stop_pool/1]).
--export([register_queue/2]).
 -export([normalize/1]).
 -export([wait_for/2, wait_for/3]).
 
@@ -63,8 +62,6 @@ stop_pool(Pool) ->
         undefined -> ok;
         Pid -> supervisor:terminate_child(pgo_sup, Pid)
     end.
-
-register_queue(Name, {Mod, DS}) -> Mod:queue_insert(Name, DS).
 
 wait_for(Fun, Init) -> wait_for(Fun, Init, #{}).
 

@@ -36,7 +36,6 @@ forward_survives_source_failure(#{ets := Ets, pgo := Pgo}) ->
         worker => gaffer_test_worker,
         poll_interval => infinity
     }),
-    gaffer_test_helpers:register_queue(survive_dlq, Ets),
     ok = gaffer:create_queue(#{
         name => survive_src,
         driver => FailingSource,
@@ -82,8 +81,6 @@ forward(SrcDriver, DlqDriver, SrcQueue, DlqQueue) ->
         poll_interval => infinity,
         hooks => [DlqHook]
     }),
-    % Register DLQ name in source driver so on_discard validation passes
-    gaffer_test_helpers:register_queue(DlqQueue, SrcDriver),
     ok = gaffer:create_queue(#{
         name => SrcQueue,
         driver => SrcDriver,
