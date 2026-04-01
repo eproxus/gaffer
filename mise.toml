@@ -66,4 +66,5 @@ description = "Run all tests"
 run = """
 rebar3 eunit --cover
 rebar3 cover --precision 3
+./scripts/cover_export.escript
 """
