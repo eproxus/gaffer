@@ -32,7 +32,7 @@ rebar3 ex_doc
 description = "Run ELP checks"
 run = """
 elp lint
-elp eqwalize-all
+elp eqwalize-all --rebar --as test
 """
 
 [tasks."verify:markdown"]

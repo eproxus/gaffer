@@ -25,7 +25,9 @@ jobs:
             ~/.cache/rebar3
             _build
             !_build/test/logs
-          key: rebar3-${{runner.os}}_${{runner.arch}}-rebar-${{hashFiles('rebar.lock')}}
+          key: rebar3-${{runner.os}}_${{runner.arch}}-lint-${{hashFiles('mise.toml', 'rebar.lock')}}
+          restore-keys: |
+            rebar3-${{runner.os}}_${{runner.arch}}-lint-
 
       - run: mise run --output=keep-order verify
 
@@ -45,6 +47,8 @@ jobs:
             ~/.cache/rebar3
             _build
             !_build/test/logs
-          key: rebar3-${{runner.os}}_${{runner.arch}}-rebar-${{hashFiles('rebar.lock')}}
+          key: rebar3-${{runner.os}}_${{runner.arch}}-test-${{hashFiles('mise.toml', 'rebar.lock')}}
+          restore-keys: |
+            rebar3-${{runner.os}}_${{runner.arch}}-test-
 
       - run: mise run --output=keep-order test
