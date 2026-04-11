@@ -17,6 +17,7 @@ mise fmt
 
 [tasks."verify:rebar"]
 description = "Run rebar3 verification checks"
+env = { QUIET = "1" }
 run = """
 rebar3 compile
 rebar3 fmt --check
