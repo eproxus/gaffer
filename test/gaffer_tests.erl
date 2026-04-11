@@ -482,7 +482,6 @@ fail_error_normalization(Driver) ->
 %--- Retries tests ------------------------------------------------------------
 
 retries_backoff(Driver) ->
-    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
     MaxAttempts = 5,
     Backoff = [10, 20, 30],
     [B1, B2, B3] = [
@@ -493,8 +492,7 @@ retries_backoff(Driver) ->
         ?CONF(Driver, #{
             poll_interval => 10,
             max_attempts => MaxAttempts,
-            backoff => Backoff,
-            hooks => [Hook]
+            backoff => Backoff
         })
     ),
     #{id := Id, inserted_at := InsertedAt} = gaffer:insert(
@@ -503,51 +501,16 @@ retries_backoff(Driver) ->
             ~"test_pid" => gaffer_test_worker:encode_pid(self())
         }
     ),
-    % first attempt (not retry)
-    gaffer_test_helpers:await_hook(),
-    % retry 1
-    gaffer_test_helpers:await_hook(),
-    ?assertMatch(
-        #{
-            attempt := 2,
-            state := available,
-            errors := [#{at := At}, _]
-        } when At > (InsertedAt + B1),
-        gaffer:get(?Q, Id)
-    ),
-    % retry 2
-    gaffer_test_helpers:await_hook(),
-    ?assertMatch(
-        #{
-            attempt := 3,
-            state := available,
-            errors := [#{at := At}, _, _]
-        } when At > (InsertedAt + B1 + B2),
-        gaffer:get(?Q, Id)
-    ),
-    % retry 3
-    gaffer_test_helpers:await_hook(),
-    ?assertMatch(
-        #{
-            attempt := 4,
-            state := available,
-            errors := [#{at := At}, _, _, _]
-        } when At > (InsertedAt + B1 + B2 + B3),
-        gaffer:get(?Q, Id)
-    ),
-    % retry 5
-    gaffer_test_helpers:await_hook(),
-    ?assertMatch(
-        #{
-            attempt := 5,
-            state := discarded,
-            errors := [#{at := At}, _, _, _, _]
-        } when At > (InsertedAt + B1 + B2 + B3 + B3),
-        gaffer:get(?Q, Id)
-    ).
+    #{state := State, errors := [E5, E4, E3, E2, E1]} =
+        await_errors(?Q, Id, 5),
+    ?assertEqual(discarded, State),
+    ?assertMatch(#{at := At} when At > InsertedAt, E1),
+    ?assertMatch(#{at := At} when At > (InsertedAt + B1), E2),
+    ?assertMatch(#{at := At} when At > (InsertedAt + B1 + B2), E3),
+    ?assertMatch(#{at := At} when At > (InsertedAt + B1 + B2 + B3), E4),
+    ?assertMatch(#{at := At} when At > (InsertedAt + B1 + B2 + B3 + B3), E5).
 
 retries_only_one_value(Driver) ->
-    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
     MaxAttempts = 4,
     Backoff = 10,
     BackoffNative = erlang:convert_time_unit(10, native, millisecond),
@@ -555,8 +518,7 @@ retries_only_one_value(Driver) ->
         ?CONF(Driver, #{
             poll_interval => 10,
             max_attempts => MaxAttempts,
-            backoff => Backoff,
-            hooks => [Hook]
+            backoff => Backoff
         })
     ),
     #{id := Id, inserted_at := InsertedAt} = gaffer:insert(
@@ -565,38 +527,13 @@ retries_only_one_value(Driver) ->
             ~"test_pid" => gaffer_test_worker:encode_pid(self())
         }
     ),
-    % first attempt (not retry)
-    gaffer_test_helpers:await_hook(),
-    % retry 1
-    gaffer_test_helpers:await_hook(),
-    ?assertMatch(
-        #{
-            attempt := 2,
-            state := available,
-            errors := [#{at := At}, _]
-        } when At > (InsertedAt + BackoffNative),
-        gaffer:get(?Q, Id)
-    ),
-    % retry 2
-    gaffer_test_helpers:await_hook(),
-    ?assertMatch(
-        #{
-            attempt := 3,
-            state := available,
-            errors := [#{at := At}, _, _]
-        } when At > (InsertedAt + BackoffNative * 2),
-        gaffer:get(?Q, Id)
-    ),
-    % retry 3
-    gaffer_test_helpers:await_hook(),
-    ?assertMatch(
-        #{
-            attempt := 4,
-            state := discarded,
-            errors := [#{at := At}, _, _, _]
-        } when At > (InsertedAt + BackoffNative * 3),
-        gaffer:get(?Q, Id)
-    ).
+    #{state := State, errors := [E4, E3, E2, E1]} =
+        await_errors(?Q, Id, 4),
+    ?assertEqual(discarded, State),
+    ?assertMatch(#{at := At} when At > InsertedAt, E1),
+    ?assertMatch(#{at := At} when At > (InsertedAt + BackoffNative), E2),
+    ?assertMatch(#{at := At} when At > (InsertedAt + BackoffNative * 2), E3),
+    ?assertMatch(#{at := At} when At > (InsertedAt + BackoffNative * 3), E4).
 
 %--- Schedule tests -----------------------------------------------------------
 
@@ -1116,7 +1053,7 @@ hook_cancel(Driver) ->
 hook_complete(Driver) ->
     Notify = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
     Hook = make_hook(),
-    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Notify, Hook]})),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook, Notify]})),
     TestPid = gaffer_test_worker:encode_pid(self()),
     _ = gaffer:insert(?Q, #{~"action" => ~"complete", ~"test_pid" => TestPid}),
     ok = gaffer_queue_runner:poll(?Q),
@@ -1138,7 +1075,7 @@ hook_complete(Driver) ->
 hook_fail(Driver) ->
     Notify = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
     Hook = make_hook(),
-    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Notify, Hook]})),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook, Notify]})),
     _ = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
     gaffer_test_helpers:await_hook(),
@@ -1159,7 +1096,7 @@ hook_fail(Driver) ->
 hook_schedule(Driver) ->
     Notify = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, schedule]]),
     Hook = make_hook(),
-    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Notify, Hook]})),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook, Notify]})),
     TestPid = gaffer_test_worker:encode_pid(self()),
     _ = gaffer:insert(?Q, #{
         ~"action" => ~"schedule",
@@ -1361,6 +1298,19 @@ flush(Acc) ->
 
 flush_events() ->
     [{Tag, Phase, Event} || {Tag, Phase, Event, _} <:- flush()].
+
+await_errors(Queue, Id, ErrorCount) ->
+    gaffer_test_helpers:wait_for(
+        fun(_) ->
+            case gaffer:get(Queue, Id) of
+                #{errors := Errors} = Job when length(Errors) >= ErrorCount ->
+                    {result, Job};
+                _ ->
+                    {wait, undefined}
+            end
+        end,
+        undefined
+    ).
 
 % gaffer_hooks behaviour callback
 gaffer_hook(Phase, Event, Data) ->
