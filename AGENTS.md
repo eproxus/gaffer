@@ -123,7 +123,7 @@ After every change
 * Lint: `mise run --output=keep-order verify`
 * Docs: `mise run docs`
 * Test: `mise run --output=keep-order test`
-* Ensure all modified code is covered by tests by reading the text files in
-  `_build/test/cover/{eunit,aggregate}/*.txt`
-* For substantial changes or new features, verify that coverage did not go down
-  from the baseline
+* Ensure all modified code is covered by tests using `rebar3 uncovered --format
+  raw --context 0 --git` to check coverage of changed lines
+* For substantial changes or new features, verify that total coverage did not go
+  down from the baseline
