@@ -50,7 +50,7 @@
     - Jobs belonging to queues that are no longer used (how to detect?)
         - If many nodes upgrade to new config that abandons a queue, how do we
           detect this? There is no cluster query
-    - Investigate if we can remove the `idx_gaffer_jobs_state` index?
+    - Should we remove/replace the `idx_gaffer_jobs_state` index?
 - [ ] `gaffer_driver_ets` could be reactive by triggering a poll
     - Should it only be reactive, i.e. we don't need poll_interval at all...
 - [ ] Starting pools using `gaffer_driver_pgo` crashes
@@ -66,6 +66,9 @@
     - Application pre-stop should then drain by default
         - Then we can use short supervisor shutdown times to detect bugs in
           processes that fail to shutdown
+- [ ] Jobs payloads must be JSON encodable
+    - We validate all payloads that the user passes in with an try-encode pass?
+    - We figure out a way to do term_to_json and json_to_term?
 - [ ] Make queue config defaults an application environment variable
 - [ ] Handle raw (e.g. non-UTF) binaries in JSON normalization:
       ```erlang
