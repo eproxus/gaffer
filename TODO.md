@@ -61,6 +61,11 @@
 - [ ] Make job ID output format configurable (hex, type_id etc.)
 - [ ] Make job ID UUID format configurable (`v4` etc.)
 - [ ] Implement drain and flush
+    - There has to be a way to pause the runner from claiming new jobs
+        - Does a user facing drain make sense without a pause/resume API?
+    - Application pre-stop should then drain by default
+        - Then we can use short supervisor shutdown times to detect bugs in
+          processes that fail to shutdown
 - [ ] Make queue config defaults an application environment variable
 - [ ] Handle raw (e.g. non-UTF) binaries in JSON normalization:
       ```erlang
