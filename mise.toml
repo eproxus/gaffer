@@ -64,4 +64,5 @@ run = "rebar3 ex_doc"
 
 [tasks.test]
 description = "Run all tests"
+env = { QUIET = "1" }
 run = "rebar3 eunit --cover"
