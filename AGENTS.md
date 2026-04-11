@@ -72,7 +72,6 @@ Modules:
   ```
 
 * Keep JSON payloads with binary keys, don't convert to atoms
-* Never chain shell commands with `&&`
 * Keep exported functions at the top under API heading
     * Sorted under relevant sections if needed
 * Keep private functions below under the Internal heading
