@@ -15,9 +15,10 @@ harness(DriverMod, Parallel, Sequential) ->
         {setup, Setup, Teardown, fun(#{driver := Driver}) ->
             {inparallel, [{with, Driver, [T]} || T <:- Parallel]}
         end},
-        {setup, Setup, Teardown, fun(#{driver := Driver}) ->
-            [{with, Driver, [T]} || T <:- Sequential]
-        end}
+        {foreach, Setup, Teardown, [
+            fun(#{driver := Driver}) -> fun() -> T(Driver) end end
+         || T <:- Sequential
+        ]}
     ].
 
 notify_hook(Pid, Events) ->
