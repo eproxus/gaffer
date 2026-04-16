@@ -128,13 +128,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - name: Dry run summary
-        if: ${{ !inputs.release }}
+      - name: Summary
         run: |
+          VERSION=${{ steps.version.outputs.version }}
           {
-            echo "## Release Dry-Run"
+            if [ "${{ inputs.release }}" = "true" ]; then
+              echo "## Released ${VERSION}"
+              echo ""
+              echo "- [GitHub Release](https://github.com/eproxus/gaffer/releases/tag/${VERSION})"
+              echo "- [Hex Package](https://hex.pm/packages/gaffer/${VERSION#v})"
+            else
+              echo "## Release Dry-Run"
+            fi
             echo ""
-            echo "Version: \`${{ steps.version.outputs.version }}\`"
+            echo "Version: \`${VERSION}\`"
             echo ""
             echo "## Changelog"
             echo ""
