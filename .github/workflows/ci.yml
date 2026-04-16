@@ -115,7 +115,9 @@ jobs:
 
       - name: Publish to Hex
         if: ${{ inputs.release }}
-        run: rebar3 hex publish package --yes --repo hexpm
+        run: |
+          rebar3 hex publish package --yes --repo hexpm
+          rebar3 hex publish docs --yes --repo hexpm
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
 
