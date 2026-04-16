@@ -1,8 +1,12 @@
 <!-- markdownlint-disable-line MD013 -->
-# gaffer [![CI Status][ci-img]][ci] [![Minimum Erlang Version][erlang-img]][erlang] [![License][license-img]][license]
+# gaffer [![CI Status][ci-img]][ci] [![Hex.pm Version][hex-img]][hex] [![Docs][docs-img]][docs] [![Minimum Erlang Version][erlang-img]][erlang] [![License][license-img]][license]
 
 [ci]:          https://github.com/eproxus/gaffer/actions/workflows/ci.yml?query=branch%3Amain
 [ci-img]:      https://img.shields.io/github/actions/workflow/status/eproxus/gaffer/ci.yml?label=ci
+[hex]:         https://hex.pm/packages/gaffer
+[hex-img]:     https://img.shields.io/hexpm/v/gaffer
+[docs]:        https://hexdocs.pm/gaffer
+[docs-img]:    https://img.shields.io/badge/docs-hexdocs-blue
 [erlang]:      https://github.com/eproxus/gaffer/blob/main/mise.toml
 [erlang-img]:  https://img.shields.io/badge/erlang-28+-blue.svg
 [license]:     LICENSE.md
