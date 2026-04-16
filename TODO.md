@@ -52,8 +52,8 @@
           detect this? There is no cluster query
     - Should we remove/replace the `idx_gaffer_jobs_state` index?
 - [X] Rename `Id` to `ID` throughout the codebase
-- [ ] Create Hex release action
-- [ ] Clean up PGO driver to remove the `#{rows := ...}` pattern
+- [X] Create Hex release action
+- [X] Clean up PGO driver to remove the `#{rows := ...}` pattern
 - [ ] Change await_hooks in the tests to wait for a specific hook
 - [ ] Remove the pre-hooks completely
 - [ ] Implement job drainning

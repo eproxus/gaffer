@@ -108,13 +108,11 @@ queue_insert(Name, #{pool := Pool}) ->
 
 -doc false.
 queue_exists(Name, #{pool := Pool}) ->
-    [#{rows := Rows}] =
-        transaction(Pool, gaffer_postgres:queue_exists(Name)),
-    Rows =/= [].
+    query(Pool, gaffer_postgres:queue_exists(Name)) =/= [].
 
 -doc false.
 queue_list(#{pool := Pool}) ->
-    [#{rows := Rows}] = transaction(Pool, gaffer_postgres:queue_list()),
+    Rows = query(Pool, gaffer_postgres:queue_list()),
     [binary_to_existing_atom(Name) || #{name := Name} <:- Rows].
 
 -doc false.
@@ -131,8 +129,6 @@ queue_delete(Name, #{pool := Pool}) ->
 
 -doc false.
 info(Queue, #{pool := Pool}) ->
-    [#{rows := Rows}] =
-        transaction(Pool, gaffer_postgres:info(Queue)),
     Empty = #{
         available => #{count => 0},
         executing => #{count => 0},
@@ -140,6 +136,7 @@ info(Queue, #{pool := Pool}) ->
         cancelled => #{count => 0},
         discarded => #{count => 0}
     },
+    Rows = query(Pool, gaffer_postgres:info(Queue)),
     Jobs = lists:foldl(fun decode_info_row/2, Empty, Rows),
     #{jobs => Jobs}.
 
@@ -171,9 +168,7 @@ job_write(Jobs, #{pool := Pool}) ->
 
 -doc false.
 job_get(ID, #{pool := Pool}) ->
-    [#{rows := Rows}] =
-        transaction(Pool, gaffer_postgres:job_get(ID)),
-    case Rows of
+    case query(Pool, gaffer_postgres:job_get(ID)) of
         [Row] -> decode_job(Row);
         [] -> not_found
     end.
@@ -181,9 +176,7 @@ job_get(ID, #{pool := Pool}) ->
 -doc false.
 job_list(Opts, #{pool := Pool}) ->
     Encoded = encode_list_opts(Opts),
-    [#{rows := Rows}] =
-        transaction(Pool, gaffer_postgres:job_list(Encoded)),
-    [decode_job(R) || R <:- Rows].
+    [decode_job(R) || R <:- query(Pool, gaffer_postgres:job_list(Encoded))].
 
 -doc false.
 job_delete(ID, #{pool := Pool}) ->
@@ -197,18 +190,13 @@ job_delete(ID, #{pool := Pool}) ->
 -doc false.
 job_claim(Opts, Changes, #{pool := Pool}) ->
     {EncodedOpts, EncodedChanges} = encode_claim(Opts, Changes),
-    [#{rows := Rows}] =
-        transaction(
-            Pool, gaffer_postgres:job_claim(EncodedOpts, EncodedChanges)
-        ),
+    Rows = query(Pool, gaffer_postgres:job_claim(EncodedOpts, EncodedChanges)),
     [decode_job(R) || R <:- Rows].
 
 -doc false.
 job_prune(Queue, Opts, #{pool := Pool}) ->
     Encoded = maps:map(fun(_State, TS) -> encode_timestamp(TS) end, Opts),
-    [#{rows := Rows}] = transaction(
-        Pool, gaffer_postgres:job_prune(Queue, Encoded)
-    ),
+    Rows = query(Pool, gaffer_postgres:job_prune(Queue, Encoded)),
     [ID || #{id := ID} <:- Rows].
 
 %--- Internal ------------------------------------------------------------------
@@ -239,9 +227,13 @@ run_migrations(Pool, ToQueries, Migrations) ->
     ).
 
 applied_version(Pool) ->
-    [#{rows := [#{version := Version}]}] =
-        transaction(Pool, gaffer_postgres:applied_version()),
+    [#{version := Version}] = query(Pool, gaffer_postgres:applied_version()),
     Version.
+
+% Runs a single query in a transaction, returning just the rows.
+query(Pool, Queries) ->
+    [#{rows := Rows}] = transaction(Pool, Queries),
+    Rows.
 
 % Runs a list of queries in a single transaction, returning [pgo:result()].
 % pgo:query/3 inside a transaction uses the implicit connection from
