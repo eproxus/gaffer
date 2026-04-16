@@ -2,7 +2,13 @@
 name: CI
 
 on:
-  - push
+  push:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Dry run (skip publish and release)
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
@@ -52,3 +58,82 @@ jobs:
             rebar3-${{runner.os}}_${{runner.arch}}-test-
 
       - run: mise run --output=keep-order test
+
+  release:
+    name: Release
+
+    runs-on: ubuntu-24.04
+
+    needs: [lint, test]
+
+    if: github.event_name == 'workflow_dispatch'
+
+    permissions:
+      contents: write
+
+    environment: hex
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: jdx/mise-action@v3
+
+      - uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
+        with:
+          path: |
+            ~/.cache/rebar3
+            _build
+            !_build/test/logs
+          key: >-
+            rebar3-${{runner.os}}_${{runner.arch}}-release-${{hashFiles('mise.toml', 'rebar.lock')}}
+          restore-keys: |
+            rebar3-${{runner.os}}_${{runner.arch}}-release-
+
+      - name: Calculate next version
+        id: version
+        run: |
+          VERSION=$(git-cliff --bumped-version)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Next version: $VERSION"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          {
+            echo "changelog<<CHANGELOG_EOF"
+            git-cliff --unreleased --strip all --output - | tail -n +3
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Tag and push
+        if: ${{ !inputs.dry-run }}
+        run: |
+          git tag ${{ steps.version.outputs.version }}
+          git push origin ${{ steps.version.outputs.version }}
+
+      - name: Publish to Hex
+        if: ${{ !inputs.dry-run }}
+        run: rebar3 hex publish package --yes --repo hexpm
+        env:
+          HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
+
+      - name: Create GitHub release
+        if: ${{ !inputs.dry-run }}
+        run: >-
+          gh release create ${{ steps.version.outputs.version }}
+          --title ${{ steps.version.outputs.version }}
+          --notes "${{ steps.changelog.outputs.changelog }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Dry run summary
+        if: ${{ inputs.dry-run }}
+        run: |
+          {
+            echo "## Dry Run Results"
+            echo "**Next version:** ${{ steps.version.outputs.version }}"
+            echo "### Changelog"
+            echo "${{ steps.changelog.outputs.changelog }}"
+          } >> "$GITHUB_STEP_SUMMARY"
