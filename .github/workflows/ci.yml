@@ -5,8 +5,8 @@ on:
   push:
   workflow_dispatch:
     inputs:
-      dry-run:
-        description: Dry run (skip publish and release)
+      release:
+        description: Create a release (tag, publish to Hex, GitHub release)
         type: boolean
         default: false
 
@@ -108,19 +108,19 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Tag and push
-        if: ${{ !inputs.dry-run }}
+        if: ${{ inputs.release }}
         run: |
           git tag ${{ steps.version.outputs.version }}
           git push origin ${{ steps.version.outputs.version }}
 
       - name: Publish to Hex
-        if: ${{ !inputs.dry-run }}
+        if: ${{ inputs.release }}
         run: rebar3 hex publish package --yes --repo hexpm
         env:
           HEX_API_KEY: ${{ secrets.HEX_API_KEY }}
 
       - name: Create GitHub release
-        if: ${{ !inputs.dry-run }}
+        if: ${{ inputs.release }}
         run: >-
           gh release create ${{ steps.version.outputs.version }}
           --title ${{ steps.version.outputs.version }}
@@ -129,7 +129,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
 
       - name: Dry run summary
-        if: ${{ inputs.dry-run }}
+        if: ${{ !inputs.release }}
         run: |
           {
             echo "## Release Dry-Run"
