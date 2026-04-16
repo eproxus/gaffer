@@ -170,9 +170,9 @@ job_write(Jobs, #{pool := Pool}) ->
     [decode_job(Row) || #{rows := [Row]} <:- Results].
 
 -doc false.
-job_get(Id, #{pool := Pool}) ->
+job_get(ID, #{pool := Pool}) ->
     [#{rows := Rows}] =
-        transaction(Pool, gaffer_postgres:job_get(Id)),
+        transaction(Pool, gaffer_postgres:job_get(ID)),
     case Rows of
         [Row] -> decode_job(Row);
         [] -> not_found
@@ -186,9 +186,9 @@ job_list(Opts, #{pool := Pool}) ->
     [decode_job(R) || R <:- Rows].
 
 -doc false.
-job_delete(Id, #{pool := Pool}) ->
+job_delete(ID, #{pool := Pool}) ->
     [#{num_rows := N}] =
-        transaction(Pool, gaffer_postgres:job_delete(Id)),
+        transaction(Pool, gaffer_postgres:job_delete(ID)),
     case N of
         1 -> ok;
         0 -> not_found
@@ -209,7 +209,7 @@ job_prune(Queue, Opts, #{pool := Pool}) ->
     [#{rows := Rows}] = transaction(
         Pool, gaffer_postgres:job_prune(Queue, Encoded)
     ),
-    [Id || #{id := Id} <:- Rows].
+    [ID || #{id := ID} <:- Rows].
 
 %--- Internal ------------------------------------------------------------------
 

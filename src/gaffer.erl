@@ -327,9 +327,9 @@ insert(Queue, Payload, Opts) ->
 -doc "Cancels a job, preventing further execution.".
 -spec cancel(queue(), job_id()) ->
     {ok, job()} | {error, {invalid_transition, term()}}.
-cancel(Queue, JobId) ->
-    case gaffer_queue:cancel_job(Queue, JobId) of
-        {error, not_found} -> error({unknown_job, JobId});
+cancel(Queue, ID) ->
+    case gaffer_queue:cancel_job(Queue, ID) of
+        {error, not_found} -> error({unknown_job, ID});
         {error, {invalid_transition, _}} = Err -> Err;
         {ok, _} = Ok -> Ok
     end.
@@ -383,9 +383,9 @@ info(Queue) ->
 -doc #{group => "Job Management"}.
 -doc "Gets the definition of a job.".
 -spec get(queue(), job_id()) -> job().
-get(Queue, JobId) ->
-    case gaffer_queue:get_job(Queue, JobId) of
-        not_found -> error({unknown_job, JobId});
+get(Queue, ID) ->
+    case gaffer_queue:get_job(Queue, ID) of
+        not_found -> error({unknown_job, ID});
         Job -> Job
     end.
 
@@ -403,5 +403,5 @@ list(Queue, Filters) ->
 -doc #{group => "Job Management"}.
 -doc "Deletes a job.".
 -spec delete(queue(), job_id()) -> ok.
-delete(Queue, JobId) ->
-    gaffer_queue:delete_job(Queue, JobId).
+delete(Queue, ID) ->
+    gaffer_queue:delete_job(Queue, ID).

@@ -199,11 +199,11 @@ job_write(Encoded) ->
 
 -doc "Query to fetch a job by ID.".
 -spec job_get(term()) -> queries().
-job_get(Id) ->
+job_get(ID) ->
     SQL = [
         ~"SELECT ", job_columns(), ~" FROM gaffer_jobs WHERE id = $1"
     ],
-    [{SQL, [Id]}].
+    [{SQL, [ID]}].
 
 -doc "Query to list jobs matching the given filters.".
 -spec job_list(map()) -> queries().
@@ -233,8 +233,8 @@ job_list(#{queue := Queue} = Opts) ->
 
 -doc "Query to delete a job by ID.".
 -spec job_delete(term()) -> queries().
-job_delete(Id) ->
-    [{~"DELETE FROM gaffer_jobs WHERE id = $1", [Id]}].
+job_delete(ID) ->
+    [{~"DELETE FROM gaffer_jobs WHERE id = $1", [ID]}].
 
 job_columns() ->
     job_columns(~"").

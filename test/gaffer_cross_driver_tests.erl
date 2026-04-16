@@ -89,10 +89,10 @@ forward(SrcDriver, DlqDriver, SrcQueue, DlqQueue) ->
         max_attempts => 1,
         on_discard => DlqQueue
     }),
-    #{id := Id} = gaffer:insert(SrcQueue, #{~"action" => ~"crash"}),
+    #{id := ID} = gaffer:insert(SrcQueue, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(SrcQueue),
     gaffer_test_helpers:await_hook(),
-    ?assertMatch(#{state := discarded}, gaffer:get(SrcQueue, Id)),
+    ?assertMatch(#{state := discarded}, gaffer:get(SrcQueue, ID)),
     Forwarded = normalize(
         maps:get(payload, hd(gaffer:list(DlqQueue)))
     ),

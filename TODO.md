@@ -51,7 +51,7 @@
         - If many nodes upgrade to new config that abandons a queue, how do we
           detect this? There is no cluster query
     - Should we remove/replace the `idx_gaffer_jobs_state` index?
-- [ ] Rename `Id` to `ID` throughout the code base
+- [X] Rename `Id` to `ID` throughout the codebase
 - [ ] Create Hex release action
 - [ ] Clean up PGO driver to remove the `#{rows := ...}` pattern
 - [ ] Change await_hooks in the tests to wait for a specific hook

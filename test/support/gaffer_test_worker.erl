@@ -11,8 +11,8 @@ perform(#{payload := #{~"action" := Action, ~"test_pid" := PidBin}} = Job) ->
     perform(Action, Job, decode_pid(PidBin));
 perform(#{payload := #{~"action" := Action}} = Job) ->
     perform(Action, Job, undefined);
-perform(#{id := Id}) ->
-    error({no_matching_action, Id}).
+perform(#{id := ID}) ->
+    error({no_matching_action, ID}).
 
 -spec encode_pid(pid()) -> binary().
 encode_pid(Pid) -> base64:encode(term_to_binary(Pid)).
@@ -49,4 +49,4 @@ decode_pid(Bin) -> binary_to_term(base64:decode(Bin)).
 
 notify(Pid, Event, Job) -> Pid ! {Event, metadata(Job)}.
 
-metadata(#{id := Id}) -> #{id => Id, worker => self(), node => node()}.
+metadata(#{id := ID}) -> #{id => ID, worker => self(), node => node()}.

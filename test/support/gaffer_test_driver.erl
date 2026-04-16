@@ -27,9 +27,9 @@ queue_exists(Name, S) -> dispatch(?FUNCTION_NAME, [Name], S).
 queue_list(S) -> dispatch(?FUNCTION_NAME, [], S).
 queue_delete(Name, S) -> dispatch(?FUNCTION_NAME, [Name], S).
 job_write(Jobs, S) -> dispatch(?FUNCTION_NAME, [Jobs], S).
-job_get(Id, S) -> dispatch(?FUNCTION_NAME, [Id], S).
+job_get(ID, S) -> dispatch(?FUNCTION_NAME, [ID], S).
 job_list(Opts, S) -> dispatch(?FUNCTION_NAME, [Opts], S).
-job_delete(Id, S) -> dispatch(?FUNCTION_NAME, [Id], S).
+job_delete(ID, S) -> dispatch(?FUNCTION_NAME, [ID], S).
 job_claim(Opts, Changes, S) -> dispatch(?FUNCTION_NAME, [Opts, Changes], S).
 job_prune(Queue, Opts, S) -> dispatch(?FUNCTION_NAME, [Queue, Opts], S).
 info(Queue, S) -> dispatch(?FUNCTION_NAME, [Queue], S).

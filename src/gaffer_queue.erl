@@ -214,9 +214,9 @@ insert_job(Queue, Payload, Opts) ->
 
 -spec get_job(gaffer:queue(), gaffer:job_id()) ->
     gaffer:job() | not_found.
-get_job(Queue, JobId) ->
+get_job(Queue, ID) ->
     #{driver := {Mod, DS}} = conf(Queue),
-    Mod:job_get(JobId, DS).
+    Mod:job_get(ID, DS).
 
 -spec list_jobs(#{queue := gaffer:queue(), _ => _}) ->
     [gaffer:job()].
@@ -225,26 +225,25 @@ list_jobs(#{queue := Queue} = Opts) ->
     Mod:job_list(Opts, DS).
 
 -spec delete_job(gaffer:queue(), gaffer:job_id()) -> ok.
-delete_job(Queue, JobId) ->
+delete_job(Queue, ID) ->
     #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
-    _ = gaffer_hooks:with_hooks(
+    gaffer_hooks:with_hooks(
         Hooks,
         [gaffer, job, delete],
-        JobId,
-        fun(Id) ->
-            case Mod:job_delete(Id, DS) of
-                not_found -> error({unknown_job, Id});
-                ok -> Id
+        ID,
+        fun(J) ->
+            case Mod:job_delete(J, DS) of
+                not_found -> error({unknown_job, J});
+                ok -> ok
             end
         end
-    ),
-    ok.
+    ).
 
 -spec cancel_job(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
-cancel_job(Queue, JobId) ->
+cancel_job(Queue, ID) ->
     #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
-    case Mod:job_get(JobId, DS) of
+    case Mod:job_get(ID, DS) of
         not_found ->
             {error, not_found};
         Job ->
@@ -293,10 +292,10 @@ claim_jobs(Queue, Opts) ->
 -spec prune_jobs(gaffer:queue(), prune_opts()) -> [gaffer:job_id()].
 prune_jobs(Queue, MaxAge) ->
     #{driver := Driver, hooks := Hooks} = conf(Queue),
-    Ids = prune(Queue, MaxAge, Driver),
+    IDs = prune(Queue, MaxAge, Driver),
     Event = [gaffer, job, delete],
-    _ = [gaffer_hooks:run_post_hooks(Hooks, Event, Id) || Id <:- Ids],
-    Ids.
+    _ = [gaffer_hooks:run_post_hooks(Hooks, Event, ID) || ID <:- IDs],
+    IDs.
 
 %--- Internal ------------------------------------------------------------------
 

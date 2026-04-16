@@ -90,19 +90,19 @@ job_write(Jobs, #{queued := Queued, locked := Locked}) ->
     {QueuedJobs, LockedJobs} = lists:partition(
         fun(#{state := S}) -> S =/= executing end, Jobs
     ),
-    ets:insert(Queued, [{Id, J} || #{id := Id} = J <:- QueuedJobs]),
-    ets:insert(Locked, [{Id, J} || #{id := Id} = J <:- LockedJobs]),
-    [ets:delete(Locked, Id) || #{id := Id} <:- QueuedJobs],
-    [ets:delete(Queued, Id) || #{id := Id} <:- LockedJobs],
+    ets:insert(Queued, [{ID, J} || #{id := ID} = J <:- QueuedJobs]),
+    ets:insert(Locked, [{ID, J} || #{id := ID} = J <:- LockedJobs]),
+    [ets:delete(Locked, ID) || #{id := ID} <:- QueuedJobs],
+    [ets:delete(Queued, ID) || #{id := ID} <:- LockedJobs],
     Jobs.
 
 -doc false.
-job_get(Id, #{queued := Queued, locked := Locked}) ->
-    case ets:lookup(Locked, Id) of
+job_get(ID, #{queued := Queued, locked := Locked}) ->
+    case ets:lookup(Locked, ID) of
         [{_, Job}] ->
             Job;
         [] ->
-            ets:lookup_element(Queued, Id, 2, not_found)
+            ets:lookup_element(Queued, ID, 2, not_found)
     end.
 
 -doc false.
@@ -115,13 +115,13 @@ job_list(Opts, #{queued := Queued, locked := Locked}) ->
         ].
 
 -doc false.
-job_delete(Id, #{queued := Queued, locked := Locked}) ->
-    case {ets:member(Queued, Id), ets:member(Locked, Id)} of
+job_delete(ID, #{queued := Queued, locked := Locked}) ->
+    case {ets:member(Queued, ID), ets:member(Locked, ID)} of
         {false, false} ->
             not_found;
         _ ->
-            ets:delete(Queued, Id),
-            ets:delete(Locked, Id),
+            ets:delete(Queued, ID),
+            ets:delete(Locked, ID),
             ok
     end.
 
@@ -148,11 +148,11 @@ job_claim(
 -doc false.
 job_prune(Queue, Opts, #{queued := Queued, locked := Locked}) ->
     MS = prune_match_spec(Queue, Opts),
-    QueuedIds = ets:select(Queued, MS),
-    LockedIds = ets:select(Locked, MS),
-    [ets:delete(Queued, Id) || Id <:- QueuedIds],
-    [ets:delete(Locked, Id) || Id <:- LockedIds],
-    QueuedIds ++ LockedIds.
+    QueuedIDs = ets:select(Queued, MS),
+    LockedIDs = ets:select(Locked, MS),
+    [ets:delete(Queued, ID) || ID <:- QueuedIDs],
+    [ets:delete(Locked, ID) || ID <:- LockedIDs],
+    QueuedIDs ++ LockedIDs.
 
 % Introspection
 
@@ -246,11 +246,11 @@ compare_priority(A, B) ->
 
 claim_jobs([], _Changes, _Queued, _Locked, Acc) ->
     lists:reverse(Acc);
-claim_jobs([#{id := Id} | Rest], Changes, Queued, Locked, Acc) ->
-    case ets:take(Queued, Id) of
-        [{Id, Job}] ->
+claim_jobs([#{id := ID} | Rest], Changes, Queued, Locked, Acc) ->
+    case ets:take(Queued, ID) of
+        [{ID, Job}] ->
             Updated = maps:merge(Job, Changes),
-            true = ets:insert(Locked, {Id, Updated}),
+            true = ets:insert(Locked, {ID, Updated}),
             claim_jobs(Rest, Changes, Queued, Locked, [Updated | Acc]);
         [] ->
             claim_jobs(Rest, Changes, Queued, Locked, Acc)
