@@ -132,8 +132,11 @@ jobs:
         if: ${{ inputs.dry-run }}
         run: |
           {
-            echo "## Dry Run Results"
-            echo "**Next version:** ${{ steps.version.outputs.version }}"
-            echo "### Changelog"
+            echo "## Release Dry-Run"
+            echo ""
+            echo "Version: \`${{ steps.version.outputs.version }}\`"
+            echo ""
+            echo "## Changelog"
+            echo ""
             echo "${{ steps.changelog.outputs.changelog }}"
           } >> "$GITHUB_STEP_SUMMARY"
