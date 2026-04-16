@@ -153,17 +153,17 @@ Queues are configured via `gaffer:queue_conf()` maps:
   Pruning configuration. A per-queue pruner periodically deletes jobs in
   terminal states older than the configured max age.
 
-  - `interval` (`pos_integer() | infinity`)
+    - `interval` (`pos_integer() | infinity`)
 
-    Prune interval in ms.
+      Prune interval in ms.
 
-  - `max_age` (`#{job_state() | '_' => age()}`)
+    - `max_age` (`#{job_state() | '_' => age()}`)
 
-    Per-state max age in milliseconds. `infinity` means never prune. `'_'` sets
-    a default for all states.
+      Per-state max age in milliseconds. `infinity` means never prune. `'_'` sets
+      a default for all states.
 
-    Default: `completed`, `discarded`, and `cancelled` jobs are pruned
-    immediately, others are kept indefinitely.
+      Default: `completed`, `discarded`, and `cancelled` jobs are pruned
+      immediately, others are kept indefinitely.
 
 ## Changelog
 
