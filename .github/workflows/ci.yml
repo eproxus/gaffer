@@ -123,14 +123,21 @@ jobs:
 
       - name: Create GitHub release
         if: ${{ inputs.release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Via env var so backticks in the changelog aren't evaluated as
+          # shell command substitution.
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
         run: >-
           gh release create ${{ steps.version.outputs.version }}
           --title ${{ steps.version.outputs.version }}
-          --notes "${{ steps.changelog.outputs.changelog }}"
-        env:
-          GH_TOKEN: ${{ github.token }}
+          --notes "$CHANGELOG"
 
       - name: Summary
+        env:
+          # Via env var so backticks in the changelog aren't evaluated as
+          # shell command substitution.
+          CHANGELOG: ${{ steps.changelog.outputs.changelog }}
         run: |
           VERSION=${{ steps.version.outputs.version }}
           {
@@ -147,5 +154,5 @@ jobs:
             echo ""
             echo "## Changelog"
             echo ""
-            echo "${{ steps.changelog.outputs.changelog }}"
+            echo "$CHANGELOG"
           } >> "$GITHUB_STEP_SUMMARY"
