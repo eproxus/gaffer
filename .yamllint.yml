@@ -2,6 +2,7 @@
 extends: default
 ignore: |
   _build/
+  _checkouts/
   tmp/
 rules:
   line-length:

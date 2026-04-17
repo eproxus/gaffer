@@ -39,7 +39,7 @@ elp eqwalize-all --rebar --as test
 
 [tasks."verify:markdown"]
 description = "Lint Markdown files"
-run = 'markdownlint-cli2 "**/*.md" "!_build" "!tmp"'
+run = 'markdownlint-cli2 "**/*.md" "!_build" "!_checkouts" "!tmp"'
 
 [tasks."verify:yaml"]
 description = "Lint YAML files"
