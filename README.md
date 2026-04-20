@@ -25,7 +25,7 @@ A reliable job queue implemented in Erlang.
 - [x] Delayed job scheduling
 - [x] Automatic retries with backoff
 - [ ] Drain and flush (graceful shutdown)
-- [ ] Job execution timeouts
+- [x] Job execution timeouts
 - [ ] Worker shutdown timeouts
 
 ## Usage

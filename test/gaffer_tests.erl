@@ -101,6 +101,8 @@ gaffer_test_() ->
         fun poll_auto_executes/1,
         fun worker_fun/1,
         fun driver_shorthand/1,
+        % Timeout
+        fun timeout_killed/1,
         % --- Hooks ---
         fun hook_cancel/1,
         fun hook_complete/1,
@@ -1301,6 +1303,32 @@ info_reports_status(Driver) ->
     ?assertMatch(#{status := paused}, gaffer:info(?Q)),
     ok = gaffer:resume(?Q),
     ?assertMatch(#{status := active}, gaffer:info(?Q)).
+
+%--- Timeout tests ------------------------------------------------------------
+
+timeout_killed(Driver) ->
+    Timeout = 10,
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{timeout => Timeout, max_attempts => 1})
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    #{id := ID} = gaffer:insert(?Q, #{
+        ~"action" => ~"block", ~"test_pid" => TestPid
+    }),
+    ok = gaffer_queue_runner:poll(?Q),
+    WorkerPid =
+        receive
+            {job_started, #{id := ID, worker := P}} -> P
+        after 1000 -> error(timeout)
+        end,
+    timer:sleep(Timeout * 2),
+    ?assertMatch(
+        #{
+            state := discarded, errors := [#{error := killed, attempt := 1}]
+        },
+        normalize(gaffer:get(?Q, ID))
+    ),
+    ?assert(not erlang:is_process_alive(WorkerPid)).
 
 %--- Hook tests ---------------------------------------------------------------
 

@@ -62,6 +62,7 @@
         - Maybe add opts to control this?
 - [X] Simplify API documentation groups to "Queue Management" and "Job
       Management" only
+- [x] Handle timeouts in runner
 - [ ] Implement job draining
     - There has to be a way to pause the runner from claiming new jobs
         - Does a user facing drain make sense without a pause/resume API?
@@ -75,7 +76,6 @@
       user initiated (e.g. manual via the public API)
 - [ ] Add a public `migrations/1` function to the PGO driver to use together
       with rollback
-- [ ] Handle timeouts in runner
 - [ ] Improve ensure_queue config update/replace handling, improve documentation
     - Currently it just overwrites the configuration, and if it as a partial
       config it takes default values instead of the old queue config. This

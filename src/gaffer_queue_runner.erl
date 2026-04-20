@@ -56,10 +56,12 @@ init(Name) ->
     {ok, active, Data, initial_poll(Conf) ++ poll_timeout(Conf)}.
 
 active(internal, poll, #{name := Name} = Data) ->
-    {keep_state, do_poll(gaffer_queue:conf(Name), Data)};
+    {Data1, Actions} = do_poll(gaffer_queue:conf(Name), Data),
+    {keep_state, Data1, Actions};
 active(state_timeout, poll, #{name := Name} = Data) ->
     Conf = gaffer_queue:conf(Name),
-    {keep_state, do_poll(Conf, Data), poll_timeout(Conf)};
+    {Data1, Actions} = do_poll(Conf, Data),
+    {keep_state, Data1, poll_timeout(Conf) ++ Actions};
 active({call, From}, reconfigure, #{name := Name}) ->
     {keep_state_and_data, [
         {reply, From, ok} | poll_timeout(gaffer_queue:conf(Name))
@@ -84,7 +86,8 @@ paused(EventType, Event, Data) ->
     common(EventType, Event, paused, Data).
 
 common({call, From}, poll, _State, #{name := Name} = Data) ->
-    {keep_state, do_poll(gaffer_queue:conf(Name), Data), [{reply, From, ok}]};
+    {Data1, Actions} = do_poll(gaffer_queue:conf(Name), Data),
+    {keep_state, Data1, [{reply, From, ok} | Actions]};
 common({call, From}, info, State, #{workers := Workers}) ->
     Result = #{active => map_size(Workers), status => State},
     {keep_state_and_data, [{reply, From, Result}]};
@@ -96,11 +99,14 @@ common(
 ) ->
     case maps:take(Pid, Workers) of
         {OriginalJob, Workers1} ->
-            _ = handle_worker_result(Reason, OriginalJob, Name),
-            {keep_state, Data#{workers := Workers1}};
+            Actions = handle_worker_result(Pid, Reason, OriginalJob, Name),
+            {keep_state, Data#{workers := Workers1}, Actions};
         error ->
             {keep_state, Data}
-    end.
+    end;
+common({timeout, Pid}, Reason, _State, Data) ->
+    exit(Pid, Reason),
+    {keep_state, Data}.
 
 %--- Internal ------------------------------------------------------------------
 
@@ -118,33 +124,40 @@ do_poll(
 ) ->
     case poll_limit(MaxWorkers, map_size(Workers)) of
         0 ->
-            Data;
+            {Data, []};
         Limit ->
             Jobs = gaffer_queue:claim_jobs(Name, #{
                 queue => Name, limit => Limit
             }),
-            NewWorkers = spawn_workers(Worker, Jobs, Workers),
-            Data#{workers := NewWorkers}
+            {NewWorkers, Actions} = spawn_workers(Worker, Jobs, Workers, []),
+            {Data#{workers := NewWorkers}, Actions}
     end.
 
 poll_limit(infinity, _Active) -> infinity;
 poll_limit(Max, Active) -> max(0, Max - Active).
 
 % elp:ignore W0048 - spawn_workers calls gaffer_job:execute which is no_return
--dialyzer({no_return, [spawn_workers/3]}).
-spawn_workers(_Worker, [], Workers) ->
-    Workers;
-spawn_workers(Worker, [Job | Rest], Workers) ->
+-dialyzer({no_return, [spawn_workers/4]}).
+spawn_workers(_Worker, [], Workers, Actions) ->
+    {Workers, Actions};
+spawn_workers(Worker, [#{timeout := Timeout} = Job | Rest], Workers, Actions) ->
     {Pid, _Ref} = spawn_monitor(fun() ->
         gaffer_job:execute(Worker, Job)
     end),
-    spawn_workers(Worker, Rest, Workers#{Pid => Job}).
+    Action = {{timeout, Pid}, Timeout, kill},
+    spawn_workers(Worker, Rest, Workers#{Pid => Job}, [Action | Actions]).
 
-handle_worker_result({gaffer_job, Event, Job}, _OriginalJob, Name) ->
-    gaffer_queue:write_result(Name, Event, Job);
-handle_worker_result(Reason, OriginalJob, Name) ->
+handle_worker_result(_Pid, kill, OriginalJob, Name) ->
+    {Event, Job} = gaffer_job:handle_crash(OriginalJob, gaffer_job_timeout),
+    _ = gaffer_queue:write_result(Name, Event, Job),
+    [];
+handle_worker_result(Pid, {gaffer_job, Event, Job}, _OriginalJob, Name) ->
+    _ = gaffer_queue:write_result(Name, Event, Job),
+    [{{timeout, Pid}, infinity, kill}];
+handle_worker_result(Pid, Reason, OriginalJob, Name) ->
     {Event, Job} = gaffer_job:handle_crash(OriginalJob, Reason),
-    gaffer_queue:write_result(Name, Event, Job).
+    _ = gaffer_queue:write_result(Name, Event, Job),
+    [{{timeout, Pid}, infinity, kill}].
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input
