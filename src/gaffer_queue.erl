@@ -64,30 +64,10 @@ teardown() ->
     ok.
 
 -spec create(queue_conf()) -> ok | {error, already_exists}.
-create(Conf0) ->
-    #{name := Name, driver := {Mod, DS}, hooks := Hooks} =
-        Conf = with_defaults(Conf0),
+create(#{name := Name} = Conf0) ->
     case persistent_term:get({gaffer_queue, Name}, undefined) of
-        undefined ->
-            Validated = validate_conf(strip_runtime(Conf)),
-            validate_on_discard(Conf),
-            _ = gaffer_hooks:with_hooks(
-                Hooks,
-                [gaffer, queue, create],
-                Conf,
-                fun(C) ->
-                    Mod:queue_insert(Name, DS),
-                    persistent_term:put(
-                        {gaffer_queue, Name},
-                        maps:merge(Conf, Validated)
-                    ),
-                    {ok, _Pid} = gaffer_sup:start_queue(Name),
-                    C
-                end
-            ),
-            ok;
-        _ ->
-            {error, already_exists}
+        undefined -> ensure(Conf0);
+        _ -> {error, already_exists}
     end.
 
 -spec ensure(queue_conf()) -> ok.
@@ -102,47 +82,21 @@ ensure(Conf0) ->
         maps:merge(Conf, Validated)
     ),
     case gaffer_queue_sup:ensure(Name) of
-        created ->
-            _ = gaffer_hooks:with_hooks(
-                Hooks, [gaffer, queue, create], Conf, fun(C) -> C end
-            ),
-            ok;
-        updated ->
-            _ = gaffer_hooks:with_hooks(
-                Hooks, [gaffer, queue, update], Conf, fun(C) -> C end
-            ),
-            ok
+        created -> gaffer_hooks:notify(Hooks, [gaffer, queue, create], Conf);
+        updated -> gaffer_hooks:notify(Hooks, [gaffer, queue, update], Conf)
     end.
 
 -spec delete(gaffer:queue()) -> ok.
 delete(Name) ->
-    #{driver := {Mod, DS}, hooks := Hooks} = conf(Name),
-    _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, delete], Name, fun(N) ->
-        case Mod:queue_delete(Name, DS) of
-            ok ->
-                ok = gaffer_sup:stop_queue(gaffer_queue_sup:pid(Name)),
-                persistent_term:erase({gaffer_queue, Name}),
-                N;
-            {error, has_jobs} ->
-                error({queue_has_jobs, Name})
-        end
-    end),
-    ok.
+    #{driver := {Mod, DS}} = conf(Name),
+    case Mod:queue_delete(Name, DS) of
+        ok -> teardown_queue(Name);
+        {error, has_jobs} -> error({queue_has_jobs, Name})
+    end.
 
 -spec delete(gaffer:queue(), gaffer_driver:driver()) -> ok.
 delete(Name, {Mod, DS}) ->
-    % Stop supervisor and erase config if the queue is active
-    case persistent_term:get({gaffer_queue, Name}, undefined) of
-        undefined ->
-            ok;
-        #{hooks := Hooks} ->
-            _ = gaffer_hooks:with_hooks(
-                Hooks, [gaffer, queue, delete], Name, fun(N) -> N end
-            ),
-            ok = gaffer_sup:stop_queue(gaffer_queue_sup:pid(Name)),
-            persistent_term:erase({gaffer_queue, Name})
-    end,
-    % Delete all jobs, then the queue from storage
+    teardown_queue(Name),
     prune(Name, #{'_' => 0}, {Mod, DS}),
     case Mod:queue_delete(Name, DS) of
         ok -> ok;
@@ -175,12 +129,9 @@ update(Name, Updates) ->
     MergedConf = maps:merge(Conf, Validated),
     _ = validate_conf(strip_runtime(MergedConf)),
     validate_on_discard(MergedConf),
-    _ = gaffer_hooks:with_hooks(Hooks, [gaffer, queue, update], Updates, fun(U) ->
-        persistent_term:put({gaffer_queue, Name}, MergedConf),
-        gaffer_queue_runner:reconfigure(Name),
-        U
-    end),
-    ok.
+    persistent_term:put({gaffer_queue, Name}, MergedConf),
+    gaffer_queue_runner:reconfigure(Name),
+    gaffer_hooks:notify(Hooks, [gaffer, queue, update], Updates).
 
 % Introspection
 
@@ -205,12 +156,9 @@ info(Queue) ->
 insert_job(Queue, Payload, Opts) ->
     #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
     NewJob = gaffer_job:create(Conf, Payload, Opts),
-    gaffer_hooks:with_hooks(
-        Hooks,
-        [gaffer, job, insert],
-        NewJob,
-        fun(Job) -> hd(Mod:job_write([Job], DS)) end
-    ).
+    [Written] = Mod:job_write([NewJob], DS),
+    gaffer_hooks:notify(Hooks, [gaffer, job, insert], Written),
+    Written.
 
 -spec get_job(gaffer:queue(), gaffer:job_id()) ->
     gaffer:job() | not_found.
@@ -227,17 +175,10 @@ list_jobs(#{queue := Queue} = Opts) ->
 -spec delete_job(gaffer:queue(), gaffer:job_id()) -> ok.
 delete_job(Queue, ID) ->
     #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
-    gaffer_hooks:with_hooks(
-        Hooks,
-        [gaffer, job, delete],
-        ID,
-        fun(J) ->
-            case Mod:job_delete(J, DS) of
-                not_found -> error({unknown_job, J});
-                ok -> ok
-            end
-        end
-    ).
+    case Mod:job_delete(ID, DS) of
+        not_found -> error({unknown_job, ID});
+        ok -> gaffer_hooks:notify(Hooks, [gaffer, job, delete], ID)
+    end.
 
 -spec cancel_job(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
@@ -249,12 +190,8 @@ cancel_job(Queue, ID) ->
         Job ->
             case gaffer_job:transition(Job, cancelled) of
                 {ok, Cancelled} ->
-                    Written = gaffer_hooks:with_hooks(
-                        Hooks,
-                        [gaffer, job, cancel],
-                        Cancelled,
-                        fun(J) -> hd(Mod:job_write([J], DS)) end
-                    ),
+                    [Written] = Mod:job_write([Cancelled], DS),
+                    gaffer_hooks:notify(Hooks, [gaffer, job, cancel], Written),
                     {ok, Written};
                 {error, _} = Err ->
                     Err
@@ -267,12 +204,10 @@ cancel_job(Queue, ID) ->
     {ok, gaffer:job()}.
 write_result(Queue, Event, Job) ->
     #{hooks := Hooks} = Conf = conf(Queue),
-    Written = gaffer_hooks:with_hooks(Hooks, Event, Job, fun(J) ->
-        write_result_jobs(Conf, J),
-        J
-    end),
-    run_forward_hooks(Conf, Written),
-    {ok, Written}.
+    write_result_jobs(Conf, Job),
+    gaffer_hooks:notify(Hooks, Event, Job),
+    run_forward_hooks(Conf, Job),
+    {ok, Job}.
 
 -spec claim_jobs(gaffer:queue(), claim_opts()) ->
     [gaffer:job()].
@@ -282,22 +217,29 @@ claim_jobs(Queue, Opts) ->
     GlobalMax = maps:get(global_max_workers, Conf),
     Limit = clamp_limit(maps:get(limit, Opts), GlobalMax),
     ClaimOpts = Opts#{limit := Limit, global_max_workers => GlobalMax},
-    gaffer_hooks:with_hooks(
-        Hooks,
-        [gaffer, job, claim],
-        ClaimOpts,
-        fun(_) -> Mod:job_claim(ClaimOpts, Changes, DS) end
-    ).
+    Claimed = Mod:job_claim(ClaimOpts, Changes, DS),
+    gaffer_hooks:notify(Hooks, [gaffer, job, claim], Claimed),
+    Claimed.
 
 -spec prune_jobs(gaffer:queue(), prune_opts()) -> [gaffer:job_id()].
 prune_jobs(Queue, MaxAge) ->
     #{driver := Driver, hooks := Hooks} = conf(Queue),
     IDs = prune(Queue, MaxAge, Driver),
     Event = [gaffer, job, delete],
-    _ = [gaffer_hooks:run_post_hooks(Hooks, Event, ID) || ID <:- IDs],
+    _ = [gaffer_hooks:notify(Hooks, Event, ID) || ID <:- IDs],
     IDs.
 
 %--- Internal ------------------------------------------------------------------
+
+teardown_queue(Name) ->
+    teardown_queue(Name, persistent_term:get({gaffer_queue, Name}, undefined)).
+
+teardown_queue(_Name, undefined) ->
+    ok;
+teardown_queue(Name, #{hooks := Hooks}) ->
+    ok = gaffer_sup:stop_queue(gaffer_queue_sup:pid(Name)),
+    persistent_term:erase({gaffer_queue, Name}),
+    gaffer_hooks:notify(Hooks, [gaffer, queue, delete], Name).
 
 prune(Queue, MaxAge, Driver) ->
     do_prune(Queue, normalize_max_age(MaxAge), Driver).
@@ -398,9 +340,7 @@ run_forward_hooks(#{on_discard := Target}, #{state := discarded} = Job) ->
     Forwarded = gaffer_job:create(
         conf(Target), gaffer_job:forward_payload(Job), #{}
     ),
-    gaffer_hooks:with_hooks(Hooks, [gaffer, job, insert], Forwarded, fun(J) ->
-        J
-    end);
+    gaffer_hooks:notify(Hooks, [gaffer, job, insert], Forwarded);
 run_forward_hooks(_, _) ->
     ok.
 

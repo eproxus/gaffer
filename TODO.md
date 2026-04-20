@@ -54,19 +54,23 @@
 - [X] Rename `Id` to `ID` throughout the codebase
 - [X] Create Hex release action
 - [X] Clean up PGO driver to remove the `#{rows := ...}` pattern
+- [X] Remove the pre-hooks completely
 - [ ] Change await_hooks in the tests to wait for a specific hook
-- [ ] Remove the pre-hooks completely
-- [ ] Implement job drainning
+- [ ] Add pause/resume functionality to the queue runner with a public API
+    - `pause(Queue)`, `resume(Queue)`
+    - Running jobs should finish (implicit draining)
+        - Maybe add opts to control this?
+- [ ] Implement job draining
     - There has to be a way to pause the runner from claiming new jobs
         - Does a user facing drain make sense without a pause/resume API?
     - Application pre-stop should then drain by default
         - Then we can use short supervisor shutdown times to detect bugs in
           processes that fail to shutdown
-- [ ] Add pause/resume functionality to the queue runner with a public API
-    - `pause(Queue)`, `resume(Queue)`
-    - Running jobs should finish (implicit draining)
-        - Maybe add opts to control this?
 - [ ] Handle timeouts in runner
+- [ ] Improve ensure_queue config update/replace handling, improve documentation
+    - Currently it just overwrites the configuration, and if it as a partial
+      config it takes default values instead of the old queue config. This
+      behavior is unclear and could be improved and/or documented better
 - [ ] Add a public `migrations/1` function to the PGO driver to use together
       with rollback
 - [ ] `gaffer_driver_ets` could be reactive by triggering a poll

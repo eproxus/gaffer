@@ -22,15 +22,11 @@ harness(DriverMod, Parallel, Sequential) ->
     ].
 
 notify_hook(Pid, Events) ->
-    fun
-        (post, Event, Data) ->
-            case lists:member(Event, Events) of
-                true -> Pid ! {gaffer_hook, Event, Data};
-                false -> ok
-            end,
-            Data;
-        (pre, _Event, Data) ->
-            Data
+    fun(Event, Data) ->
+        case lists:member(Event, Events) of
+            true -> Pid ! {gaffer_hook, Event, Data};
+            false -> ok
+        end
     end.
 
 await_hook() ->
