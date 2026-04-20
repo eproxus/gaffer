@@ -55,7 +55,7 @@
 - [X] Create Hex release action
 - [X] Clean up PGO driver to remove the `#{rows := ...}` pattern
 - [X] Remove the pre-hooks completely
-- [ ] Change await_hooks in the tests to wait for a specific hook
+- [X] Change await_hooks in the tests to wait for a specific hook
 - [ ] Add pause/resume functionality to the queue runner with a public API
     - `pause(Queue)`, `resume(Queue)`
     - Running jobs should finish (implicit draining)

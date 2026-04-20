@@ -1,7 +1,7 @@
 -module(gaffer_test_helpers).
 
 -export([harness/3]).
--export([notify_hook/2, await_hook/0, await_hooks/1]).
+-export([notify_hook/2]).
 -export([pgo_pool_config/0, reset_database/1, stop_pool/1]).
 -export([normalize/1]).
 -export([wait_for/2, wait_for/3]).
@@ -28,18 +28,6 @@ notify_hook(Pid, Events) ->
             false -> ok
         end
     end.
-
-await_hook() ->
-    receive
-        {gaffer_hook, _Event, _Data} -> ok
-    after 5000 -> error(timeout)
-    end.
-
-await_hooks(0) ->
-    ok;
-await_hooks(N) ->
-    await_hook(),
-    await_hooks(N - 1).
 
 pgo_pool_config() ->
     {ok, Props} = application:get_env(gaffer, postgres),

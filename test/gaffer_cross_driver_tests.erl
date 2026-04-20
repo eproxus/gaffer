@@ -3,6 +3,7 @@
 -import(gaffer_test_helpers, [normalize/1]).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("gaffer_test_helpers.hrl").
 
 %--- Fixtures -----------------------------------------------------------------
 
@@ -91,7 +92,7 @@ forward(SrcDriver, DlqDriver, SrcQueue, DlqQueue) ->
     }),
     #{id := ID} = gaffer:insert(SrcQueue, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(SrcQueue),
-    gaffer_test_helpers:await_hook(),
+    ?assertHook([gaffer, job, insert], #{queue := DlqQueue}),
     ?assertMatch(#{state := discarded}, gaffer:get(SrcQueue, ID)),
     Forwarded = normalize(
         maps:get(payload, hd(gaffer:list(DlqQueue)))
