@@ -14,6 +14,8 @@
 -export([update/2]).
 -export([list/0]).
 -export([conf/1]).
+-export([pause/1]).
+-export([resume/1]).
 % Introspection
 -export([info/1]).
 % Jobs (user)
@@ -133,13 +135,27 @@ update(Name, Updates) ->
     gaffer_queue_runner:reconfigure(Name),
     gaffer_hooks:notify(Hooks, [gaffer, queue, update], Updates).
 
+pause(Name) -> set_state(Name, pause).
+
+resume(Name) -> set_state(Name, resume).
+
+set_state(Name, State) ->
+    #{hooks := Hooks} = conf(Name),
+    case gaffer_queue_runner:State(Name) of
+        ok ->
+            ok = gaffer_queue_pruner:State(Name),
+            gaffer_hooks:notify(Hooks, [gaffer, queue, State], Name);
+        {error, _} = Err ->
+            Err
+    end.
+
 % Introspection
 
 -spec info(gaffer:queue()) -> gaffer:queue_info().
 info(Queue) ->
     #{driver := {Mod, DS}} = Conf = conf(Queue),
     StorageInfo = Mod:info(Queue, DS),
-    Active = gaffer_queue_runner:info(Queue),
+    #{active := Active, status := Status} = gaffer_queue_runner:info(Queue),
     WorkerInfo = #{
         active => Active,
         max => #{
@@ -147,7 +163,7 @@ info(Queue) ->
             global => maps:get(global_max_workers, Conf)
         }
     },
-    StorageInfo#{workers => WorkerInfo}.
+    StorageInfo#{workers => WorkerInfo, status => Status}.
 
 % Job (user)
 

@@ -27,6 +27,10 @@
 -export([orphaned_queues/1]).
 -ignore_xref(list_queues/0).
 -export([list_queues/0]).
+-ignore_xref(pause/1).
+-export([pause/1]).
+-ignore_xref(resume/1).
+-export([resume/1]).
 % Enqueueing
 -ignore_xref(insert/2).
 -export([insert/2]).
@@ -197,6 +201,7 @@ states older than the configured `max_age` (in milliseconds).
 -doc #{group => "Queue Types"}.
 -doc "Information about a queue.".
 -type queue_info() :: #{
+    status := active | paused,
     jobs := #{
         available := state_info(),
         executing := state_info(),
@@ -306,6 +311,30 @@ orphaned_queues(Driver) -> gaffer_queue:orphaned(Driver).
 -spec list_queues() -> [{queue(), queue_conf()}].
 list_queues() ->
     gaffer_queue:list().
+
+-doc #{group => "Queue Management"}.
+-doc """
+Pauses a queue.
+
+Running jobs continue to completion. While paused, the queue does not
+claim new jobs and pruning is suspended until `resume/1` is called.
+Explicit calls to `prune/1` still run while the queue is paused.
+
+Returns `{error, already_paused}` if the queue is already paused.
+""".
+-spec pause(queue()) -> ok | {error, already_paused}.
+pause(Queue) -> gaffer_queue:pause(Queue).
+
+-doc #{group => "Queue Management"}.
+-doc """
+Resumes a paused queue.
+
+Job claiming and pruning resume normally.
+
+Returns `{error, already_active}` if the queue is not currently paused.
+""".
+-spec resume(queue()) -> ok | {error, already_active}.
+resume(Queue) -> gaffer_queue:resume(Queue).
 
 % Enqueueing
 

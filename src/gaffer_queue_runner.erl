@@ -12,10 +12,17 @@
 -export([reconfigure/1]).
 -ignore_xref(info/1).
 -export([info/1]).
+-ignore_xref(pause/1).
+-export([pause/1]).
+-ignore_xref(resume/1).
+-export([resume/1]).
 % gen_statem Callbacks
 -export([callback_mode/0]).
 -export([init/1]).
--export([handle_event/4]).
+-ignore_xref(active/3).
+-export([active/3]).
+-ignore_xref(paused/3).
+-export([paused/3]).
 
 %--- API -----------------------------------------------------------------------
 
@@ -29,34 +36,59 @@ poll(Name) -> call(Name, poll).
 -spec reconfigure(gaffer:queue()) -> ok.
 reconfigure(Name) -> call(Name, reconfigure).
 
--spec info(gaffer:queue()) -> non_neg_integer().
+-spec info(gaffer:queue()) ->
+    #{active := non_neg_integer(), status := active | paused}.
 info(Name) -> call(Name, info).
+
+-spec pause(gaffer:queue()) -> ok | {error, already_paused}.
+pause(Name) -> call(Name, pause).
+
+-spec resume(gaffer:queue()) -> ok | {error, already_active}.
+resume(Name) -> call(Name, resume).
 
 %--- gen_statem Callbacks ------------------------------------------------------
 
-callback_mode() -> handle_event_function.
+callback_mode() -> state_functions.
 
 init(Name) ->
     Conf = gaffer_queue:conf(Name),
     Data = #{name => Name, workers => #{}},
-    {ok, polling, Data, initial_poll(Conf) ++ poll_timeout(Conf)}.
+    {ok, active, Data, initial_poll(Conf) ++ poll_timeout(Conf)}.
 
-handle_event(internal, poll, _State, #{name := Name} = Data) ->
-    Conf = gaffer_queue:conf(Name),
-    {keep_state, do_poll(Conf, Data)};
-handle_event(state_timeout, poll, _State, #{name := Name} = Data) ->
+active(internal, poll, #{name := Name} = Data) ->
+    {keep_state, do_poll(gaffer_queue:conf(Name), Data)};
+active(state_timeout, poll, #{name := Name} = Data) ->
     Conf = gaffer_queue:conf(Name),
     {keep_state, do_poll(Conf, Data), poll_timeout(Conf)};
-handle_event({call, From}, poll, _State, #{name := Name} = Data) ->
-    Conf = gaffer_queue:conf(Name),
-    {keep_state, do_poll(Conf, Data), [{reply, From, ok} | poll_timeout(Conf)]};
-handle_event({call, From}, reconfigure, _State, #{name := Name}) ->
+active({call, From}, reconfigure, #{name := Name}) ->
     {keep_state_and_data, [
         {reply, From, ok} | poll_timeout(gaffer_queue:conf(Name))
     ]};
-handle_event({call, From}, info, _State, #{workers := Workers}) ->
-    {keep_state_and_data, [{reply, From, map_size(Workers)}]};
-handle_event(
+active({call, From}, pause, Data) ->
+    {next_state, paused, Data, [{reply, From, ok}]};
+active({call, From}, resume, _Data) ->
+    {keep_state_and_data, [{reply, From, {error, already_active}}]};
+active(EventType, Event, Data) ->
+    common(EventType, Event, active, Data).
+
+paused({call, From}, reconfigure, _Data) ->
+    {keep_state_and_data, [{reply, From, ok}]};
+paused({call, From}, pause, _Data) ->
+    {keep_state_and_data, [{reply, From, {error, already_paused}}]};
+paused({call, From}, resume, #{name := Name} = Data) ->
+    Conf = gaffer_queue:conf(Name),
+    {next_state, active, Data, [
+        {reply, From, ok}, {next_event, internal, poll} | poll_timeout(Conf)
+    ]};
+paused(EventType, Event, Data) ->
+    common(EventType, Event, paused, Data).
+
+common({call, From}, poll, _State, #{name := Name} = Data) ->
+    {keep_state, do_poll(gaffer_queue:conf(Name), Data), [{reply, From, ok}]};
+common({call, From}, info, State, #{workers := Workers}) ->
+    Result = #{active => map_size(Workers), status => State},
+    {keep_state_and_data, [{reply, From, Result}]};
+common(
     info,
     {'DOWN', _Ref, process, Pid, Reason},
     _State,

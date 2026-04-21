@@ -123,7 +123,15 @@ gaffer_test_() ->
         fun info_after_inserts/1,
         fun info_mixed_states/1,
         fun info_timestamps_per_state/1,
-        fun info_workers/1
+        fun info_workers/1,
+        % --- Pause / Resume ---
+        fun pause_stops_claiming/1,
+        fun pause_lets_inflight_finish/1,
+        fun pause_pruner_timer_suspended/1,
+        fun pause_manual_prune_still_works/1,
+        fun pause_resume_transitions/1,
+        fun pause_reconfigure_works/1,
+        fun info_reports_status/1
     ],
     Sequential = [
         % Hook tests that affect global state
@@ -1198,6 +1206,102 @@ info_workers(Driver) ->
     ?assertHook([gaffer, job, complete], #{id := ID}),
     #{workers := #{active := 0}} = gaffer:info(?Q).
 
+%--- Pause / Resume tests -----------------------------------------------------
+
+pause_stops_claiming(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, claim]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{poll_interval => 50, hooks => [Hook]})
+    ),
+    ok = gaffer:pause(?Q),
+    % Drain any claim hook that may have fired before the pause took effect
+    drain_gaffer_hooks([gaffer, job, claim], 100),
+    _ = gaffer:insert(?Q, #{task => 1}),
+    % 4x poll_interval without a claim hook proves state_timeout is suppressed
+    receive
+        {gaffer_hook, [gaffer, job, claim], _} -> error(claim_while_paused)
+    after 200 -> ok
+    end,
+    ?assertEqual(1, length(gaffer:list(?Q, #{state => available}))),
+    % Manual poll still works while paused
+    ok = gaffer_queue_runner:poll(?Q).
+
+pause_lets_inflight_finish(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    #{id := ID} = gaffer:insert(?Q, #{
+        ~"action" => ~"block", ~"test_pid" => TestPid
+    }),
+    ok = gaffer_queue_runner:poll(?Q),
+    WorkerPid =
+        receive
+            {job_started, #{id := ID, worker := P}} -> P
+        after 5000 -> error(timeout)
+        end,
+    ok = gaffer:pause(?Q),
+    WorkerPid ! continue,
+    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertMatch(#{state := completed}, gaffer:get(?Q, ID)).
+
+pause_pruner_timer_suspended(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, delete]]),
+    PruneConf = #{interval => 50, max_age => #{cancelled => 0}},
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{prune => PruneConf, hooks => [Hook]})
+    ),
+    ok = gaffer:pause(?Q),
+    drain_gaffer_hooks([gaffer, job, delete], 100),
+    #{id := ID} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, ID),
+    % 4x prune interval without a delete hook proves pruner timer is suppressed
+    receive
+        {gaffer_hook, [gaffer, job, delete], _} -> error(prune_while_paused)
+    after 200 -> ok
+    end,
+    ?assertEqual([ID], [I || #{id := I} <:- gaffer:list(?Q)]).
+
+pause_manual_prune_still_works(Driver) ->
+    PruneConf = #{interval => infinity, max_age => #{cancelled => 0}},
+    ok = gaffer:create_queue(?CONF(Driver, #{prune => PruneConf})),
+    #{id := ID} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, ID),
+    ok = gaffer:pause(?Q),
+    ?assertEqual([ID], gaffer:prune(?Q)),
+    ?assertEqual([], gaffer:list(?Q)).
+
+pause_resume_transitions(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(
+        self(), [[gaffer, queue, pause], [gaffer, queue, resume]]
+    ),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    ?assertEqual(ok, gaffer:pause(?Q)),
+    ?assertHook([gaffer, queue, pause], pause_resume_transitions),
+    ?assertEqual({error, already_paused}, gaffer:pause(?Q)),
+    assert_no_gaffer_hook(100),
+    ?assertEqual(ok, gaffer:resume(?Q)),
+    ?assertHook([gaffer, queue, resume], pause_resume_transitions),
+    ?assertEqual({error, already_active}, gaffer:resume(?Q)),
+    assert_no_gaffer_hook(100),
+    ?assertEqual(ok, gaffer:pause(?Q)),
+    ?assertHook([gaffer, queue, pause], pause_resume_transitions).
+
+pause_reconfigure_works(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    ok = gaffer:pause(?Q),
+    % ensure_queue on an existing queue reconfigures runner and pruner
+    ok = gaffer:ensure_queue(?CONF(Driver, #{max_workers => 3})),
+    ?assertMatch(#{status := paused}, gaffer:info(?Q)),
+    ?assertEqual(3, maps:get(max_workers, gaffer:get_queue(?Q))).
+
+info_reports_status(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    ?assertMatch(#{status := active}, gaffer:info(?Q)),
+    ok = gaffer:pause(?Q),
+    ?assertMatch(#{status := paused}, gaffer:info(?Q)),
+    ok = gaffer:resume(?Q),
+    ?assertMatch(#{status := active}, gaffer:info(?Q)).
+
 %--- Hook tests ---------------------------------------------------------------
 
 hook_cancel(Driver) ->
@@ -1393,6 +1497,18 @@ flush(Acc) ->
 
 flush_events() ->
     [{Tag, Event} || {Tag, Event, _} <:- flush()].
+
+drain_gaffer_hooks(Event, Timeout) ->
+    receive
+        {gaffer_hook, Event, _} -> drain_gaffer_hooks(Event, Timeout)
+    after Timeout -> ok
+    end.
+
+assert_no_gaffer_hook(Timeout) ->
+    receive
+        {gaffer_hook, _, _} = Msg -> error({unexpected_hook, Msg})
+    after Timeout -> ok
+    end.
 
 await_errors(Queue, ID, ErrorCount) ->
     gaffer_test_helpers:wait_for(

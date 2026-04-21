@@ -56,10 +56,14 @@
 - [X] Clean up PGO driver to remove the `#{rows := ...}` pattern
 - [X] Remove the pre-hooks completely
 - [X] Change await_hooks in the tests to wait for a specific hook
-- [ ] Add pause/resume functionality to the queue runner with a public API
+- [X] Add pause/resume functionality to the queue runner with a public API
     - `pause(Queue)`, `resume(Queue)`
     - Running jobs should finish (implicit draining)
         - Maybe add opts to control this?
+- [ ] Enhance the poll/prune hook paylod to indicate if they are automatic or
+      user initiated (e.g. manual via the public API)
+- [ ] Simplify API documentation groups to "Queue Management" and "Job
+      Management" only
 - [ ] Implement job draining
     - There has to be a way to pause the runner from claiming new jobs
         - Does a user facing drain make sense without a pause/resume API?
