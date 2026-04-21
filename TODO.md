@@ -60,9 +60,7 @@
     - `pause(Queue)`, `resume(Queue)`
     - Running jobs should finish (implicit draining)
         - Maybe add opts to control this?
-- [ ] Enhance the poll/prune hook paylod to indicate if they are automatic or
-      user initiated (e.g. manual via the public API)
-- [ ] Simplify API documentation groups to "Queue Management" and "Job
+- [X] Simplify API documentation groups to "Queue Management" and "Job
       Management" only
 - [ ] Implement job draining
     - There has to be a way to pause the runner from claiming new jobs
@@ -70,13 +68,18 @@
     - Application pre-stop should then drain by default
         - Then we can use short supervisor shutdown times to detect bugs in
           processes that fail to shutdown
+- [ ] Formalize the hook payloads
+    - Make them maps that has the inner payload (e.g. a job) as a key, so we
+      can put other metadata in the map?
+- [ ] Enhance the poll/prune hook payload to indicate if they are automatic or
+      user initiated (e.g. manual via the public API)
+- [ ] Add a public `migrations/1` function to the PGO driver to use together
+      with rollback
 - [ ] Handle timeouts in runner
 - [ ] Improve ensure_queue config update/replace handling, improve documentation
     - Currently it just overwrites the configuration, and if it as a partial
       config it takes default values instead of the old queue config. This
       behavior is unclear and could be improved and/or documented better
-- [ ] Add a public `migrations/1` function to the PGO driver to use together
-      with rollback
 - [ ] `gaffer_driver_ets` could be reactive by triggering a poll
     - Should it only be reactive, i.e. we don't need poll_interval at all...
 - [ ] Starting pools using `gaffer_driver_pgo` crashes

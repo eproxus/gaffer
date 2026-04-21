@@ -64,10 +64,8 @@
 
 %--- Types ---------------------------------------------------------------------
 
--doc #{group => "Job Types"}.
 -doc "Unique job identifier.".
 -type job_id() :: keysmith:uuid().
--doc #{group => "Job Types"}.
 -doc "Possible states of a job.".
 -type job_state() ::
     available
@@ -75,11 +73,9 @@
     | completed
     | cancelled
     | discarded.
--doc #{group => "Queue Types"}.
 -doc "Queue identifier.".
 -type queue() :: atom().
 
--doc #{group => "Job Types"}.
 -doc """
 Job timestamp.
 
@@ -87,27 +83,20 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 """.
 -type timestamp() :: integer() | {erlang:time_unit(), integer()}.
 
--doc #{group => "Job Types"}.
 -doc "An age in milliseconds.".
 -type age() :: non_neg_integer() | infinity.
 
--doc #{group => "Job Types"}.
 -doc "Maximum execution attempts for a job.".
 -type max_attempts() :: pos_integer().
--doc #{group => "Job Types"}.
 -doc "Job priority. Higher values are processed first.".
 -type priority() :: integer().
--doc #{group => "Job Types"}.
 -doc "Execution timeout in milliseconds.".
 -type timeout_ms() :: pos_integer().
--doc #{group => "Job Types"}.
 -doc "Retry backoff strategy.".
 -type backoff() :: non_neg_integer() | [non_neg_integer()].
--doc #{group => "Job Types"}.
 -doc "Grace period for worker shutdown in milliseconds.".
 -type shutdown_timeout() :: pos_integer().
 
--doc #{group => "Job Types"}.
 -doc "A job.".
 -type job() :: #{
     id := job_id(),
@@ -130,7 +119,6 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     errors := [job_error()]
 }.
 
--doc #{group => "Job Types"}.
 -doc "Per-job options at insert time.".
 -type job_opts() :: #{
     queue => queue(),
@@ -142,7 +130,6 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     scheduled_at => timestamp()
 }.
 
--doc #{group => "Job Types"}.
 -doc "A recorded execution error.".
 -type job_error() :: #{
     attempt := non_neg_integer(),
@@ -150,19 +137,15 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     at := timestamp()
 }.
 
--doc #{group => "Queue Types"}.
 -doc "Maximum number of concurrent workers.".
 -type max_workers() :: pos_integer() | infinity.
 
--doc #{group => "Queue Types"}.
 -doc "An interval in milliseconds.".
 -type interval() :: pos_integer() | infinity.
 
--doc #{group => "Queue Types"}.
 -doc "Maximum age per job state, in milliseconds.".
 -type max_age() :: #{job_state() | '_' => age()}.
 
--doc #{group => "Queue Types"}.
 -doc """
 Pruning configuration for a queue.
 
@@ -171,7 +154,6 @@ states older than the configured `max_age` (in milliseconds).
 """.
 -type prune_conf() :: #{interval := interval(), max_age => max_age()}.
 
--doc #{group => "Queue Types"}.
 -doc "Queue configuration.".
 -type queue_conf() :: #{
     name := queue(),
@@ -190,7 +172,6 @@ states older than the configured `max_age` (in milliseconds).
     prune => prune_conf()
 }.
 
--doc #{group => "Queue Types"}.
 -doc "Information about a job state.".
 -type state_info() :: #{
     count := non_neg_integer(),
@@ -198,7 +179,6 @@ states older than the configured `max_age` (in milliseconds).
     newest => timestamp()
 }.
 
--doc #{group => "Queue Types"}.
 -doc "Information about a queue.".
 -type queue_info() :: #{
     status := active | paused,
@@ -215,7 +195,6 @@ states older than the configured `max_age` (in milliseconds).
     }
 }.
 
--doc #{group => "Job Types"}.
 -doc "Filter options for listing jobs.".
 -type job_filter() :: #{
     state => job_state()
@@ -352,7 +331,7 @@ insert(Queue, Payload, Opts) ->
 
 % Job Lifecycle
 
--doc #{group => "Job Lifecycle"}.
+-doc #{group => "Job Management"}.
 -doc "Cancels a job, preventing further execution.".
 -spec cancel(queue(), job_id()) ->
     {ok, job()} | {error, {invalid_transition, term()}}.
@@ -363,13 +342,13 @@ cancel(Queue, ID) ->
         {ok, _} = Ok -> Ok
     end.
 
--doc #{group => "Job Lifecycle"}.
+-doc #{group => "Job Management"}.
 -doc #{equiv => drain(Queue, 5000)}.
 -spec drain(queue()) -> ok.
 drain(Queue) ->
     drain(Queue, 5000).
 
--doc #{group => "Job Lifecycle"}.
+-doc #{group => "Job Management"}.
 -doc "Waits for the active workers to finish their jobs.".
 -spec drain(queue(), timeout()) -> ok.
 % elp:ignore W0048 - stubs (see TODO below)
@@ -381,27 +360,27 @@ drain(_Queue, _Timeout) ->
     % TODO: stop claiming, wait for in-flight workers
     error(not_implemented).
 
--doc #{group => "Job Lifecycle"}.
+-doc #{group => "Job Management"}.
 -doc #{equiv => flush(Queue, infinity)}.
 -spec flush(queue()) -> ok.
 flush(Queue) ->
     flush(Queue, infinity).
 
--doc #{group => "Job Lifecycle"}.
+-doc #{group => "Job Management"}.
 -doc "Waits for *all* jobs in the queue to finish.".
 -spec flush(queue(), timeout()) -> ok.
 flush(_Queue, _Timeout) ->
     % TODO: process all remaining items in the queue until empty
     error(not_implemented).
 
--doc #{group => "Job Lifecycle"}.
+-doc #{group => "Job Management"}.
 -doc "Triggers an immediate prune of stale jobs in the given queue.".
 -spec prune(queue()) -> [job_id()].
 prune(Queue) -> gaffer_queue_pruner:prune(Queue).
 
 % Queue Introspection
 
--doc #{group => "Queue Introspection"}.
+-doc #{group => "Queue Management"}.
 -doc "Returns current queue information.".
 -spec info(queue()) -> queue_info().
 info(Queue) ->

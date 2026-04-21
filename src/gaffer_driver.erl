@@ -116,19 +116,19 @@ Returns the written jobs in input order.
 
 %--- API -----------------------------------------------------------------------
 
--doc "Registers a driver under a name for later lookup.".
+-doc false.
 -spec register(atom(), {module(), driver_state()}) -> ok.
 register(Name, {_Mod, _DS} = Driver) ->
     persistent_term:put({gaffer_driver, Name}, Driver),
     ok.
 
--doc "Unregisters a previously registered driver.".
+-doc false.
 -spec unregister(atom()) -> ok.
 unregister(Name) ->
     _ = persistent_term:erase({gaffer_driver, Name}),
     ok.
 
--doc "Looks up a registered driver by name.".
+-doc false.
 -spec lookup(atom()) -> {module(), driver_state()}.
 lookup(Name) ->
     case persistent_term:get({gaffer_driver, Name}, undefined) of
