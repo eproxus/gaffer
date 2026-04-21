@@ -14,8 +14,6 @@ mise run --output=keep-order test               # Run all tests (requires Docker
 mise run uncovered                              # Show uncovered lines for the current change
 mise run format                                 # Format all code
 mise run docs                                   # Generate documentation
-rebar3 eunit --module=gaffer_tests              # Run a single eunit module
-rebar3 ct --suite=gaffer_driver_pgo_SUITE       # Run a single CT suite
 elp lint --diagnostic-filter W0023 --apply-fix  # Apply a specific elp fix by code
 ```
 
