@@ -62,6 +62,9 @@ active(state_timeout, poll, #{name := Name} = Data) ->
     Conf = gaffer_queue:conf(Name),
     {Data1, Actions} = do_poll(Conf, Data),
     {keep_state, Data1, poll_timeout(Conf) ++ Actions};
+active(info, {'DOWN', _Ref, process, Pid, Reason}, Data) ->
+    {Data1, Actions} = handle_worker_down(Pid, Reason, Data),
+    {keep_state, Data1, [{next_event, internal, poll} | Actions]};
 active({call, From}, reconfigure, #{name := Name}) ->
     {keep_state_and_data, [
         {reply, From, ok} | poll_timeout(gaffer_queue:conf(Name))
@@ -82,6 +85,9 @@ paused({call, From}, resume, #{name := Name} = Data) ->
     {next_state, active, Data, [
         {reply, From, ok}, {next_event, internal, poll} | poll_timeout(Conf)
     ]};
+paused(info, {'DOWN', _Ref, process, Pid, Reason}, Data) ->
+    {Data1, Actions} = handle_worker_down(Pid, Reason, Data),
+    {keep_state, Data1, Actions};
 paused(EventType, Event, Data) ->
     common(EventType, Event, paused, Data).
 
@@ -91,19 +97,6 @@ common({call, From}, poll, _State, #{name := Name} = Data) ->
 common({call, From}, info, State, #{workers := Workers}) ->
     Result = #{active => map_size(Workers), status => State},
     {keep_state_and_data, [{reply, From, Result}]};
-common(
-    info,
-    {'DOWN', _Ref, process, Pid, Reason},
-    _State,
-    #{name := Name, workers := Workers} = Data
-) ->
-    case maps:take(Pid, Workers) of
-        {OriginalJob, Workers1} ->
-            Actions = handle_worker_result(Pid, Reason, OriginalJob, Name),
-            {keep_state, Data#{workers := Workers1}, Actions};
-        error ->
-            {keep_state, Data}
-    end;
 common({timeout, Pid}, Reason, _State, Data) ->
     exit(Pid, Reason),
     {keep_state, Data}.
@@ -146,6 +139,15 @@ spawn_workers(Worker, [#{timeout := Timeout} = Job | Rest], Workers, Actions) ->
     end),
     Action = {{timeout, Pid}, Timeout, kill},
     spawn_workers(Worker, Rest, Workers#{Pid => Job}, [Action | Actions]).
+
+handle_worker_down(Pid, Reason, #{name := Name, workers := Workers} = Data) ->
+    case maps:take(Pid, Workers) of
+        {OriginalJob, Workers1} ->
+            Actions = handle_worker_result(Pid, Reason, OriginalJob, Name),
+            {Data#{workers := Workers1}, Actions};
+        error ->
+            {Data, []}
+    end.
 
 handle_worker_result(_Pid, kill, OriginalJob, Name) ->
     {Event, Job} = gaffer_job:handle_crash(OriginalJob, gaffer_job_timeout),

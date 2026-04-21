@@ -99,6 +99,8 @@ gaffer_test_() ->
         fun poll_worker_killed_fails_job/1,
         fun poll_worker_complete_result/1,
         fun poll_auto_executes/1,
+        fun poll_auto_claims_after_worker_completes/1,
+        fun pause_no_reclaim_after_worker_completes/1,
         fun worker_fun/1,
         fun driver_shorthand/1,
         % Timeout
@@ -938,6 +940,76 @@ poll_auto_executes(Driver) ->
     ?assertHook([gaffer, job, complete], #{id := ID}),
     ?assertMatch(#{state := completed}, gaffer:get(?Q, ID)).
 
+poll_auto_claims_after_worker_completes(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(
+        self(), [[gaffer, job, claim], [gaffer, job, complete]]
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            max_workers => 2, hooks => [Hook]
+        })
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"block", ~"test_pid" => TestPid},
+    #{id := ID1} = gaffer:insert(?Q, Payload),
+    #{id := ID2} = gaffer:insert(?Q, Payload),
+    #{id := ID3} = gaffer:insert(?Q, Payload),
+    ok = gaffer_queue_runner:poll(?Q),
+    Pid1 =
+        receive
+            {job_started, #{id := ID1, worker := P1}} -> P1
+        after 5000 -> error(timeout)
+        end,
+    _Pid2 =
+        receive
+            {job_started, #{id := ID2, worker := P2}} -> P2
+        after 5000 -> error(timeout)
+        end,
+    ?assertEqual(1, length(gaffer:list(?Q, #{state => available}))),
+    % Drain the claim hooks from the manual poll
+    drain_gaffer_hooks([gaffer, job, claim], 100),
+    % Unblock one worker - the runner should auto-claim the third job
+    Pid1 ! continue,
+    ?assertHook([gaffer, job, complete], #{id := ID1}),
+    ?assertHook([gaffer, job, claim], [#{id := ID3}]),
+    ?assertMatch(#{state := executing}, gaffer:get(?Q, ID3)).
+
+pause_no_reclaim_after_worker_completes(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(
+        self(), [[gaffer, job, claim], [gaffer, job, complete]]
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            max_workers => 2, hooks => [Hook]
+        })
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"block", ~"test_pid" => TestPid},
+    #{id := ID1} = gaffer:insert(?Q, Payload),
+    #{id := ID2} = gaffer:insert(?Q, Payload),
+    #{id := ID3} = gaffer:insert(?Q, Payload),
+    ok = gaffer_queue_runner:poll(?Q),
+    Pid1 =
+        receive
+            {job_started, #{id := ID1, worker := P1}} -> P1
+        after 5000 -> error(timeout)
+        end,
+    _Pid2 =
+        receive
+            {job_started, #{id := ID2, worker := P2}} -> P2
+        after 5000 -> error(timeout)
+        end,
+    ok = gaffer:pause(?Q),
+    drain_gaffer_hooks([gaffer, job, claim], 100),
+    Pid1 ! continue,
+    ?assertHook([gaffer, job, complete], #{id := ID1}),
+    % No claim hook should fire while paused, even after the slot frees
+    receive
+        {gaffer_hook, [gaffer, job, claim], _} -> error(claim_while_paused)
+    after 200 -> ok
+    end,
+    ?assertMatch(#{state := available}, gaffer:get(?Q, ID3)).
+
 worker_fun(Driver) ->
     TestPid = self(),
     Worker = fun(#{payload := Payload}) ->
@@ -1357,12 +1429,15 @@ hook_complete(Driver) ->
     }),
     ok = gaffer_queue_runner:poll(?Q),
     ?assertHook([gaffer, job, complete], #{id := ID}),
+    % Sync with the runner so the post-DOWN re-poll has been processed
+    _ = gaffer:info(?Q),
     ?assertEqual(
         [
             {hook, [gaffer, queue, create]},
             {hook, [gaffer, job, insert]},
             {hook, [gaffer, job, claim]},
-            {hook, [gaffer, job, complete]}
+            {hook, [gaffer, job, complete]},
+            {hook, [gaffer, job, claim]}
         ],
         flush_events()
     ).
@@ -1374,12 +1449,15 @@ hook_fail(Driver) ->
     #{id := ID} = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
     ?assertHook([gaffer, job, fail], #{id := ID}),
+    % Sync with the runner so the post-DOWN re-poll has been processed
+    _ = gaffer:info(?Q),
     ?assertEqual(
         [
             {hook, [gaffer, queue, create]},
             {hook, [gaffer, job, insert]},
             {hook, [gaffer, job, claim]},
-            {hook, [gaffer, job, fail]}
+            {hook, [gaffer, job, fail]},
+            {hook, [gaffer, job, claim]}
         ],
         flush_events()
     ).
@@ -1396,12 +1474,15 @@ hook_schedule(Driver) ->
     }),
     ok = gaffer_queue_runner:poll(?Q),
     ?assertHook([gaffer, job, schedule], #{id := ID}),
+    % Sync with the runner so the post-DOWN re-poll has been processed
+    _ = gaffer:info(?Q),
     ?assertEqual(
         [
             {hook, [gaffer, queue, create]},
             {hook, [gaffer, job, insert]},
             {hook, [gaffer, job, claim]},
-            {hook, [gaffer, job, schedule]}
+            {hook, [gaffer, job, schedule]},
+            {hook, [gaffer, job, claim]}
         ],
         flush_events()
     ).
