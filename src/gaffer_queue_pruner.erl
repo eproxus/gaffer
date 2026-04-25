@@ -47,7 +47,7 @@ init(Name) ->
     {ok, active, #{name => Name}, [{state_timeout, Interval, prune}]}.
 
 active(state_timeout, prune, #{name := Name} = Data) ->
-    {_IDs, Actions} = do_prune(Name),
+    {_IDs, Actions} = do_prune(Name, pruner),
     {keep_state, Data, Actions};
 active({call, From}, reconfigure, #{name := Name}) ->
     #{prune := #{interval := Interval}} = gaffer_queue:conf(Name),
@@ -68,17 +68,20 @@ paused(EventType, Event, Data) ->
     common(EventType, Event, Data).
 
 common({call, From}, prune, #{name := Name} = Data) ->
-    {IDs, _Actions} = do_prune(Name),
+    {IDs, _Actions} = do_prune(Name, user),
     {keep_state, Data, [{reply, From, IDs}]}.
 
 %--- Internal ------------------------------------------------------------------
 
 call(Name, Msg) -> gen_statem:call(proc_name(Name), Msg).
 
-do_prune(Name) ->
-    #{prune := #{max_age := MaxAge, interval := Interval}} =
-        gaffer_queue:conf(Name),
-    {gaffer_queue:prune_jobs(Name, MaxAge), [{state_timeout, Interval, prune}]}.
+do_prune(Name, Actor) ->
+    #{prune := #{max_age := MaxAge, interval := Interval}} = gaffer_queue:conf(
+        Name
+    ),
+    {gaffer_queue:prune_jobs(Name, MaxAge, Actor), [
+        {state_timeout, Interval, prune}
+    ]}.
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input

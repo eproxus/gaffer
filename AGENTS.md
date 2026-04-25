@@ -34,6 +34,11 @@ Modules:
 * `gaffer_worker` - Worker process executing jobs
 * `gaffer_sup` - Top-level supervisor
 
+## Tasks
+
+Tracked in a GitHub Project linked to this repo. The board's UI-set
+priority order is authoritative: the top `Todo` is the next task.
+
 ## Coding Conventions
 
 * Use `gaffer` and `gaffer_queue` as templates for module layouts (comments,

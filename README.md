@@ -19,7 +19,7 @@ A reliable job queue implemented in Erlang.
 - [x] Priority-based execution
 - [x] Per-queue concurrency limits (local and global)
 - [x] Pluggable storage drivers (ETS for dev/test, Postgres for production)
-- [x] Lifecycle hooks (pre/post on queue and job events)
+- [x] Hooks for queue and job events
 - [x] Dead-letter queues (`on_discard`)
 - [x] Queue introspection and automatic/manual job pruning
 - [x] Delayed job scheduling
@@ -150,7 +150,7 @@ Queues are configured via `gaffer:queue_conf()` maps:
 
 - `hooks` (`[hook()]`, default = `[]`).
 
-  Lifecycle hook modules or funs.
+  Hook modules or funs called after queue and job events. See [Hooks](#hooks).
 
 - `prune` (`prune_conf()`)
 
@@ -168,6 +168,19 @@ Queues are configured via `gaffer:queue_conf()` maps:
 
       Default: `completed`, `discarded`, and `cancelled` jobs are pruned
       immediately, others are kept indefinitely.
+
+## Hooks
+
+Gaffer notifies registered hooks after queue and job events. Each hook
+receives an event path (a list of atoms) and a payload map carrying an `actor`
+field that identifies which Gaffer process or public API call caused the
+event.
+
+Hooks can be registered per queue via the `hooks` configuration option or
+globally via the `gaffer` application's `hooks` environment variable.
+
+See [`gaffer_hooks`](https://hexdocs.pm/gaffer/gaffer_hooks.html) for the full
+list of events and their payload shapes.
 
 ## Changelog
 

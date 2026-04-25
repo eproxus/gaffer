@@ -150,15 +150,17 @@ handle_worker_down(Pid, Reason, #{name := Name, workers := Workers} = Data) ->
     end.
 
 handle_worker_result(_Pid, kill, OriginalJob, Name) ->
-    {Event, Job} = gaffer_job:handle_crash(OriginalJob, gaffer_job_timeout),
-    _ = gaffer_queue:write_result(Name, Event, Job),
+    {Event, Data, Job} = gaffer_job:handle_crash(
+        OriginalJob, gaffer_job_timeout, runner
+    ),
+    _ = gaffer_queue:write_result(Name, Event, Data, Job),
     [];
-handle_worker_result(Pid, {gaffer_job, Event, Job}, _OriginalJob, Name) ->
-    _ = gaffer_queue:write_result(Name, Event, Job),
+handle_worker_result(Pid, {gaffer_job, Event, Data, Job}, _OriginalJob, Name) ->
+    _ = gaffer_queue:write_result(Name, Event, Data, Job),
     [{{timeout, Pid}, infinity, kill}];
 handle_worker_result(Pid, Reason, OriginalJob, Name) ->
-    {Event, Job} = gaffer_job:handle_crash(OriginalJob, Reason),
-    _ = gaffer_queue:write_result(Name, Event, Job),
+    {Event, Data, Job} = gaffer_job:handle_crash(OriginalJob, Reason, worker),
+    _ = gaffer_queue:write_result(Name, Event, Data, Job),
     [{{timeout, Pid}, infinity, kill}].
 
 proc_name(Name) ->

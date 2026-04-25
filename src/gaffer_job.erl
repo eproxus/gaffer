@@ -6,7 +6,7 @@
 -export([create/3]).
 -export([transition/2]).
 -export([claim_changes/0]).
--export([handle_crash/2]).
+-export([handle_crash/3]).
 -export([forward_payload/1]).
 -export([all_states/0]).
 
@@ -28,8 +28,8 @@ execute(Worker, Job) ->
         catch
             Class:Reason:Stack -> {fail, {Class, Reason, Stack}}
         end,
-    {Event, Updated} = apply_result(Job, Result),
-    exit({gaffer_job, Event, Updated}).
+    {Event, Data, Updated} = apply_result(Job, Result, worker),
+    exit({gaffer_job, Event, Data, Updated}).
 
 -doc false.
 -spec claim_changes() -> #{state := executing, attempted_at := integer()}.
@@ -41,9 +41,9 @@ forward_payload(Job) ->
     maps:with([payload, queue, attempt, errors, discarded_at], Job).
 
 -doc false.
--spec handle_crash(gaffer:job(), term()) ->
-    {gaffer_hooks:event(), gaffer:job()}.
-handle_crash(Job, Reason) -> apply_result(Job, {fail, Reason}).
+-spec handle_crash(gaffer:job(), term(), gaffer_hooks:actor()) ->
+    {gaffer_hooks:event(), gaffer_hooks:event_data(), gaffer:job()}.
+handle_crash(Job, Reason, Actor) -> apply_result(Job, {fail, Reason}, Actor).
 
 -doc false.
 -spec create(gaffer:queue_conf(), term(), gaffer:job_opts()) -> gaffer:job().
@@ -80,19 +80,22 @@ transition(#{state := From} = Job, To) ->
 
 %--- Internal ------------------------------------------------------------------
 
-apply_result(Job, complete) ->
-    apply_result(Job, {complete, undefined});
-apply_result(#{attempt := A} = Job, {complete, Result}) ->
-    {ok, C} = transition(Job, completed),
-    {[gaffer, job, complete], C#{attempt := A + 1, result => Result}};
-apply_result(Job, {fail, Reason}) ->
-    {[gaffer, job, fail], apply_failure(Job, Reason)};
-apply_result(Job, {cancel, _}) ->
+apply_result(Job, complete, Actor) ->
+    apply_result(Job, {complete, undefined}, Actor);
+apply_result(#{attempt := A} = Job, {complete, Result}, Actor) ->
+    {ok, C0} = transition(Job, completed),
+    C = C0#{attempt := A + 1, result => Result},
+    {[gaffer, job, complete], #{job => C, actor => Actor}, C};
+apply_result(Job, {fail, Reason}, Actor) ->
+    Failed = apply_failure(Job, Reason),
+    {[gaffer, job, fail], #{job => Failed, actor => Actor}, Failed};
+apply_result(Job, {cancel, _}, Actor) ->
     {ok, C} = transition(Job, cancelled),
-    {[gaffer, job, cancel], C};
-apply_result(Job, {schedule, At}) ->
-    {ok, Available} = transition(Job, available),
-    {[gaffer, job, schedule], Available#{scheduled_at => timestamp(At)}}.
+    {[gaffer, job, cancel], #{job => C, actor => Actor}, C};
+apply_result(Job, {schedule, At}, Actor) ->
+    {ok, Available0} = transition(Job, available),
+    Available = Available0#{scheduled_at => timestamp(At)},
+    {[gaffer, job, schedule], #{job => Available, actor => Actor}, Available}.
 
 apply_failure(#{attempt := Attempt} = Job, Reason) ->
     case add_error(Job#{attempt := Attempt + 1}, Reason) of

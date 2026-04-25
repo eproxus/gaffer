@@ -92,7 +92,9 @@ forward(SrcDriver, DlqDriver, SrcQueue, DlqQueue) ->
     }),
     #{id := ID} = gaffer:insert(SrcQueue, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(SrcQueue),
-    ?assertHook([gaffer, job, insert], #{queue := DlqQueue}),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := DlqQueue}, actor := worker
+    }),
     ?assertMatch(#{state := discarded}, gaffer:get(SrcQueue, ID)),
     Forwarded = normalize(
         maps:get(payload, hd(gaffer:list(DlqQueue)))

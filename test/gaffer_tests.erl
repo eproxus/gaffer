@@ -185,7 +185,7 @@ ensure_queue_starts_runner(Driver) ->
             ~"test_pid" => gaffer_test_worker:encode_pid(self())
         }
     ),
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     ?assertMatch(#{state := completed}, gaffer:get(?Q, ID)).
 
 update_queue_propagates(Driver) ->
@@ -217,8 +217,8 @@ update_queue_propagates(Driver) ->
         end,
     Pid1 ! continue,
     Pid2 ! continue,
-    ?assertHook([gaffer, job, complete], #{id := ID1}),
-    ?assertHook([gaffer, job, complete], #{id := ID2}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID1}, actor := worker}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID2}, actor := worker}),
     ?assertEqual(2, length(gaffer:list(?Q, #{state => completed}))).
 
 get_queue(Driver) ->
@@ -415,7 +415,7 @@ cancel_completed_error(Driver) ->
         ~"action" => ~"complete", ~"test_pid" => TestPid
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     ?assertMatch(
         {error, {invalid_transition, {completed, cancelled}}},
         gaffer:cancel(?Q, ID)
@@ -428,7 +428,9 @@ cancel_discarded_error(Driver) ->
         max_attempts => 1
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, fail], #{id := ID, state := discarded}),
+    ?assertHook([gaffer, job, fail], #{
+        job := #{id := ID, state := discarded}, actor := worker
+    }),
     ?assertMatch(
         {error, {invalid_transition, {discarded, cancelled}}},
         gaffer:cancel(?Q, ID)
@@ -444,7 +446,9 @@ complete_without_result(Driver) ->
         ~"action" => ~"complete", ~"test_pid" => TestPid
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{id := ID, result := undefined}),
+    ?assertHook([gaffer, job, complete], #{
+        job := #{id := ID, result := undefined}, actor := worker
+    }),
     ?assertMatch(
         #{state := completed, result := undefined}, gaffer:get(?Q, ID)
     ),
@@ -462,7 +466,7 @@ fail_retryable(Driver) ->
     }),
     ok = gaffer_queue_runner:poll(?Q),
     ?assertHook([gaffer, job, fail], #{
-        id := ID, state := available, attempt := 1
+        job := #{id := ID, state := available, attempt := 1}, actor := worker
     }),
     Failed = gaffer:get(?Q, ID),
     ?assertMatch(
@@ -477,7 +481,8 @@ fail_discarded(Driver) ->
     }),
     ok = gaffer_queue_runner:poll(?Q),
     ?assertHook([gaffer, job, fail], #{
-        id := ID, state := discarded, discarded_at := _
+        job := #{id := ID, state := discarded, discarded_at := _},
+        actor := worker
     }),
     ?assertMatch(#{state := discarded, discarded_at := _}, gaffer:get(?Q, ID)).
 
@@ -488,7 +493,7 @@ fail_error_normalization(Driver) ->
         max_attempts => 3
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, fail], #{id := ID}),
+    ?assertHook([gaffer, job, fail], #{job := #{id := ID}, actor := worker}),
     % The worker returns {fail, [#{reason => {badrpc, nodedown}}]}
     % which exercises all normalize_error_term clauses (list, map, atom, tuple)
     ?assertMatch(
@@ -573,7 +578,9 @@ schedule(Driver) ->
         ~"offset_seconds" => 60
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, schedule], #{id := ID, scheduled_at := _}),
+    ?assertHook([gaffer, job, schedule], #{
+        job := #{id := ID, scheduled_at := _}, actor := worker
+    }),
     Scheduled = gaffer:get(?Q, ID),
     ?assertMatch(#{state := available, scheduled_at := _}, Scheduled),
     ?assert(maps:get(scheduled_at, Scheduled) > erlang:system_time()).
@@ -668,7 +675,9 @@ claim_priority_order(Driver) ->
         receive
             {job_started, #{id := ID, worker := W}} ->
                 W ! continue,
-                ?assertHook([gaffer, job, complete], #{id := ID}),
+                ?assertHook([gaffer, job, complete], #{
+                    job := #{id := ID}, actor := worker
+                }),
                 ID
         after 5000 -> error(timeout)
         end
@@ -709,9 +718,9 @@ prune_per_state_cutoffs(Driver) ->
         ~"action" => ~"complete", ~"test_pid" => TestPid
     }),
     gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{id := ID2}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID2}, actor := worker}),
     % Prune only completed (age 0 = all)
-    ?assertMatch([_], gaffer_queue:prune_jobs(?Q, #{completed => 0})),
+    ?assertMatch([_], gaffer_queue:prune_jobs(?Q, #{completed => 0}, user)),
     % The cancelled job should still exist
     ?assertMatch([#{id := ID1}], gaffer:list(?Q)).
 
@@ -725,12 +734,12 @@ pruner_process(Driver) ->
     #{id := ID1} = gaffer:insert(?Q, #{task => 1}),
     {ok, _} = gaffer:cancel(?Q, ID1),
     % Wait for the first prune cycle to delete the job
-    ?assertHook([gaffer, job, delete], ID1),
+    ?assertHook([gaffer, job, delete], #{job_id := ID1, actor := pruner}),
     ?assertEqual([], gaffer:list(?Q)),
     % Insert and cancel another job, verify second prune cycle picks it up
     #{id := ID2} = gaffer:insert(?Q, #{task => 2}),
     {ok, _} = gaffer:cancel(?Q, ID2),
-    ?assertHook([gaffer, job, delete], ID2),
+    ?assertHook([gaffer, job, delete], #{job_id := ID2, actor := pruner}),
     ?assertEqual([], gaffer:list(?Q)).
 
 pruner_manual_trigger(Driver) ->
@@ -750,7 +759,9 @@ prune_infinity(Driver) ->
     {ok, _} = gaffer:cancel(?Q, ID1),
     {ok, _} = gaffer:cancel(?Q, ID2),
     % infinity = delete nothing (technically "jobs older than infinity")
-    ?assertEqual([], gaffer_queue:prune_jobs(?Q, #{cancelled => infinity})),
+    ?assertEqual(
+        [], gaffer_queue:prune_jobs(?Q, #{cancelled => infinity}, user)
+    ),
     ?assertEqual(
         lists:sort([ID1, ID2]),
         lists:sort([ID || #{id := ID} <:- gaffer:list(?Q)])
@@ -765,7 +776,7 @@ prune_zero(Driver) ->
     % 0 = delete all cancelled older than 0
     ?assertEqual(
         lists:sort([ID1, ID2]),
-        lists:sort(gaffer_queue:prune_jobs(?Q, #{cancelled => 0}))
+        lists:sort(gaffer_queue:prune_jobs(?Q, #{cancelled => 0}, user))
     ),
     ?assertEqual([], gaffer:list(?Q)).
 
@@ -781,11 +792,11 @@ prune_wildcard(Driver) ->
         ~"action" => ~"complete", ~"test_pid" => TestPid
     }),
     gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{id := ID2}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID2}, actor := worker}),
     % Also an available job still in the queue
     #{id := ID3} = gaffer:insert(?Q, #{task => 3}),
     % '_' => infinity deletes nothing
-    ?assertEqual([], gaffer_queue:prune_jobs(?Q, #{'_' => infinity})),
+    ?assertEqual([], gaffer_queue:prune_jobs(?Q, #{'_' => infinity}, user)),
     ?assertEqual(
         lists:sort([ID1, ID2, ID3]),
         lists:sort([ID || #{id := ID} <:- gaffer:list(?Q)])
@@ -793,7 +804,7 @@ prune_wildcard(Driver) ->
     % '_' => 0 deletes everything
     ?assertEqual(
         lists:sort([ID1, ID2, ID3]),
-        lists:sort(gaffer_queue:prune_jobs(?Q, #{'_' => 0}))
+        lists:sort(gaffer_queue:prune_jobs(?Q, #{'_' => 0}, user))
     ),
     ?assertEqual([], gaffer:list(?Q)).
 
@@ -809,7 +820,9 @@ prune_wildcard_infinity_with_override(Driver) ->
     ?assertEqual(
         lists:sort([ID1, ID2]),
         lists:sort(
-            gaffer_queue:prune_jobs(?Q, #{'_' => infinity, cancelled => 0})
+            gaffer_queue:prune_jobs(
+                ?Q, #{'_' => infinity, cancelled => 0}, user
+            )
         )
     ),
     % The available job should still exist
@@ -825,7 +838,8 @@ prune_wildcard_zero_with_override(Driver) ->
     #{id := _ID3} = gaffer:insert(?Q, #{task => 3}),
     % '_' => 0 (drop everything) except cancelled => infinity (override)
     ?assertMatch(
-        [_], gaffer_queue:prune_jobs(?Q, #{'_' => 0, cancelled => infinity})
+        [_],
+        gaffer_queue:prune_jobs(?Q, #{'_' => 0, cancelled => infinity}, user)
     ),
     % The cancelled jobs should still exist
     ?assertEqual(
@@ -868,8 +882,8 @@ poll_worker_lifecycle(Driver) ->
     % Completing workers transitions jobs to completed
     Pid1 ! continue,
     Pid2 ! continue,
-    ?assertHook([gaffer, job, complete], #{id := ID1}),
-    ?assertHook([gaffer, job, complete], #{id := ID2}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID1}, actor := worker}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID2}, actor := worker}),
     ?assertEqual(2, length(gaffer:list(?Q, #{state => completed}))).
 
 poll_worker_crash_fails_job(Driver) ->
@@ -877,7 +891,7 @@ poll_worker_crash_fails_job(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
     #{id := ID} = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, fail], #{id := ID}),
+    ?assertHook([gaffer, job, fail], #{job := #{id := ID}, actor := worker}),
     ?assertMatch(#{state := available}, gaffer:get(?Q, ID)).
 
 poll_worker_killed_fails_job(Driver) ->
@@ -895,7 +909,7 @@ poll_worker_killed_fails_job(Driver) ->
         end,
     exit(WorkerPid, kill),
     ?assertHook([gaffer, job, fail], #{
-        id := ID, state := available, attempt := 1
+        job := #{id := ID, state := available, attempt := 1}, actor := worker
     }),
     ?assertMatch(
         #{
@@ -920,7 +934,9 @@ poll_worker_complete_result(Driver) ->
         {job_executed, _} -> ok
     after 5000 -> error(timeout)
     end,
-    ?assertHook([gaffer, job, complete], #{id := ID, result := ExpectedResult}),
+    ?assertHook([gaffer, job, complete], #{
+        job := #{id := ID, result := ExpectedResult}, actor := worker
+    }),
     ?assertMatch(
         #{state := completed, result := ExpectedResult}, gaffer:get(?Q, ID)
     ).
@@ -936,8 +952,8 @@ poll_auto_executes(Driver) ->
             ~"test_pid" => gaffer_test_worker:encode_pid(self())
         }
     ),
-    % No manual poll — the timer should trigger it
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    % No manual poll - the timer should trigger it
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     ?assertMatch(#{state := completed}, gaffer:get(?Q, ID)).
 
 poll_auto_claims_after_worker_completes(Driver) ->
@@ -970,8 +986,10 @@ poll_auto_claims_after_worker_completes(Driver) ->
     drain_gaffer_hooks([gaffer, job, claim], 100),
     % Unblock one worker - the runner should auto-claim the third job
     Pid1 ! continue,
-    ?assertHook([gaffer, job, complete], #{id := ID1}),
-    ?assertHook([gaffer, job, claim], [#{id := ID3}]),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID1}, actor := worker}),
+    ?assertHook([gaffer, job, claim], #{
+        queue := ?Q, jobs := [#{id := ID3}], actor := runner
+    }),
     ?assertMatch(#{state := executing}, gaffer:get(?Q, ID3)).
 
 pause_no_reclaim_after_worker_completes(Driver) ->
@@ -1002,7 +1020,7 @@ pause_no_reclaim_after_worker_completes(Driver) ->
     ok = gaffer:pause(?Q),
     drain_gaffer_hooks([gaffer, job, claim], 100),
     Pid1 ! continue,
-    ?assertHook([gaffer, job, complete], #{id := ID1}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID1}, actor := worker}),
     % No claim hook should fire while paused, even after the slot frees
     receive
         {gaffer_hook, [gaffer, job, claim], _} -> error(claim_while_paused)
@@ -1022,7 +1040,7 @@ worker_fun(Driver) ->
     ),
     #{id := ID} = gaffer:insert(?Q, #{~"hello" => ~"world"}),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     ?assertMatch(#{state := completed}, gaffer:get(?Q, ID)),
     receive
         {worker_fun_executed, Payload} ->
@@ -1044,7 +1062,7 @@ driver_shorthand(_) ->
         ~"action" => ~"complete", ~"test_pid" => TestPid
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     ?assertMatch(#{state := completed}, gaffer:get(?Q, ID)).
 
 %--- Defaults tests -----------------------------------------------------------
@@ -1071,7 +1089,9 @@ forwarded_job_inherits_target_defaults(Driver) ->
     ),
     _ = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, insert], #{queue := fwd_target_defaults}),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_target_defaults}, actor := worker
+    }),
     [Forwarded] = gaffer:list(fwd_target_defaults),
     ?assertMatch(#{max_attempts := 10, priority := 3}, Forwarded).
 
@@ -1109,7 +1129,9 @@ forward_on_discard(Driver) ->
     ),
     #{id := ID} = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, insert], #{queue := fwd_dlq}),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_dlq}, actor := worker
+    }),
     ?assertMatch(#{state := discarded}, gaffer:get(?Q, ID)),
     Wrapped = normalize(maps:get(payload, hd(gaffer:list(fwd_dlq)))),
     ?assertMatch(
@@ -1143,11 +1165,15 @@ forward_on_discard_chain(Driver) ->
     _ = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
     % Wait for Q2 insert hook (fired by Q1's maybe_forward)
-    ?assertHook([gaffer, job, insert], #{queue := fwd_chain_q2}),
-    % Q2 worker gets wrapped payload → no matching action → discard → forward to Q3
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_chain_q2}, actor := worker
+    }),
+    % Q2 worker gets wrapped payload, no matching action: discard, forward to Q3
     ok = gaffer_queue_runner:poll(fwd_chain_q2),
     % Wait for Q3 insert hook (fired by Q2's maybe_forward)
-    ?assertHook([gaffer, job, insert], #{queue := fwd_chain_q3}),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_chain_q3}, actor := worker
+    }),
     % Job should now be in Q3 with nested wrapping
     Outer = normalize(maps:get(payload, hd(gaffer:list(fwd_chain_q3)))),
     ?assertMatch(#{attempt := 1, errors := [_], discarded_at := _}, Outer),
@@ -1175,7 +1201,9 @@ forward_on_discard_retryable(Driver) ->
         max_attempts => 3
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, fail], #{id := ID, state := available}),
+    ?assertHook([gaffer, job, fail], #{
+        job := #{id := ID, state := available}, actor := worker
+    }),
     ?assertMatch(#{state := available}, gaffer:get(?Q, ID)),
     ?assertEqual([], gaffer:list(fwd_retry_dlq)).
 
@@ -1189,7 +1217,9 @@ forward_on_discard_fresh(Driver) ->
     ),
     _ = gaffer:insert(?Q, #{~"action" => ~"crash"}, #{max_attempts => 1}),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, insert], #{queue := fwd_fresh_dlq}),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_fresh_dlq}, actor := worker
+    }),
     Forwarded = normalize(hd(gaffer:list(fwd_fresh_dlq))),
     ?assertMatch(
         #{state := available, attempt := 0, errors := []},
@@ -1250,7 +1280,7 @@ info_timestamps_per_state(Driver) ->
         ~"action" => ~"complete", ~"test_pid" => TestPid
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     #{jobs := Jobs} = gaffer:info(?Q),
     % completed uses completed_at
     #{completed := #{count := 1, oldest := Oldest, newest := Newest}} = Jobs,
@@ -1277,7 +1307,7 @@ info_workers(Driver) ->
     ?assertEqual(1, Active1),
     % Unblock the worker and verify active drops to 0
     WorkerPid ! continue,
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     #{workers := #{active := 0}} = gaffer:info(?Q).
 
 %--- Pause / Resume tests -----------------------------------------------------
@@ -1315,7 +1345,7 @@ pause_lets_inflight_finish(Driver) ->
         end,
     ok = gaffer:pause(?Q),
     WorkerPid ! continue,
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     ?assertMatch(#{state := completed}, gaffer:get(?Q, ID)).
 
 pause_pruner_timer_suspended(Driver) ->
@@ -1350,15 +1380,21 @@ pause_resume_transitions(Driver) ->
     ),
     ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
     ?assertEqual(ok, gaffer:pause(?Q)),
-    ?assertHook([gaffer, queue, pause], pause_resume_transitions),
+    ?assertHook([gaffer, queue, pause], #{
+        queue := pause_resume_transitions, actor := user
+    }),
     ?assertEqual({error, already_paused}, gaffer:pause(?Q)),
     assert_no_gaffer_hook(100),
     ?assertEqual(ok, gaffer:resume(?Q)),
-    ?assertHook([gaffer, queue, resume], pause_resume_transitions),
+    ?assertHook([gaffer, queue, resume], #{
+        queue := pause_resume_transitions, actor := user
+    }),
     ?assertEqual({error, already_active}, gaffer:resume(?Q)),
     assert_no_gaffer_hook(100),
     ?assertEqual(ok, gaffer:pause(?Q)),
-    ?assertHook([gaffer, queue, pause], pause_resume_transitions).
+    ?assertHook([gaffer, queue, pause], #{
+        queue := pause_resume_transitions, actor := user
+    }).
 
 pause_reconfigure_works(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
@@ -1428,7 +1464,7 @@ hook_complete(Driver) ->
         ~"action" => ~"complete", ~"test_pid" => TestPid
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{id := ID}),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
     % Sync with the runner so the post-DOWN re-poll has been processed
     _ = gaffer:info(?Q),
     ?assertEqual(
@@ -1448,7 +1484,7 @@ hook_fail(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook, Notify]})),
     #{id := ID} = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, fail], #{id := ID}),
+    ?assertHook([gaffer, job, fail], #{job := #{id := ID}, actor := worker}),
     % Sync with the runner so the post-DOWN re-poll has been processed
     _ = gaffer:info(?Q),
     ?assertEqual(
@@ -1473,7 +1509,7 @@ hook_schedule(Driver) ->
         ~"offset_seconds" => 60
     }),
     ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, schedule], #{id := ID}),
+    ?assertHook([gaffer, job, schedule], #{job := #{id := ID}, actor := worker}),
     % Sync with the runner so the post-DOWN re-poll has been processed
     _ = gaffer:info(?Q),
     ?assertEqual(

@@ -25,9 +25,9 @@
 -export([cancel_job/2]).
 -export([delete_job/2]).
 % Jobs (runner)
--export([write_result/3]).
+-export([write_result/4]).
 -export([claim_jobs/2]).
--export([prune_jobs/2]).
+-export([prune_jobs/3]).
 
 -compile({no_auto_import, [get/1]}).
 
@@ -84,8 +84,22 @@ ensure(Conf0) ->
         maps:merge(Conf, Validated)
     ),
     case gaffer_queue_sup:ensure(Name) of
-        created -> gaffer_hooks:notify(Hooks, [gaffer, queue, create], Conf);
-        updated -> gaffer_hooks:notify(Hooks, [gaffer, queue, update], Conf)
+        created ->
+            gaffer_hooks:notify(Hooks, [gaffer, queue, create], #{
+                queue => Name, conf => Conf, actor => user
+            });
+        updated ->
+            gaffer_hooks:notify(
+                Hooks,
+                [gaffer, queue, update],
+                #{
+                    queue => Name,
+                    conf => Conf,
+                    updates => #{},
+                    source => ensure,
+                    actor => user
+                }
+            )
     end.
 
 -spec delete(gaffer:queue()) -> ok.
@@ -133,7 +147,17 @@ update(Name, Updates) ->
     validate_on_discard(MergedConf),
     persistent_term:put({gaffer_queue, Name}, MergedConf),
     gaffer_queue_runner:reconfigure(Name),
-    gaffer_hooks:notify(Hooks, [gaffer, queue, update], Updates).
+    gaffer_hooks:notify(
+        Hooks,
+        [gaffer, queue, update],
+        #{
+            queue => Name,
+            conf => MergedConf,
+            updates => Updates,
+            source => update,
+            actor => user
+        }
+    ).
 
 pause(Name) -> set_state(Name, pause).
 
@@ -144,7 +168,9 @@ set_state(Name, State) ->
     case gaffer_queue_runner:State(Name) of
         ok ->
             ok = gaffer_queue_pruner:State(Name),
-            gaffer_hooks:notify(Hooks, [gaffer, queue, State], Name);
+            gaffer_hooks:notify(Hooks, [gaffer, queue, State], #{
+                queue => Name, actor => user
+            });
         {error, _} = Err ->
             Err
     end.
@@ -173,7 +199,9 @@ insert_job(Queue, Payload, Opts) ->
     #{driver := {Mod, DS}, hooks := Hooks} = Conf = conf(Queue),
     NewJob = gaffer_job:create(Conf, Payload, Opts),
     [Written] = Mod:job_write([NewJob], DS),
-    gaffer_hooks:notify(Hooks, [gaffer, job, insert], Written),
+    gaffer_hooks:notify(Hooks, [gaffer, job, insert], #{
+        job => Written, actor => user
+    }),
     Written.
 
 -spec get_job(gaffer:queue(), gaffer:job_id()) ->
@@ -192,8 +220,12 @@ list_jobs(#{queue := Queue} = Opts) ->
 delete_job(Queue, ID) ->
     #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
     case Mod:job_delete(ID, DS) of
-        not_found -> error({unknown_job, ID});
-        ok -> gaffer_hooks:notify(Hooks, [gaffer, job, delete], ID)
+        not_found ->
+            error({unknown_job, ID});
+        ok ->
+            gaffer_hooks:notify(Hooks, [gaffer, job, delete], #{
+                queue => Queue, job_id => ID, actor => user
+            })
     end.
 
 -spec cancel_job(gaffer:queue(), gaffer:job_id()) ->
@@ -207,7 +239,9 @@ cancel_job(Queue, ID) ->
             case gaffer_job:transition(Job, cancelled) of
                 {ok, Cancelled} ->
                     [Written] = Mod:job_write([Cancelled], DS),
-                    gaffer_hooks:notify(Hooks, [gaffer, job, cancel], Written),
+                    gaffer_hooks:notify(Hooks, [gaffer, job, cancel], #{
+                        job => Written, actor => user
+                    }),
                     {ok, Written};
                 {error, _} = Err ->
                     Err
@@ -216,12 +250,16 @@ cancel_job(Queue, ID) ->
 
 % Job (runner)
 
--spec write_result(gaffer:queue(), gaffer_hooks:event(), gaffer:job()) ->
-    {ok, gaffer:job()}.
-write_result(Queue, Event, Job) ->
+-spec write_result(
+    gaffer:queue(),
+    gaffer_hooks:event(),
+    gaffer_hooks:event_data(),
+    gaffer:job()
+) -> {ok, gaffer:job()}.
+write_result(Queue, Event, Data, Job) ->
     #{hooks := Hooks} = Conf = conf(Queue),
     write_result_jobs(Conf, Job),
-    gaffer_hooks:notify(Hooks, Event, Job),
+    gaffer_hooks:notify(Hooks, Event, Data),
     run_forward_hooks(Conf, Job),
     {ok, Job}.
 
@@ -234,15 +272,23 @@ claim_jobs(Queue, Opts) ->
     Limit = clamp_limit(maps:get(limit, Opts), GlobalMax),
     ClaimOpts = Opts#{limit := Limit, global_max_workers => GlobalMax},
     Claimed = Mod:job_claim(ClaimOpts, Changes, DS),
-    gaffer_hooks:notify(Hooks, [gaffer, job, claim], Claimed),
+    gaffer_hooks:notify(Hooks, [gaffer, job, claim], #{
+        queue => Queue, jobs => Claimed, actor => runner
+    }),
     Claimed.
 
--spec prune_jobs(gaffer:queue(), prune_opts()) -> [gaffer:job_id()].
-prune_jobs(Queue, MaxAge) ->
+-spec prune_jobs(gaffer:queue(), prune_opts(), user | pruner) ->
+    [gaffer:job_id()].
+prune_jobs(Queue, MaxAge, Actor) ->
     #{driver := Driver, hooks := Hooks} = conf(Queue),
     IDs = prune(Queue, MaxAge, Driver),
     Event = [gaffer, job, delete],
-    _ = [gaffer_hooks:notify(Hooks, Event, ID) || ID <:- IDs],
+    _ = [
+        gaffer_hooks:notify(
+            Hooks, Event, #{queue => Queue, job_id => ID, actor => Actor}
+        )
+     || ID <:- IDs
+    ],
     IDs.
 
 %--- Internal ------------------------------------------------------------------
@@ -255,7 +301,9 @@ teardown_queue(_Name, undefined) ->
 teardown_queue(Name, #{hooks := Hooks}) ->
     ok = gaffer_sup:stop_queue(gaffer_queue_sup:pid(Name)),
     persistent_term:erase({gaffer_queue, Name}),
-    gaffer_hooks:notify(Hooks, [gaffer, queue, delete], Name).
+    gaffer_hooks:notify(Hooks, [gaffer, queue, delete], #{
+        queue => Name, actor => user
+    }).
 
 prune(Queue, MaxAge, Driver) ->
     do_prune(Queue, normalize_max_age(MaxAge), Driver).
@@ -356,7 +404,9 @@ run_forward_hooks(#{on_discard := Target}, #{state := discarded} = Job) ->
     Forwarded = gaffer_job:create(
         conf(Target), gaffer_job:forward_payload(Job), #{}
     ),
-    gaffer_hooks:notify(Hooks, [gaffer, job, insert], Forwarded);
+    gaffer_hooks:notify(Hooks, [gaffer, job, insert], #{
+        job => Forwarded, actor => worker
+    });
 run_forward_hooks(_, _) ->
     ok.
 
