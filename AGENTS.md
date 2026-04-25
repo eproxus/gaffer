@@ -34,10 +34,6 @@ Modules:
 * `gaffer_worker` - Worker process executing jobs
 * `gaffer_sup` - Top-level supervisor
 
-## Task Tracking
-
-Open work is tracked in GitHub Project #3 "Gaffer": `gh project item-list 3 --owner eproxus`
-
 ## Coding Conventions
 
 * Use `gaffer` and `gaffer_queue` as templates for module layouts (comments,
