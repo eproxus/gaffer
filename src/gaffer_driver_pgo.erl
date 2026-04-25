@@ -8,6 +8,8 @@
 -export([stop/1]).
 -ignore_xref(rollback/2).
 -export([rollback/2]).
+-ignore_xref(migrations/1).
+-export([migrations/1]).
 % Queues
 -export([queue_insert/2]).
 -export([queue_exists/2]).
@@ -98,6 +100,21 @@ rollback(TargetVersion, #{pool := Pool}) ->
     ],
     run_migrations(Pool, fun gaffer_postgres:migrate_down/1, ToRollback),
     ok.
+
+-doc """
+Lists known and applied migration versions.
+
+`all` is the static list of versions known to this binary, sorted ascending.
+`applied` is the version currently recorded in the database. During a
+downgrade, `applied` may exceed `lists:max(All)` if a peer applied a newer
+version this binary does not know about; callers that care must check for
+that themselves.
+""".
+-spec migrations(driver_state()) ->
+    #{all := [non_neg_integer()], applied := non_neg_integer()}.
+migrations(#{pool := Pool}) ->
+    All = [V || {V, _, _} <:- gaffer_postgres:migrations(#{})],
+    #{all => All, applied => applied_version(Pool)}.
 
 % Queues
 

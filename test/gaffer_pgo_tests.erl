@@ -33,6 +33,8 @@ gaffer_pgo_test_() ->
             % Driver migration/startup internals (mutate shared schema)
             fun pgo_migration_idempotent/1,
             fun pgo_migration_rollback/1,
+            fun pgo_migrations_listing/1,
+            fun pgo_migrations_rollback_round_trip/1,
             fun pgo_start_with_new_pool/1,
             fun pgo_multi_node_distribution/1,
             fun pgo_multi_node_ensure_queue/1,
@@ -63,6 +65,19 @@ pgo_migration_rollback({gaffer_driver_pgo, #{pool := Pool}}) ->
         #{pool => Pool}
     ),
     ?assertEqual([{0}], Rows).
+
+pgo_migrations_listing({gaffer_driver_pgo, State}) ->
+    Static = [V || {V, _, _} <:- gaffer_postgres:migrations(#{})],
+    #{all := All, applied := Applied} = gaffer_driver_pgo:migrations(State),
+    ?assertEqual(Static, All),
+    ?assertEqual(lists:max(All), Applied).
+
+pgo_migrations_rollback_round_trip({gaffer_driver_pgo, State}) ->
+    #{applied := Applied} = gaffer_driver_pgo:migrations(State),
+    Target = Applied - 1,
+    ok = gaffer_driver_pgo:rollback(Target, State),
+    #{applied := Applied2} = gaffer_driver_pgo:migrations(State),
+    ?assertEqual(Target, Applied2).
 
 pgo_start_with_new_pool(_Driver) ->
     PoolConfig = gaffer_test_helpers:pgo_pool_config(),
