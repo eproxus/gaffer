@@ -193,7 +193,7 @@ accumulate_info(#{state := State} = Job, Acc) ->
         end,
     Acc#{State := Entry2}.
 
-info_timestamp(available, #{inserted_at := T}) -> T;
+info_timestamp(available, #{created_at := T}) -> T;
 info_timestamp(executing, #{attempted_at := T}) -> T;
 info_timestamp(completed, #{completed_at := T}) -> T;
 info_timestamp(cancelled, #{cancelled_at := T}) -> T;
@@ -217,7 +217,7 @@ prune_clause(State, Cutoff, {Q, Clauses}) ->
     },
     {Q, [Clause | Clauses]}.
 
-state_timestamp_key(available) -> inserted_at;
+state_timestamp_key(available) -> created_at;
 state_timestamp_key(executing) -> attempted_at;
 state_timestamp_key(completed) -> completed_at;
 state_timestamp_key(cancelled) -> cancelled_at;
@@ -242,7 +242,7 @@ is_scheduled_future(_, _Now) -> false.
 compare_priority(#{priority := P1}, #{priority := P2}) when P1 =/= P2 ->
     P1 > P2;
 compare_priority(A, B) ->
-    maps:get(inserted_at, A, undefined) =< maps:get(inserted_at, B, undefined).
+    maps:get(created_at, A, undefined) =< maps:get(created_at, B, undefined).
 
 claim_jobs([], _Changes, _Queued, _Locked, Acc) ->
     lists:reverse(Acc);

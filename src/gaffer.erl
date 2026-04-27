@@ -111,7 +111,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     shutdown_timeout := shutdown_timeout(),
     result => term(),
     scheduled_at => timestamp(),
-    inserted_at := timestamp(),
+    created_at := timestamp(),
     attempted_at => timestamp(),
     completed_at => timestamp(),
     cancelled_at => timestamp(),

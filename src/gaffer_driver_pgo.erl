@@ -54,7 +54,7 @@ of the user.
 -export_type([driver_state/0]).
 
 -define(IS_TIMESTAMP(K),
-    K =:= inserted_at;
+    K =:= created_at;
     K =:= scheduled_at;
     K =:= attempted_at;
     K =:= completed_at;

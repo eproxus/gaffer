@@ -526,7 +526,7 @@ retries_backoff(Driver) ->
             backoff => Backoff
         })
     ),
-    #{id := ID, inserted_at := InsertedAt} = gaffer:insert(
+    #{id := ID, created_at := CreatedAt} = gaffer:insert(
         ?Q, #{
             ~"action" => ~"crash",
             ~"test_pid" => gaffer_test_worker:encode_pid(self())
@@ -535,11 +535,11 @@ retries_backoff(Driver) ->
     #{state := State, errors := [E5, E4, E3, E2, E1]} =
         await_errors(?Q, ID, 5),
     ?assertEqual(failed, State),
-    ?assertMatch(#{at := At} when At > InsertedAt, E1),
-    ?assertMatch(#{at := At} when At > (InsertedAt + B1), E2),
-    ?assertMatch(#{at := At} when At > (InsertedAt + B1 + B2), E3),
-    ?assertMatch(#{at := At} when At > (InsertedAt + B1 + B2 + B3), E4),
-    ?assertMatch(#{at := At} when At > (InsertedAt + B1 + B2 + B3 + B3), E5).
+    ?assertMatch(#{at := At} when At > CreatedAt, E1),
+    ?assertMatch(#{at := At} when At > (CreatedAt + B1), E2),
+    ?assertMatch(#{at := At} when At > (CreatedAt + B1 + B2), E3),
+    ?assertMatch(#{at := At} when At > (CreatedAt + B1 + B2 + B3), E4),
+    ?assertMatch(#{at := At} when At > (CreatedAt + B1 + B2 + B3 + B3), E5).
 
 retries_only_one_value(Driver) ->
     MaxAttempts = 4,
@@ -552,7 +552,7 @@ retries_only_one_value(Driver) ->
             backoff => Backoff
         })
     ),
-    #{id := ID, inserted_at := InsertedAt} = gaffer:insert(
+    #{id := ID, created_at := CreatedAt} = gaffer:insert(
         ?Q, #{
             ~"action" => ~"crash",
             ~"test_pid" => gaffer_test_worker:encode_pid(self())
@@ -561,10 +561,10 @@ retries_only_one_value(Driver) ->
     #{state := State, errors := [E4, E3, E2, E1]} =
         await_errors(?Q, ID, 4),
     ?assertEqual(failed, State),
-    ?assertMatch(#{at := At} when At > InsertedAt, E1),
-    ?assertMatch(#{at := At} when At > (InsertedAt + BackoffNative), E2),
-    ?assertMatch(#{at := At} when At > (InsertedAt + BackoffNative * 2), E3),
-    ?assertMatch(#{at := At} when At > (InsertedAt + BackoffNative * 3), E4).
+    ?assertMatch(#{at := At} when At > CreatedAt, E1),
+    ?assertMatch(#{at := At} when At > (CreatedAt + BackoffNative), E2),
+    ?assertMatch(#{at := At} when At > (CreatedAt + BackoffNative * 2), E3),
+    ?assertMatch(#{at := At} when At > (CreatedAt + BackoffNative * 3), E4).
 
 %--- Schedule tests -----------------------------------------------------------
 

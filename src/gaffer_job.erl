@@ -59,7 +59,7 @@ create(#{name := Queue} = Conf, Payload, Opts) ->
         payload => Payload,
         state => available,
         attempt => 0,
-        inserted_at => Now,
+        created_at => Now,
         errors => []
     }),
     validate(Job),

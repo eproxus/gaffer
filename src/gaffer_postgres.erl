@@ -73,7 +73,7 @@ migrations(#{}) ->
                     result           JSONB,
                     errors           JSONB NOT NULL,
                     scheduled_at     TIMESTAMPTZ,
-                    inserted_at      TIMESTAMPTZ NOT NULL,
+                    created_at       TIMESTAMPTZ NOT NULL,
                     attempted_at     TIMESTAMPTZ,
                     completed_at     TIMESTAMPTZ,
                     cancelled_at     TIMESTAMPTZ,
@@ -83,7 +83,7 @@ migrations(#{}) ->
                 % Query indexes
                 ~"""
                 CREATE INDEX idx_gaffer_jobs_claimable
-                    ON gaffer_jobs (queue, priority DESC, inserted_at ASC)
+                    ON gaffer_jobs (queue, priority DESC, created_at ASC)
                     WHERE state = 'available'
                 """,
                 ~"""
@@ -272,7 +272,7 @@ ts_column(Expr, Alias) ->
 ts_column_names() ->
     [
         ~"scheduled_at",
-        ~"inserted_at",
+        ~"created_at",
         ~"attempted_at",
         ~"completed_at",
         ~"cancelled_at",
@@ -297,7 +297,7 @@ job_claim(
               AND state = 'available'
               AND (scheduled_at IS NULL
                    OR scheduled_at <= to_timestamp($2::bigint / 1000000.0))
-            ORDER BY priority DESC, inserted_at ASC
+            ORDER BY priority DESC, created_at ASC
         """,
         LimitClause,
         ~"""
@@ -347,7 +347,7 @@ older_than(N) ->
 ts_case_for_state() ->
     ~"""
     CASE state
-        WHEN 'available' THEN inserted_at
+        WHEN 'available' THEN created_at
         WHEN 'executing' THEN attempted_at
         WHEN 'completed' THEN completed_at
         WHEN 'cancelled' THEN cancelled_at
@@ -355,13 +355,13 @@ ts_case_for_state() ->
     END
     """.
 
-state_timestamp_column(available) -> ~"inserted_at";
+state_timestamp_column(available) -> ~"created_at";
 state_timestamp_column(executing) -> ~"attempted_at";
 state_timestamp_column(completed) -> ~"completed_at";
 state_timestamp_column(cancelled) -> ~"cancelled_at";
 state_timestamp_column(failed) -> ~"failed_at".
 
-immutable_columns() -> [~"id", ~"queue", ~"inserted_at"].
+immutable_columns() -> [~"id", ~"queue", ~"created_at"].
 
 job_claim_effective_limit(infinity, infinity) ->
     {~"", []};
