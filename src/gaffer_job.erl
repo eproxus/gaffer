@@ -38,7 +38,19 @@ claim_changes() -> #{state => executing, attempted_at => erlang:system_time()}.
 -doc false.
 -spec forward_payload(gaffer:job()) -> map().
 forward_payload(Job) ->
-    maps:with([payload, queue, attempt, errors, failed_at], Job).
+    maps:with(
+        [
+            payload,
+            queue,
+            state,
+            attempt,
+            errors,
+            completed_at,
+            failed_at,
+            cancelled_at
+        ],
+        Job
+    ).
 
 -doc false.
 -spec handle_crash(gaffer:job(), term(), gaffer_hooks:actor()) ->

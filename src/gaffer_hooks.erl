@@ -99,7 +99,7 @@ Payload for `[gaffer, job, insert]`.
 Triggered by actors:
 
 * `user` via `gaffer:insert/2` or `gaffer:insert/3`.
-* `worker` when forwarding a failed job to its `on_discard` queue.
+* `worker` when forwarding a terminal-state job to its `forward` target queue.
 """.
 -type job_insert_event() :: #{
     actor := user | worker,

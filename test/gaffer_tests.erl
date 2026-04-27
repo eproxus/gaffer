@@ -38,8 +38,11 @@ gaffer_test_() ->
         fun delete_queue/1,
         fun delete_queue_has_jobs/1,
         fun list_queues/1,
-        fun create_queue_on_discard/1,
-        fun update_queue_on_discard_not_found/1,
+        fun create_queue_forward/1,
+        fun update_queue_forward_not_found/1,
+        fun update_queue_rejects_on_discard/1,
+        fun delete_queue_referenced_by_forward/1,
+        fun delete_queue_after_forward_cleared/1,
         % Insert
         fun insert/1,
         fun insert_with_opts/1,
@@ -118,10 +121,18 @@ gaffer_test_() ->
         fun job_overrides_timeout_backoff_shutdown/1,
         fun backoff_is_array/1,
         % --- Forwarding ---
-        fun forward_on_discard/1,
-        fun forward_on_discard_chain/1,
-        fun forward_on_discard_retryable/1,
-        fun forward_on_discard_fresh/1,
+        fun forward_failed/1,
+        fun forward_failed_chain/1,
+        fun forward_failed_retryable/1,
+        fun forward_failed_fresh/1,
+        fun forward_completed/1,
+        fun forward_cancelled_by_worker/1,
+        fun forward_cancelled_by_user/1,
+        fun forward_multi_state/1,
+        fun forward_invalid_state/1,
+        fun forward_self_cycle/1,
+        fun forward_two_hop_cycle/1,
+        fun forward_three_hop_cycle/1,
         % --- Info ---
         fun info_empty_queue/1,
         fun info_after_inserts/1,
@@ -263,27 +274,69 @@ list_queues(Driver) ->
     ?assert(lists:member(list_queues_1, Names)),
     ?assert(lists:member(list_queues_2, Names)).
 
-create_queue_on_discard(Driver) ->
+create_queue_forward(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{name => dead_letter})),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{name => on_discard_source, on_discard => dead_letter})
+        ?CONF(Driver, #{
+            name => forward_source,
+            forward => #{failed => dead_letter}
+        })
     ),
     ?assertMatch(
-        #{on_discard := dead_letter}, gaffer:get_queue(on_discard_source)
+        #{forward := #{failed := dead_letter}},
+        gaffer:get_queue(forward_source)
     ),
     ?assertError(
-        {on_discard_queue_not_found, nonexistent},
+        {forward_queue_not_found, failed, nonexistent},
         gaffer:create_queue(
-            ?CONF(Driver, #{name => bad_queue, on_discard => nonexistent})
+            ?CONF(Driver, #{
+                name => bad_queue,
+                forward => #{failed => nonexistent}
+            })
         )
     ).
 
-update_queue_on_discard_not_found(Driver) ->
+update_queue_forward_not_found(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     ?assertError(
-        {on_discard_queue_not_found, nonexistent},
-        gaffer:update_queue(?Q, #{on_discard => nonexistent})
+        {forward_queue_not_found, failed, nonexistent},
+        gaffer:update_queue(?Q, #{forward => #{failed => nonexistent}})
+    ),
+    ?assertError(
+        {invalid_forward_state, available},
+        gaffer:update_queue(?Q, #{forward => #{available => ?Q}})
     ).
+
+update_queue_rejects_on_discard(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    ?assertError(
+        {invalid_queue_conf, #{extra := [on_discard]}},
+        gaffer:update_queue(?Q, #{on_discard => some_queue})
+    ).
+
+delete_queue_referenced_by_forward(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{name => del_ref_target})),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            name => del_ref_source,
+            forward => #{failed => del_ref_target}
+        })
+    ),
+    ?assertError(
+        {queue_referenced_by, del_ref_target, [del_ref_source]},
+        gaffer:delete_queue(del_ref_target)
+    ).
+
+delete_queue_after_forward_cleared(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{name => del_clear_target})),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            name => del_clear_source,
+            forward => #{failed => del_clear_target}
+        })
+    ),
+    ok = gaffer:update_queue(del_clear_source, #{forward => #{}}),
+    ?assertEqual(ok, gaffer:delete_queue(del_clear_target)).
 
 %--- Insert tests -------------------------------------------------------------
 
@@ -1085,7 +1138,10 @@ forwarded_job_inherits_target_defaults(Driver) ->
         })
     ),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{on_discard => fwd_target_defaults, max_attempts => 1})
+        ?CONF(Driver, #{
+            forward => #{failed => fwd_target_defaults},
+            max_attempts => 1
+        })
     ),
     _ = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
@@ -1119,13 +1175,16 @@ backoff_is_array(Driver) ->
 
 %--- Forwarding tests ---------------------------------------------------------
 
-forward_on_discard(Driver) ->
+forward_failed(Driver) ->
     DlqHook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, insert]]),
     ok = gaffer:create_queue(
         ?CONF(Driver, #{name => fwd_dlq, hooks => [DlqHook]})
     ),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{on_discard => fwd_dlq, max_attempts => 1})
+        ?CONF(Driver, #{
+            forward => #{failed => fwd_dlq},
+            max_attempts => 1
+        })
     ),
     #{id := ID} = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
@@ -1137,15 +1196,16 @@ forward_on_discard(Driver) ->
     ?assertMatch(
         #{
             payload := #{action := crash},
+            state := failed,
             attempt := 1,
             errors := [_],
             failed_at := _
         },
         Wrapped
     ),
-    ?assertEqual(forward_on_discard, maps:get(queue, Wrapped)).
+    ?assertEqual(forward_failed, maps:get(queue, Wrapped)).
 
-forward_on_discard_chain(Driver) ->
+forward_failed_chain(Driver) ->
     Q3Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, insert]]),
     ok = gaffer:create_queue(
         ?CONF(Driver, #{name => fwd_chain_q3, hooks => [Q3Hook]})
@@ -1154,23 +1214,23 @@ forward_on_discard_chain(Driver) ->
     ok = gaffer:create_queue(
         ?CONF(Driver, #{
             name => fwd_chain_q2,
-            on_discard => fwd_chain_q3,
+            forward => #{failed => fwd_chain_q3},
             max_attempts => 1,
             hooks => [Q2Hook]
         })
     ),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{on_discard => fwd_chain_q2, max_attempts => 1})
+        ?CONF(Driver, #{forward => #{failed => fwd_chain_q2}, max_attempts => 1})
     ),
     _ = gaffer:insert(?Q, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(?Q),
-    % Wait for Q2 insert hook (fired by Q1's maybe_forward)
+    % Wait for Q2 insert hook (fired by Q1's forward dispatch)
     ?assertHook([gaffer, job, insert], #{
         job := #{queue := fwd_chain_q2}, actor := worker
     }),
     % Q2 worker gets wrapped payload, no matching action: fail, forward to Q3
     ok = gaffer_queue_runner:poll(fwd_chain_q2),
-    % Wait for Q3 insert hook (fired by Q2's maybe_forward)
+    % Wait for Q3 insert hook (fired by Q2's forward dispatch)
     ?assertHook([gaffer, job, insert], #{
         job := #{queue := fwd_chain_q3}, actor := worker
     }),
@@ -1189,13 +1249,13 @@ forward_on_discard_chain(Driver) ->
         },
         Inner
     ),
-    ?assertEqual(forward_on_discard_chain, maps:get(queue, Inner)).
+    ?assertEqual(forward_failed_chain, maps:get(queue, Inner)).
 
-forward_on_discard_retryable(Driver) ->
+forward_failed_retryable(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_retry_dlq})),
     Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{on_discard => fwd_retry_dlq, hooks => [Hook]})
+        ?CONF(Driver, #{forward => #{failed => fwd_retry_dlq}, hooks => [Hook]})
     ),
     #{id := ID} = gaffer:insert(?Q, #{~"action" => ~"crash"}, #{
         max_attempts => 3
@@ -1207,13 +1267,15 @@ forward_on_discard_retryable(Driver) ->
     ?assertMatch(#{state := available}, gaffer:get(?Q, ID)),
     ?assertEqual([], gaffer:list(fwd_retry_dlq)).
 
-forward_on_discard_fresh(Driver) ->
+forward_failed_fresh(Driver) ->
     DlqHook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, insert]]),
     ok = gaffer:create_queue(
         ?CONF(Driver, #{name => fwd_fresh_dlq, hooks => [DlqHook]})
     ),
     ok = gaffer:create_queue(
-        ?CONF(Driver, #{on_discard => fwd_fresh_dlq, max_attempts => 1})
+        ?CONF(Driver, #{
+            forward => #{failed => fwd_fresh_dlq}, max_attempts => 1
+        })
     ),
     _ = gaffer:insert(?Q, #{~"action" => ~"crash"}, #{max_attempts => 1}),
     ok = gaffer_queue_runner:poll(?Q),
@@ -1228,6 +1290,151 @@ forward_on_discard_fresh(Driver) ->
     ?assertEqual(
         #{action => crash},
         mapz:deep_get([payload, payload], Forwarded)
+    ).
+
+forward_completed(Driver) ->
+    DoneHook = gaffer_test_helpers:notify_hook(self(), [
+        [gaffer, job, insert]
+    ]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => fwd_done, hooks => [DoneHook]})
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{forward => #{completed => fwd_done}})
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    _ = gaffer:insert(?Q, #{~"action" => ~"complete", ~"test_pid" => TestPid}),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_done}, actor := worker
+    }),
+    Wrapped = normalize(maps:get(payload, hd(gaffer:list(fwd_done)))),
+    ?assertMatch(#{state := completed, completed_at := _}, Wrapped),
+    ?assertEqual(forward_completed, maps:get(queue, Wrapped)).
+
+forward_cancelled_by_worker(Driver) ->
+    CancelHook = gaffer_test_helpers:notify_hook(self(), [
+        [gaffer, job, insert]
+    ]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => fwd_canc, hooks => [CancelHook]})
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{forward => #{cancelled => fwd_canc}})
+    ),
+    _ = gaffer:insert(?Q, #{~"action" => ~"cancel"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_canc}, actor := worker
+    }),
+    Wrapped = normalize(maps:get(payload, hd(gaffer:list(fwd_canc)))),
+    ?assertMatch(#{state := cancelled, cancelled_at := _}, Wrapped),
+    ?assertEqual(forward_cancelled_by_worker, maps:get(queue, Wrapped)).
+
+forward_cancelled_by_user(Driver) ->
+    CancelHook = gaffer_test_helpers:notify_hook(self(), [
+        [gaffer, job, insert]
+    ]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => fwd_canc_user, hooks => [CancelHook]})
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{forward => #{cancelled => fwd_canc_user}})
+    ),
+    #{id := ID} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, ID),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_canc_user}, actor := worker
+    }),
+    Wrapped = normalize(maps:get(payload, hd(gaffer:list(fwd_canc_user)))),
+    ?assertMatch(#{state := cancelled, cancelled_at := _}, Wrapped),
+    ?assertEqual(forward_cancelled_by_user, maps:get(queue, Wrapped)).
+
+forward_multi_state(Driver) ->
+    CompletedHook = gaffer_test_helpers:notify_hook(self(), [
+        [gaffer, job, insert]
+    ]),
+    FailedHook = gaffer_test_helpers:notify_hook(self(), [
+        [gaffer, job, insert]
+    ]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => fwd_multi_done, hooks => [CompletedHook]})
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => fwd_multi_fail, hooks => [FailedHook]})
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            forward => #{
+                completed => fwd_multi_done, failed => fwd_multi_fail
+            },
+            max_attempts => 1
+        })
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    _ = gaffer:insert(?Q, #{
+        ~"action" => ~"complete", ~"test_pid" => TestPid
+    }),
+    _ = gaffer:insert(?Q, #{~"action" => ~"crash"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_multi_done}, actor := worker
+    }),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_multi_fail}, actor := worker
+    }),
+    [Done] = gaffer:list(fwd_multi_done),
+    [Fail] = gaffer:list(fwd_multi_fail),
+    ?assertMatch(
+        #{state := completed}, normalize(maps:get(payload, Done))
+    ),
+    ?assertMatch(
+        #{state := failed}, normalize(maps:get(payload, Fail))
+    ).
+
+forward_invalid_state(Driver) ->
+    ?assertError(
+        {invalid_forward_state, available},
+        gaffer:create_queue(
+            ?CONF(Driver, #{forward => #{available => ?Q}})
+        )
+    ).
+
+forward_self_cycle(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    ?assertError(
+        {forward_cycle, [?Q, ?Q]},
+        gaffer:update_queue(?Q, #{forward => #{failed => ?Q}})
+    ).
+
+forward_two_hop_cycle(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_cycle_a})),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            name => fwd_cycle_b, forward => #{failed => fwd_cycle_a}
+        })
+    ),
+    ?assertError(
+        {forward_cycle, [fwd_cycle_a, fwd_cycle_b, fwd_cycle_a]},
+        gaffer:update_queue(
+            fwd_cycle_a, #{forward => #{failed => fwd_cycle_b}}
+        )
+    ).
+
+forward_three_hop_cycle(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_3_a})),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => fwd_3_b, forward => #{failed => fwd_3_a}})
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => fwd_3_c, forward => #{failed => fwd_3_b}})
+    ),
+    ?assertError(
+        {forward_cycle, [fwd_3_a, fwd_3_c, fwd_3_b, fwd_3_a]},
+        gaffer:update_queue(
+            fwd_3_a, #{forward => #{failed => fwd_3_c}}
+        )
     ).
 
 %--- Info tests ---------------------------------------------------------------

@@ -77,7 +77,7 @@ ensure(Conf0) ->
     #{name := Name, driver := {Mod, DS}, hooks := Hooks} =
         Conf = with_defaults(Conf0),
     Validated = validate_conf(strip_runtime(Conf)),
-    validate_on_discard(Conf),
+    validate_forward(Conf),
     Mod:queue_insert(Name, DS),
     persistent_term:put(
         {gaffer_queue, Name},
@@ -104,6 +104,7 @@ ensure(Conf0) ->
 
 -spec delete(gaffer:queue()) -> ok.
 delete(Name) ->
+    check_not_referenced(Name),
     #{driver := {Mod, DS}} = conf(Name),
     case Mod:queue_delete(Name, DS) of
         ok -> teardown_queue(Name);
@@ -112,6 +113,7 @@ delete(Name) ->
 
 -spec delete(gaffer:queue(), gaffer_driver:driver()) -> ok.
 delete(Name, {Mod, DS}) ->
+    check_not_referenced(Name),
     teardown_queue(Name),
     prune(Name, #{'_' => 0}, {Mod, DS}),
     case Mod:queue_delete(Name, DS) of
@@ -144,7 +146,7 @@ update(Name, Updates) ->
     #{hooks := Hooks} = Conf = conf(Name),
     MergedConf = maps:merge(Conf, Validated),
     _ = validate_conf(strip_runtime(MergedConf)),
-    validate_on_discard(MergedConf),
+    validate_forward(MergedConf),
     persistent_term:put({gaffer_queue, Name}, MergedConf),
     gaffer_queue_runner:reconfigure(Name),
     gaffer_hooks:notify(
@@ -231,18 +233,15 @@ delete_job(Queue, ID) ->
 -spec cancel_job(gaffer:queue(), gaffer:job_id()) ->
     {ok, gaffer:job()} | {error, term()}.
 cancel_job(Queue, ID) ->
-    #{driver := {Mod, DS}, hooks := Hooks} = conf(Queue),
+    #{driver := {Mod, DS}} = conf(Queue),
     case Mod:job_get(ID, DS) of
         not_found ->
             {error, not_found};
         Job ->
             case gaffer_job:transition(Job, cancelled) of
                 {ok, Cancelled} ->
-                    [Written] = Mod:job_write([Cancelled], DS),
-                    gaffer_hooks:notify(Hooks, [gaffer, job, cancel], #{
-                        job => Written, actor => user
-                    }),
-                    {ok, Written};
+                    Data = #{job => Cancelled, actor => user},
+                    write_result(Queue, [gaffer, job, cancel], Data, Cancelled);
                 {error, _} = Err ->
                     Err
             end
@@ -333,6 +332,28 @@ clamp_limit(Limit, _) -> Limit.
 is_gaffer_key({gaffer_queue, _}) -> true;
 is_gaffer_key(_) -> false.
 
+check_not_referenced(Name) ->
+    case forward_referrers(Name) of
+        [] -> ok;
+        Refs -> error({queue_referenced_by, Name, Refs})
+    end.
+
+forward_referrers(Name) ->
+    lists:filtermap(
+        fun(Entry) -> referrer_entry(Name, Entry) end,
+        persistent_term:get()
+    ).
+
+referrer_entry(Name, {{gaffer_queue, Other}, #{forward := Forward}}) when
+    is_atom(Other), Other =/= Name
+->
+    case lists:member(Name, maps:values(Forward)) of
+        true -> {true, Other};
+        false -> false
+    end;
+referrer_entry(_Name, _Entry) ->
+    false.
+
 % Config validation
 
 % erlfmt-ignore
@@ -358,7 +379,7 @@ validate_updates(Updates) ->
     Updates.
 
 check_extra_keys(Map) ->
-    Allowed = maps:keys(queue_conf_defaults()) ++ [on_discard],
+    Allowed = maps:keys(queue_conf_defaults()) ++ [forward],
     case maps:keys(maps:without(Allowed, Map)) of
         [] -> ok;
         Extra -> error({invalid_queue_conf, #{extra => Extra}})
@@ -367,17 +388,66 @@ check_extra_keys(Map) ->
 strip_runtime(Conf) ->
     maps:without([name, driver, worker, poll_interval, hooks, prune], Conf).
 
-validate_on_discard(#{on_discard := Target}) ->
-    case persistent_term:get({gaffer_queue, Target}, undefined) of
-        undefined -> error({on_discard_queue_not_found, Target});
-        _ -> ok
-    end;
-validate_on_discard(_) ->
+validate_forward(#{name := Name, forward := Forward}) ->
+    maps:foreach(
+        fun(State, Target) ->
+            check_forward_state(State),
+            check_forward_cycle(Name, Target),
+            check_forward_target(State, Target)
+        end,
+        Forward
+    );
+validate_forward(_) ->
     ok.
 
-write_result_jobs(#{driver := Driver} = Conf, #{state := failed} = Job) ->
+check_forward_state(completed) -> ok;
+check_forward_state(failed) -> ok;
+check_forward_state(cancelled) -> ok;
+check_forward_state(State) -> error({invalid_forward_state, State}).
+
+check_forward_target(State, Target) ->
+    case persistent_term:get({gaffer_queue, Target}, undefined) of
+        undefined -> error({forward_queue_not_found, State, Target});
+        _ -> ok
+    end.
+
+check_forward_cycle(Name, Target) ->
+    case find_cycle(Name, Target, [Name]) of
+        false -> ok;
+        Path -> error({forward_cycle, Path})
+    end.
+
+% Path is the in-progress walk with the most recent node first; reaching
+% Name closes a cycle. The membership guard makes the walk terminate even
+% if the persisted graph already contains a cycle that doesn't pass
+% through Name.
+find_cycle(Name, Name, Path) ->
+    lists:reverse([Name | Path]);
+find_cycle(Name, Current, Path) ->
+    case lists:member(Current, Path) of
+        true -> false;
+        false -> walk_forward(Name, Current, [Current | Path])
+    end.
+
+walk_forward(Name, Current, Path) ->
+    case persistent_term:get({gaffer_queue, Current}, undefined) of
+        #{forward := Forward} ->
+            walk_targets(Name, maps:values(Forward), Path);
+        _ ->
+            false
+    end.
+
+walk_targets(_Name, [], _Path) ->
+    false;
+walk_targets(Name, [Target | Rest], Path) ->
+    case find_cycle(Name, Target, Path) of
+        false -> walk_targets(Name, Rest, Path);
+        Cycle -> Cycle
+    end.
+
+write_result_jobs(#{driver := Driver} = Conf, #{state := State} = Job) ->
     case Conf of
-        #{on_discard := Target} ->
+        #{forward := #{State := Target}} ->
             #{driver := TargetDriver} = conf(Target),
             Forwarded = gaffer_job:create(
                 conf(Target), gaffer_job:forward_payload(Job), #{}
@@ -385,9 +455,7 @@ write_result_jobs(#{driver := Driver} = Conf, #{state := failed} = Job) ->
             write_atomic(Driver, [Job], TargetDriver, [Forwarded]);
         _ ->
             write(Driver, [Job])
-    end;
-write_result_jobs(#{driver := Driver}, Job) ->
-    write(Driver, [Job]).
+    end.
 
 % Same driver: single atomic write
 write_atomic(Same, Jobs1, Same, Jobs2) ->
@@ -399,14 +467,19 @@ write_atomic(Source, Jobs1, Target, Jobs2) ->
 
 write({Mod, DS}, Jobs) -> Mod:job_write(Jobs, DS).
 
-run_forward_hooks(#{on_discard := Target}, #{state := failed} = Job) ->
-    #{hooks := Hooks} = conf(Target),
-    Forwarded = gaffer_job:create(
-        conf(Target), gaffer_job:forward_payload(Job), #{}
-    ),
-    gaffer_hooks:notify(Hooks, [gaffer, job, insert], #{
-        job => Forwarded, actor => worker
-    });
+run_forward_hooks(#{forward := Forward}, #{state := State} = Job) ->
+    case Forward of
+        #{State := Target} ->
+            #{hooks := Hooks} = conf(Target),
+            Forwarded = gaffer_job:create(
+                conf(Target), gaffer_job:forward_payload(Job), #{}
+            ),
+            gaffer_hooks:notify(Hooks, [gaffer, job, insert], #{
+                job => Forwarded, actor => worker
+            });
+        _ ->
+            ok
+    end;
 run_forward_hooks(_, _) ->
     ok.
 

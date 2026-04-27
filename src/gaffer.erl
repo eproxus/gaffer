@@ -146,6 +146,13 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -doc "Maximum age per job state, in milliseconds.".
 -type max_age() :: #{job_state() | '_' => age()}.
 
+-doc "Per-terminal-state forwarding targets.".
+-type forward() :: #{
+    completed => queue(),
+    failed => queue(),
+    cancelled => queue()
+}.
+
 -doc """
 Pruning configuration for a queue.
 
@@ -167,7 +174,7 @@ states older than the configured `max_age` (in milliseconds).
     timeout => timeout_ms(),
     backoff => backoff(),
     priority => priority(),
-    on_discard => queue(),
+    forward => forward(),
     hooks => [gaffer_hooks:hook()],
     prune => prune_conf()
 }.
@@ -216,6 +223,7 @@ states older than the configured `max_age` (in milliseconds).
 -export_type([max_workers/0]).
 -export_type([interval/0]).
 -export_type([max_age/0]).
+-export_type([forward/0]).
 -export_type([prune_conf/0]).
 -export_type([queue_conf/0]).
 -export_type([job_filter/0]).

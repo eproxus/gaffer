@@ -43,7 +43,7 @@ forward_survives_source_failure(#{ets := Ets, pgo := Pgo}) ->
         worker => gaffer_test_worker,
         poll_interval => infinity,
         max_attempts => 1,
-        on_discard => survive_dlq
+        forward => #{failed => survive_dlq}
     }),
     _ = gaffer:insert(survive_src, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(survive_src),
@@ -88,7 +88,7 @@ forward(SrcDriver, DlqDriver, SrcQueue, DlqQueue) ->
         worker => gaffer_test_worker,
         poll_interval => infinity,
         max_attempts => 1,
-        on_discard => DlqQueue
+        forward => #{failed => DlqQueue}
     }),
     #{id := ID} = gaffer:insert(SrcQueue, #{~"action" => ~"crash"}),
     ok = gaffer_queue_runner:poll(SrcQueue),

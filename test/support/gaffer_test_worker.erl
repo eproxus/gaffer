@@ -29,6 +29,8 @@ perform(~"crash", Job, _Pid) ->
     error({test_crash, metadata(Job)});
 perform(~"fail", _Job, _Pid) ->
     {fail, [#{reason => {badrpc, nodedown}}]};
+perform(~"cancel", _Job, _Pid) ->
+    {cancel, ~"test cancel"};
 perform(~"schedule", #{payload := #{~"offset_seconds" := Seconds}} = Job, Pid) ->
     At =
         erlang:system_time() +

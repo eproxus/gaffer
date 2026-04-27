@@ -20,7 +20,7 @@ A reliable job queue implemented in Erlang.
 - [x] Per-queue concurrency limits (local and global)
 - [x] Pluggable storage drivers (ETS for dev/test, Postgres for production)
 - [x] Hooks for queue and job events
-- [x] Dead-letter queues (`on_discard`)
+- [x] Per-terminal-state job forwarding (`forward`)
 - [x] Queue introspection and automatic/manual job pruning
 - [x] Delayed job scheduling
 - [x] Automatic retries with backoff
@@ -95,6 +95,31 @@ gaffer:ensure_queue(#{
 Job = gaffer:insert(emails, #{~"to" => ~"user@example.com", ~"body" => ~"Welcome!"}).
 ```
 
+## Job States
+
+```mermaid
+---
+title: Job States
+---
+stateDiagram-v2
+    [*] --> available
+    available --> executing: polled
+
+    executing --> available: schedule
+    executing --> available: failure
+
+    executing --> completed: complete
+
+    executing --> failed: failure when Attempts >= Max
+
+    executing --> cancelled: cancel
+    available --> cancelled: cancel
+
+    completed --> [*]
+    failed --> [*]
+    cancelled --> [*]
+```
+
 ## Configuration
 
 Queues are configured via `gaffer:queue_conf()` maps:
@@ -144,9 +169,30 @@ Queues are configured via `gaffer:queue_conf()` maps:
 
   Worker shutdown grace period in ms.
 
-- `on_discard` (`atom()`).
+- `forward` (`#{job_state() => queue()}`, default = `#{}`).
 
-  Dead-letter queue name.
+  Per-terminal-state forwarding targets. Jobs that reach a terminal state
+  listed in the map are also inserted into the configured target queue (with
+  the original job carried inside the new payload). Allowed states are
+  `completed`, `failed`, and `cancelled`.
+
+  When the source and target queue share the same Postgres-backed driver,
+  the source state transition and the forwarded insert run in a single
+  transaction, so forwarding is atomic. Across different drivers (or with
+  the in-memory ETS driver) forwarding is at-least-once: the target write
+  is performed first, so a source failure may produce a duplicate insert
+  on retry but never lose the job.
+
+  Example:
+
+  ```erlang
+  gaffer:ensure_queue(#{
+      name => emails,
+      driver => ets,
+      worker => email_sender,
+      forward => #{failed => dead_letter, completed => audit}
+  }).
+  ```
 
 - `hooks` (`[hook()]`, default = `[]`).
 
