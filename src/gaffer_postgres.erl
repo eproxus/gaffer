@@ -62,7 +62,7 @@ migrations(#{}) ->
                     state            TEXT NOT NULL
                                          CHECK (state IN ('available', 'executing',
                                                           'completed', 'cancelled',
-                                                          'discarded')),
+                                                          'failed')),
                     payload          JSONB NOT NULL,
                     attempt          INTEGER NOT NULL,
                     max_attempts     INTEGER NOT NULL,
@@ -77,7 +77,7 @@ migrations(#{}) ->
                     attempted_at     TIMESTAMPTZ,
                     completed_at     TIMESTAMPTZ,
                     cancelled_at     TIMESTAMPTZ,
-                    discarded_at     TIMESTAMPTZ
+                    failed_at        TIMESTAMPTZ
                 )
                 """,
                 % Query indexes
@@ -276,7 +276,7 @@ ts_column_names() ->
         ~"attempted_at",
         ~"completed_at",
         ~"cancelled_at",
-        ~"discarded_at"
+        ~"failed_at"
     ].
 
 % Job lifecycle
@@ -351,7 +351,7 @@ ts_case_for_state() ->
         WHEN 'executing' THEN attempted_at
         WHEN 'completed' THEN completed_at
         WHEN 'cancelled' THEN cancelled_at
-        WHEN 'discarded' THEN discarded_at
+        WHEN 'failed' THEN failed_at
     END
     """.
 
@@ -359,7 +359,7 @@ state_timestamp_column(available) -> ~"inserted_at";
 state_timestamp_column(executing) -> ~"attempted_at";
 state_timestamp_column(completed) -> ~"completed_at";
 state_timestamp_column(cancelled) -> ~"cancelled_at";
-state_timestamp_column(discarded) -> ~"discarded_at".
+state_timestamp_column(failed) -> ~"failed_at".
 
 immutable_columns() -> [~"id", ~"queue", ~"inserted_at"].
 

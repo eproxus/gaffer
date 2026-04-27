@@ -59,7 +59,7 @@ of the user.
     K =:= attempted_at;
     K =:= completed_at;
     K =:= cancelled_at;
-    K =:= discarded_at
+    K =:= failed_at
 ).
 
 %--- gaffer_driver Callbacks ---------------------------------------------------
@@ -151,7 +151,7 @@ info(Queue, #{pool := Pool}) ->
         executing => #{count => 0},
         completed => #{count => 0},
         cancelled => #{count => 0},
-        discarded => #{count => 0}
+        failed => #{count => 0}
     },
     Rows = query(Pool, gaffer_postgres:info(Queue)),
     Jobs = lists:foldl(fun decode_info_row/2, Empty, Rows),

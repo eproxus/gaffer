@@ -17,7 +17,7 @@
 
 -doc false.
 -spec all_states() -> [gaffer:job_state()].
-all_states() -> [available, executing, completed, cancelled, discarded].
+all_states() -> [available, executing, completed, cancelled, failed].
 
 -doc false.
 -spec execute(gaffer_worker:worker(), gaffer:job()) -> no_return().
@@ -38,7 +38,7 @@ claim_changes() -> #{state => executing, attempted_at => erlang:system_time()}.
 -doc false.
 -spec forward_payload(gaffer:job()) -> map().
 forward_payload(Job) ->
-    maps:with([payload, queue, attempt, errors, discarded_at], Job).
+    maps:with([payload, queue, attempt, errors, failed_at], Job).
 
 -doc false.
 -spec handle_crash(gaffer:job(), term(), gaffer_hooks:actor()) ->
@@ -100,8 +100,8 @@ apply_result(Job, {schedule, At}, Actor) ->
 apply_failure(#{attempt := Attempt} = Job, Reason) ->
     case add_error(Job#{attempt := Attempt + 1}, Reason) of
         #{attempt := A, max_attempts := M} = Job1 when A >= M ->
-            {ok, Discarded} = transition(Job1, discarded),
-            Discarded;
+            {ok, Failed} = transition(Job1, failed),
+            Failed;
         Job1 ->
             {ok, Available} = transition(schedule_backoff(Job1), available),
             Available
@@ -127,7 +127,7 @@ valid_transition(available, cancelled) -> true;
 valid_transition(executing, completed) -> true;
 valid_transition(executing, cancelled) -> true;
 valid_transition(executing, available) -> true;
-valid_transition(executing, discarded) -> true;
+valid_transition(executing, failed) -> true;
 valid_transition(_, _) -> false.
 
 -spec set_timestamp(gaffer:job_state(), integer(), gaffer:job()) ->
@@ -135,7 +135,7 @@ valid_transition(_, _) -> false.
 set_timestamp(executing, TS, Job) -> Job#{attempted_at => TS};
 set_timestamp(completed, TS, Job) -> Job#{completed_at => TS};
 set_timestamp(cancelled, TS, Job) -> Job#{cancelled_at => TS};
-set_timestamp(discarded, TS, Job) -> Job#{discarded_at => TS};
+set_timestamp(failed, TS, Job) -> Job#{failed_at => TS};
 set_timestamp(_State, _TS, Job) -> Job.
 
 -spec timestamp(gaffer:timestamp()) -> integer().

@@ -72,7 +72,7 @@
     | executing
     | completed
     | cancelled
-    | discarded.
+    | failed.
 -doc "Queue identifier.".
 -type queue() :: atom().
 
@@ -115,7 +115,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     attempted_at => timestamp(),
     completed_at => timestamp(),
     cancelled_at => timestamp(),
-    discarded_at => timestamp(),
+    failed_at => timestamp(),
     errors := [job_error()]
 }.
 
@@ -187,7 +187,7 @@ states older than the configured `max_age` (in milliseconds).
         executing := state_info(),
         completed := state_info(),
         cancelled := state_info(),
-        discarded := state_info()
+        failed := state_info()
     },
     workers := #{
         active := non_neg_integer(),

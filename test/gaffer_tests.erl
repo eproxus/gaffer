@@ -66,12 +66,12 @@ gaffer_test_() ->
         fun cancel_scheduled/1,
         fun cancel_executing/1,
         fun cancel_completed_error/1,
-        fun cancel_discarded_error/1,
+        fun cancel_failed_error/1,
         % Complete
         fun complete_without_result/1,
         % Fail
         fun fail_retryable/1,
-        fun fail_discarded/1,
+        fun fail_max_attempts/1,
         fun fail_error_normalization/1,
         % Retries
         fun retries_backoff/1,
@@ -421,7 +421,7 @@ cancel_completed_error(Driver) ->
         gaffer:cancel(?Q, ID)
     ).
 
-cancel_discarded_error(Driver) ->
+cancel_failed_error(Driver) ->
     Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
     ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
     #{id := ID} = gaffer:insert(?Q, #{~"action" => ~"crash"}, #{
@@ -429,10 +429,10 @@ cancel_discarded_error(Driver) ->
     }),
     ok = gaffer_queue_runner:poll(?Q),
     ?assertHook([gaffer, job, fail], #{
-        job := #{id := ID, state := discarded}, actor := worker
+        job := #{id := ID, state := failed}, actor := worker
     }),
     ?assertMatch(
-        {error, {invalid_transition, {discarded, cancelled}}},
+        {error, {invalid_transition, {failed, cancelled}}},
         gaffer:cancel(?Q, ID)
     ).
 
@@ -473,7 +473,7 @@ fail_retryable(Driver) ->
         #{state := available, attempt := 1, errors := [#{attempt := 1}]}, Failed
     ).
 
-fail_discarded(Driver) ->
+fail_max_attempts(Driver) ->
     Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
     ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
     #{id := ID} = gaffer:insert(?Q, #{~"action" => ~"crash"}, #{
@@ -481,10 +481,10 @@ fail_discarded(Driver) ->
     }),
     ok = gaffer_queue_runner:poll(?Q),
     ?assertHook([gaffer, job, fail], #{
-        job := #{id := ID, state := discarded, discarded_at := _},
+        job := #{id := ID, state := failed, failed_at := _},
         actor := worker
     }),
-    ?assertMatch(#{state := discarded, discarded_at := _}, gaffer:get(?Q, ID)).
+    ?assertMatch(#{state := failed, failed_at := _}, gaffer:get(?Q, ID)).
 
 fail_error_normalization(Driver) ->
     Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
@@ -534,7 +534,7 @@ retries_backoff(Driver) ->
     ),
     #{state := State, errors := [E5, E4, E3, E2, E1]} =
         await_errors(?Q, ID, 5),
-    ?assertEqual(discarded, State),
+    ?assertEqual(failed, State),
     ?assertMatch(#{at := At} when At > InsertedAt, E1),
     ?assertMatch(#{at := At} when At > (InsertedAt + B1), E2),
     ?assertMatch(#{at := At} when At > (InsertedAt + B1 + B2), E3),
@@ -560,7 +560,7 @@ retries_only_one_value(Driver) ->
     ),
     #{state := State, errors := [E4, E3, E2, E1]} =
         await_errors(?Q, ID, 4),
-    ?assertEqual(discarded, State),
+    ?assertEqual(failed, State),
     ?assertMatch(#{at := At} when At > InsertedAt, E1),
     ?assertMatch(#{at := At} when At > (InsertedAt + BackoffNative), E2),
     ?assertMatch(#{at := At} when At > (InsertedAt + BackoffNative * 2), E3),
@@ -1132,14 +1132,14 @@ forward_on_discard(Driver) ->
     ?assertHook([gaffer, job, insert], #{
         job := #{queue := fwd_dlq}, actor := worker
     }),
-    ?assertMatch(#{state := discarded}, gaffer:get(?Q, ID)),
+    ?assertMatch(#{state := failed}, gaffer:get(?Q, ID)),
     Wrapped = normalize(maps:get(payload, hd(gaffer:list(fwd_dlq)))),
     ?assertMatch(
         #{
             payload := #{action := crash},
             attempt := 1,
             errors := [_],
-            discarded_at := _
+            failed_at := _
         },
         Wrapped
     ),
@@ -1168,7 +1168,7 @@ forward_on_discard_chain(Driver) ->
     ?assertHook([gaffer, job, insert], #{
         job := #{queue := fwd_chain_q2}, actor := worker
     }),
-    % Q2 worker gets wrapped payload, no matching action: discard, forward to Q3
+    % Q2 worker gets wrapped payload, no matching action: fail, forward to Q3
     ok = gaffer_queue_runner:poll(fwd_chain_q2),
     % Wait for Q3 insert hook (fired by Q2's maybe_forward)
     ?assertHook([gaffer, job, insert], #{
@@ -1176,7 +1176,7 @@ forward_on_discard_chain(Driver) ->
     }),
     % Job should now be in Q3 with nested wrapping
     Outer = normalize(maps:get(payload, hd(gaffer:list(fwd_chain_q3)))),
-    ?assertMatch(#{attempt := 1, errors := [_], discarded_at := _}, Outer),
+    ?assertMatch(#{attempt := 1, errors := [_], failed_at := _}, Outer),
     ?assertNot(is_map_key(action, Outer), "Wrapped payload has no action"),
     ?assertEqual(fwd_chain_q2, maps:get(queue, Outer)),
     Inner = maps:get(payload, Outer),
@@ -1184,7 +1184,7 @@ forward_on_discard_chain(Driver) ->
         #{
             attempt := 1,
             errors := [_],
-            discarded_at := _,
+            failed_at := _,
             payload := #{action := _}
         },
         Inner
@@ -1242,7 +1242,7 @@ info_empty_queue(Driver) ->
             executing := #{count := 0},
             completed := #{count := 0},
             cancelled := #{count := 0},
-            discarded := #{count := 0}
+            failed := #{count := 0}
         },
         Jobs
     ),
@@ -1432,7 +1432,7 @@ timeout_killed(Driver) ->
     timer:sleep(Timeout * 2),
     ?assertMatch(
         #{
-            state := discarded, errors := [#{error := killed, attempt := 1}]
+            state := failed, errors := [#{error := killed, attempt := 1}]
         },
         normalize(gaffer:get(?Q, ID))
     ),

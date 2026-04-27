@@ -375,7 +375,7 @@ validate_on_discard(#{on_discard := Target}) ->
 validate_on_discard(_) ->
     ok.
 
-write_result_jobs(#{driver := Driver} = Conf, #{state := discarded} = Job) ->
+write_result_jobs(#{driver := Driver} = Conf, #{state := failed} = Job) ->
     case Conf of
         #{on_discard := Target} ->
             #{driver := TargetDriver} = conf(Target),
@@ -399,7 +399,7 @@ write_atomic(Source, Jobs1, Target, Jobs2) ->
 
 write({Mod, DS}, Jobs) -> Mod:job_write(Jobs, DS).
 
-run_forward_hooks(#{on_discard := Target}, #{state := discarded} = Job) ->
+run_forward_hooks(#{on_discard := Target}, #{state := failed} = Job) ->
     #{hooks := Hooks} = conf(Target),
     Forwarded = gaffer_job:create(
         conf(Target), gaffer_job:forward_payload(Job), #{}
@@ -421,7 +421,7 @@ with_defaults(Conf) ->
                     max_age => #{
                         '_' => infinity,
                         completed => 0,
-                        discarded => 0,
+                        failed => 0,
                         cancelled => 0
                     }
                 }

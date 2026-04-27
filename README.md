@@ -166,7 +166,7 @@ Queues are configured via `gaffer:queue_conf()` maps:
       Per-state max age in milliseconds. `infinity` means never prune. `'_'` sets
       a default for all states.
 
-      Default: `completed`, `discarded`, and `cancelled` jobs are pruned
+      Default: `completed`, `failed`, and `cancelled` jobs are pruned
       immediately, others are kept indefinitely.
 
 ## Hooks

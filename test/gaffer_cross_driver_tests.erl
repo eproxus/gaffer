@@ -27,7 +27,7 @@ forward_pgo_to_ets(#{ets := Ets, pgo := Pgo}) ->
 forward_survives_source_failure(#{ets := Ets, pgo := Pgo}) ->
     FailingSource = gaffer_test_driver:wrap(Ets, #{
         job_write => fun
-            (_Inner, [#{state := discarded} | _]) -> error(simulated_crash);
+            (_Inner, [#{state := failed} | _]) -> error(simulated_crash);
             (Inner, Jobs) -> Inner(Jobs)
         end
     }),
@@ -95,7 +95,7 @@ forward(SrcDriver, DlqDriver, SrcQueue, DlqQueue) ->
     ?assertHook([gaffer, job, insert], #{
         job := #{queue := DlqQueue}, actor := worker
     }),
-    ?assertMatch(#{state := discarded}, gaffer:get(SrcQueue, ID)),
+    ?assertMatch(#{state := failed}, gaffer:get(SrcQueue, ID)),
     Forwarded = normalize(
         maps:get(payload, hd(gaffer:list(DlqQueue)))
     ),

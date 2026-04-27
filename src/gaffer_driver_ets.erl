@@ -163,7 +163,7 @@ info(Queue, #{queued := Queued, locked := Locked}) ->
         executing => #{count => 0},
         completed => #{count => 0},
         cancelled => #{count => 0},
-        discarded => #{count => 0}
+        failed => #{count => 0}
     },
     AllJobs =
         [Job || {_, #{queue := Q} = Job} <:- ets:tab2list(Queued), Q =:= Queue] ++
@@ -197,7 +197,7 @@ info_timestamp(available, #{inserted_at := T}) -> T;
 info_timestamp(executing, #{attempted_at := T}) -> T;
 info_timestamp(completed, #{completed_at := T}) -> T;
 info_timestamp(cancelled, #{cancelled_at := T}) -> T;
-info_timestamp(discarded, #{discarded_at := T}) -> T;
+info_timestamp(failed, #{failed_at := T}) -> T;
 info_timestamp(_, _) -> undefined.
 
 %--- Internal ------------------------------------------------------------------
@@ -221,7 +221,7 @@ state_timestamp_key(available) -> inserted_at;
 state_timestamp_key(executing) -> attempted_at;
 state_timestamp_key(completed) -> completed_at;
 state_timestamp_key(cancelled) -> cancelled_at;
-state_timestamp_key(discarded) -> discarded_at.
+state_timestamp_key(failed) -> failed_at.
 
 apply_global_max(_Queue, Limit, infinity, _Locked) ->
     Limit;
