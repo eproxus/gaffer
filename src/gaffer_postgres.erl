@@ -7,7 +7,8 @@
 -export([migrate_up/1]).
 -export([migrate_down/1]).
 -export([ensure_migrations_table/0]).
--export([applied_version/0]).
+-export([applied_versions/0]).
+-export([history/0]).
 % Queues
 -export([queue_insert/1]).
 -export([queue_exists/1]).
@@ -104,37 +105,68 @@ migrations(#{}) ->
             queries([~"DROP TABLE gaffer_jobs", ~"DROP TABLE gaffer_queues"])}
     ].
 
--doc "Queries to apply a migration and record its version.".
+-doc "Queries to apply a migration and record an `up` event.".
 -spec migrate_up({pos_integer(), queries(), _}) -> queries().
 migrate_up({Version, UpQueries, _DownQueries}) ->
     UpQueries ++
-        [{~"UPDATE gaffer_schema_version SET version = $1", [Version]}].
+        [
+            {
+                ~"INSERT INTO gaffer_schema_migrations (version, direction) VALUES ($1, 'up')",
+                [Version]
+            }
+        ].
 
--doc "Queries to roll back a migration and decrement the version.".
+-doc "Queries to roll back a migration and record a `down` event.".
 -spec migrate_down({pos_integer(), _, queries()}) -> queries().
 migrate_down({Version, _UpQueries, DownQueries}) ->
     DownQueries ++
-        [{~"UPDATE gaffer_schema_version SET version = $1", [Version - 1]}].
+        [
+            {
+                ~"INSERT INTO gaffer_schema_migrations (version, direction) VALUES ($1, 'down')",
+                [Version]
+            }
+        ].
 
--doc "Queries to create the migrations table if it does not exist.".
+-doc "Queries to create the migrations history table if it does not exist.".
 -spec ensure_migrations_table() -> queries().
 ensure_migrations_table() ->
     queries([
         ~"""
-        CREATE TABLE IF NOT EXISTS gaffer_schema_version (
-            version BIGINT NOT NULL DEFAULT 0
+        CREATE TABLE IF NOT EXISTS gaffer_schema_migrations (
+            id         BIGSERIAL PRIMARY KEY,
+            version    BIGINT NOT NULL,
+            direction  TEXT NOT NULL
+                CHECK (direction IN ('up', 'down')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
-        """,
-        ~"""
-        INSERT INTO gaffer_schema_version (version)
-        SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM gaffer_schema_version)
         """
     ]).
 
--doc "Query that fetches the current schema version.".
--spec applied_version() -> queries().
-applied_version() ->
-    [{~"SELECT version FROM gaffer_schema_version", []}].
+-doc "Query that fetches the currently applied migration versions.".
+-spec applied_versions() -> queries().
+applied_versions() ->
+    [
+        {
+            ~"""
+            SELECT version FROM (
+                SELECT DISTINCT ON (version) version, direction
+                FROM gaffer_schema_migrations
+                ORDER BY version, id DESC
+            ) t WHERE direction = 'up' ORDER BY version
+            """,
+            []
+        }
+    ].
+
+-doc "Query that fetches the full migrations history, oldest first.".
+-spec history() -> queries().
+history() ->
+    SQL = [
+        ~"SELECT version, direction, ",
+        ts_column(~"created_at", ~"created_at"),
+        ~" FROM gaffer_schema_migrations ORDER BY id"
+    ],
+    [{SQL, []}].
 
 % Queues
 

@@ -75,9 +75,9 @@ start(Opts) ->
     State = start_pool(Opts),
     #{pool := Pool} = State,
     ensure_migrations_table(Pool),
-    Current = applied_version(Pool),
-    Migrations = gaffer_postgres:migrations(#{}),
-    Pending = [M || {V, _, _} = M <:- Migrations, V > Current],
+    Applied = applied_versions(Pool),
+    All = gaffer_postgres:migrations(#{}),
+    Pending = [M || {V, _, _} = M <:- All, not lists:member(V, Applied)],
     run_migrations(Pool, fun gaffer_postgres:migrate_up/1, Pending),
     State.
 
@@ -91,12 +91,12 @@ stop(State) ->
 
 -doc "Rolls back migrations down to the given version.".
 -spec rollback(TargetVersion :: non_neg_integer(), driver_state()) -> ok.
-rollback(TargetVersion, #{pool := Pool}) ->
-    Current = applied_version(Pool),
-    AllMigrations = gaffer_postgres:migrations(#{}),
+rollback(Target, #{pool := Pool}) ->
+    Applied = applied_versions(Pool),
+    All = gaffer_postgres:migrations(#{}),
     ToRollback = [
-        lists:keyfind(V, 1, AllMigrations)
-     || V <:- lists:seq(Current, TargetVersion + 1, -1)
+        find_migration(V, All)
+     || V <:- lists:reverse(lists:sort(Applied)), V > Target
     ],
     run_migrations(Pool, fun gaffer_postgres:migrate_down/1, ToRollback),
     ok.
@@ -105,16 +105,29 @@ rollback(TargetVersion, #{pool := Pool}) ->
 Lists known and applied migration versions.
 
 `all` is the static list of versions known to this binary, sorted ascending.
-`applied` is the version currently recorded in the database. During a
-downgrade, `applied` may exceed `lists:max(All)` if a peer applied a newer
-version this binary does not know about; callers that care must check for
-that themselves.
+`applied` is the derived currently-applied set: the latest direction recorded
+per version, filtered to `up`. `history` is the append-only log of every `up`
+and `down` event, oldest first.
 """.
 -spec migrations(driver_state()) ->
-    #{all := [non_neg_integer()], applied := non_neg_integer()}.
+    #{
+        all := [non_neg_integer()],
+        applied := [non_neg_integer()],
+        history := [
+            #{
+                version := non_neg_integer(),
+                direction := up | down,
+                created_at := integer()
+            }
+        ]
+    }.
 migrations(#{pool := Pool}) ->
     All = [V || {V, _, _} <:- gaffer_postgres:migrations(#{})],
-    #{all => All, applied => applied_version(Pool)}.
+    #{
+        all => All,
+        applied => applied_versions(Pool),
+        history => history(Pool)
+    }.
 
 % Queues
 
@@ -243,9 +256,24 @@ run_migrations(Pool, ToQueries, Migrations) ->
         Migrations
     ).
 
-applied_version(Pool) ->
-    [#{version := Version}] = query(Pool, gaffer_postgres:applied_version()),
-    Version.
+applied_versions(Pool) ->
+    [V || #{version := V} <:- query(Pool, gaffer_postgres:applied_versions())].
+
+history(Pool) ->
+    [decode_history_row(R) || R <:- query(Pool, gaffer_postgres:history())].
+
+decode_history_row(#{version := V, direction := D, created_at := T}) ->
+    #{
+        version => V,
+        direction => binary_to_existing_atom(D),
+        created_at => decode_timestamp(T)
+    }.
+
+find_migration(V, All) ->
+    case lists:keyfind(V, 1, All) of
+        false -> error({unknown_migration_version, V});
+        M -> M
+    end.
 
 % Runs a single query in a transaction, returning just the rows.
 query(Pool, Queries) ->
