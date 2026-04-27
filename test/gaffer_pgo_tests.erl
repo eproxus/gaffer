@@ -32,6 +32,8 @@ gaffer_pgo_test_() ->
         [
             % Driver migration/startup internals (mutate shared schema)
             fun pgo_migration_idempotent/1,
+            fun pgo_migration_up_sql_idempotent/1,
+            fun pgo_migration_down_sql_idempotent/1,
             fun pgo_migration_rollback/1,
             fun pgo_migrations_listing/1,
             fun pgo_migrations_rollback_round_trip/1,
@@ -53,6 +55,32 @@ pgo_migration_idempotent({gaffer_driver_pgo, #{pool := Pool}}) ->
     ?assertMatch(#{pool := _}, State2),
     ?assert(table_exists(Pool, ~"gaffer_queues")),
     ?assert(table_exists(Pool, ~"gaffer_jobs")).
+
+pgo_migration_up_sql_idempotent({gaffer_driver_pgo, #{pool := Pool} = State}) ->
+    ok = gaffer_driver_pgo:rollback(0, State),
+    % Pre-create one of the schema objects outside the migration system
+    pgo:query(
+        ~"CREATE TABLE gaffer_queues (name TEXT PRIMARY KEY)",
+        [],
+        #{pool => Pool}
+    ),
+    % start/1 sees version 1 unapplied and runs up SQL.
+    % Without IF NOT EXISTS, CREATE TABLE gaffer_queues fails here.
+    _ = gaffer_driver_pgo:start(#{pool => Pool}),
+    ?assert(table_exists(Pool, ~"gaffer_queues")),
+    ?assert(table_exists(Pool, ~"gaffer_jobs")).
+
+pgo_migration_down_sql_idempotent(
+    {gaffer_driver_pgo, #{pool := Pool} = State}
+) ->
+    ?assert(table_exists(Pool, ~"gaffer_jobs")),
+    pgo:query(~"DROP TABLE gaffer_jobs", [], #{pool => Pool}),
+    pgo:query(~"DROP TABLE gaffer_queues", [], #{pool => Pool}),
+    % Migration log still records version 1 as applied.
+    % Without IF EXISTS, DROP TABLE gaffer_jobs fails here.
+    ok = gaffer_driver_pgo:rollback(0, State),
+    ?assertNot(table_exists(Pool, ~"gaffer_queues")),
+    ?assertNot(table_exists(Pool, ~"gaffer_jobs")).
 
 pgo_migration_rollback({gaffer_driver_pgo, #{pool := Pool} = State}) ->
     ?assert(table_exists(Pool, ~"gaffer_queues")),

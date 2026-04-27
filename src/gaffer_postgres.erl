@@ -50,13 +50,13 @@ migrations(#{}) ->
             queries([
                 % Queues
                 ~"""
-                CREATE TABLE gaffer_queues (
+                CREATE TABLE IF NOT EXISTS gaffer_queues (
                     name TEXT PRIMARY KEY
                 )
                 """,
                 % Jobs
                 ~"""
-                CREATE TABLE gaffer_jobs (
+                CREATE TABLE IF NOT EXISTS gaffer_jobs (
                     id               UUID PRIMARY KEY,
                     queue            TEXT NOT NULL
                                          REFERENCES gaffer_queues(name),
@@ -83,26 +83,29 @@ migrations(#{}) ->
                 """,
                 % Query indexes
                 ~"""
-                CREATE INDEX idx_gaffer_jobs_claimable
+                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_claimable
                     ON gaffer_jobs (queue, priority DESC, created_at ASC)
                     WHERE state = 'available'
                 """,
                 ~"""
-                CREATE INDEX idx_gaffer_jobs_queue_state
+                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_queue_state
                     ON gaffer_jobs (queue, state)
                 """,
                 % Maintenance indexes
                 ~"""
-                CREATE INDEX idx_gaffer_jobs_state
+                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_state
                     ON gaffer_jobs (state)
                 """,
                 ~"""
-                CREATE INDEX idx_gaffer_jobs_scheduled
+                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_scheduled
                     ON gaffer_jobs (scheduled_at)
                     WHERE state = 'available' AND scheduled_at IS NOT NULL
                 """
             ]),
-            queries([~"DROP TABLE gaffer_jobs", ~"DROP TABLE gaffer_queues"])}
+            queries([
+                ~"DROP TABLE IF EXISTS gaffer_jobs",
+                ~"DROP TABLE IF EXISTS gaffer_queues"
+            ])}
     ].
 
 -doc "Queries to apply a migration and record an `up` event.".
