@@ -456,8 +456,10 @@ cancel_executing(Driver) ->
             {job_started, #{id := ID, worker := P}} -> P
         after 5000 -> error(timeout)
         end,
-    {ok, Cancelled} = gaffer:cancel(?Q, ID),
-    ?assertMatch(#{state := cancelled, cancelled_at := _}, Cancelled),
+    ?assertMatch(
+        {error, {invalid_transition, {executing, cancelled}}},
+        gaffer:cancel(?Q, ID)
+    ),
     WorkerPid ! continue.
 
 cancel_completed_error(Driver) ->

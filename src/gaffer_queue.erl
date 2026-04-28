@@ -237,6 +237,11 @@ cancel_job(Queue, ID) ->
     case Mod:job_get(ID, DS) of
         not_found ->
             {error, not_found};
+        #{state := executing} ->
+            % Cross-node cancel can't reach a remote worker process, and a
+            % local-only kill would diverge from the multi-node contract.
+            % Reject instead of writing a state the worker would clobber.
+            {error, {invalid_transition, {executing, cancelled}}};
         Job ->
             case gaffer_job:transition(Job, cancelled) of
                 {ok, Cancelled} ->

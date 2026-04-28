@@ -340,7 +340,13 @@ insert(Queue, Payload, Opts) ->
 % Job Lifecycle
 
 -doc #{group => "Job Management"}.
--doc "Cancels a job, preventing further execution.".
+-doc """
+Cancels a job, preventing further execution.
+
+Only jobs that have not yet started executing can be cancelled. A job
+already in the `executing` state returns
+`{error, {invalid_transition, {executing, cancelled}}}`.
+""".
 -spec cancel(queue(), job_id()) ->
     {ok, job()} | {error, {invalid_transition, term()}}.
 cancel(Queue, ID) ->
