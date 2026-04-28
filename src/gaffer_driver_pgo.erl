@@ -69,16 +69,28 @@ of the user.
 -doc """
 Starts the driver and optionally a pool.
 
-Runs any pending migrations.
+Runs any pending migrations atomically inside one transaction guarded by a
+transaction-scoped advisory lock, so concurrent boots serialise. Verifies the
+SHA-256 checksum of every already-applied migration against the static SQL in
+the current version of this library.
+
+Raises `error({migration_checksum_mismatch, Version, Stored, Expected})` if a
+stored migration's SQL has changed since it was applied.
 """.
 start(Opts) ->
     State = start_pool(Opts),
     #{pool := Pool} = State,
-    ensure_migrations_table(Pool),
-    Applied = applied_versions(Pool),
     All = gaffer_postgres:migrations(#{}),
-    Pending = [M || {V, _, _} = M <:- All, not lists:member(V, Applied)],
-    run_migrations(Pool, fun gaffer_postgres:migrate_up/1, Pending),
+    migrate_transaction(Pool, fun() ->
+        Applied = applied_checksums(Pool),
+        verify_checksums(Applied, All),
+        AppliedVersions = [V || {V, _} <:- Applied],
+        Pending = [
+            M
+         || {V, _, _} = M <:- All, not lists:member(V, AppliedVersions)
+        ],
+        run_migrations(Pool, fun gaffer_postgres:migrate_up/1, Pending)
+    end),
     State.
 
 -doc """
@@ -89,45 +101,42 @@ Also stops the connection pool if started by the driver.
 stop(State) ->
     stop_pool(State).
 
--doc "Rolls back migrations down to the given version.".
+-doc """
+Rolls back migrations down to the given version.
+
+Runs the entire rollback inside one transaction guarded by a transaction-scoped
+advisory lock.
+
+Raises `error({migration_checksum_mismatch, Version, Stored, Expected})` if a
+stored migration's SQL has changed since it was applied.
+""".
 -spec rollback(TargetVersion :: non_neg_integer(), driver_state()) -> ok.
 rollback(Target, #{pool := Pool}) ->
-    Applied = applied_versions(Pool),
     All = gaffer_postgres:migrations(#{}),
-    ToRollback = [
-        find_migration(V, All)
-     || V <:- lists:reverse(lists:sort(Applied)), V > Target
-    ],
-    run_migrations(Pool, fun gaffer_postgres:migrate_down/1, ToRollback),
+    migrate_transaction(Pool, fun() ->
+        Applied = applied_checksums(Pool),
+        verify_checksums(Applied, All),
+        AppliedVersions = [V || {V, _} <:- Applied],
+        ToRollback = [
+            find_migration(V, All)
+         || V <:- lists:reverse(lists:sort(AppliedVersions)), V > Target
+        ],
+        run_migrations(Pool, fun gaffer_postgres:migrate_down/1, ToRollback)
+    end),
     ok.
 
 -doc """
 Lists known and applied migration versions.
 
-`all` is the static list of versions known to this binary, sorted ascending.
-`applied` is the derived currently-applied set: the latest direction recorded
-per version, filtered to `up`. `history` is the append-only log of every `up`
-and `down` event, oldest first.
+Returns a map with two keys. `all` is the static list of versions known to this
+binary, sorted ascending. `applied` is the set of versions recorded in the
+migrations table, sorted ascending.
 """.
 -spec migrations(driver_state()) ->
-    #{
-        all := [non_neg_integer()],
-        applied := [non_neg_integer()],
-        history := [
-            #{
-                version := non_neg_integer(),
-                direction := up | down,
-                created_at := integer()
-            }
-        ]
-    }.
+    #{all := [non_neg_integer()], applied := [non_neg_integer()]}.
 migrations(#{pool := Pool}) ->
     All = [V || {V, _, _} <:- gaffer_postgres:migrations(#{})],
-    #{
-        all => All,
-        applied => applied_versions(Pool),
-        history => history(Pool)
-    }.
+    #{all => All, applied => applied_versions(Pool)}.
 
 % Queues
 
@@ -247,33 +256,48 @@ stop_pool(#{pool := Pool, pool_owner := driver}) ->
         Pid -> ok = supervisor:terminate_child(pgo_sup, Pid)
     end.
 
-ensure_migrations_table(Pool) ->
-    transaction(Pool, gaffer_postgres:ensure_migrations_table()).
-
-run_migrations(Pool, ToQueries, Migrations) ->
-    lists:foreach(
-        fun(Migration) -> transaction(Pool, ToQueries(Migration)) end,
-        Migrations
-    ).
-
 applied_versions(Pool) ->
     [V || #{version := V} <:- query(Pool, gaffer_postgres:applied_versions())].
-
-history(Pool) ->
-    [decode_history_row(R) || R <:- query(Pool, gaffer_postgres:history())].
-
-decode_history_row(#{version := V, direction := D, created_at := T}) ->
-    #{
-        version => V,
-        direction => binary_to_existing_atom(D),
-        created_at => decode_timestamp(T)
-    }.
 
 find_migration(V, All) ->
     case lists:keyfind(V, 1, All) of
         false -> error({unknown_migration_version, V});
         M -> M
     end.
+
+% Wraps the migrate flow in one transaction: take the advisory lock, ensure
+% the migrations table exists, then call Fun. Calls to query/2 and
+% transaction/2 inside Fun reuse the open connection (pgo:transaction/2 is
+% reentrant). The lock and any partial schema changes are released on commit
+% or rollback.
+migrate_transaction(Pool, Fun) ->
+    pgo:transaction(
+        fun() ->
+            query(Pool, gaffer_postgres:advisory_lock()),
+            query(Pool, gaffer_postgres:ensure_migrations_table()),
+            Fun()
+        end,
+        #{pool => Pool}
+    ).
+
+applied_checksums(Pool) ->
+    Rows = query(Pool, gaffer_postgres:applied_checksums()),
+    [{V, C} || #{version := V, sql_checksum := C} <:- Rows].
+
+verify_checksums(Applied, All) ->
+    [verify_checksum(V, S, find_migration(V, All)) || {V, S} <:- Applied].
+
+verify_checksum(Version, Stored, {_, UpQueries, _}) ->
+    case gaffer_postgres:checksum(UpQueries) of
+        Stored ->
+            ok;
+        Expected ->
+            error({migration_checksum_mismatch, Version, Stored, Expected})
+    end.
+
+run_migrations(Pool, ToQueries, Migrations) ->
+    [transaction(Pool, ToQueries(M)) || M <:- Migrations],
+    ok.
 
 % Runs a single query in a transaction, returning just the rows.
 query(Pool, Queries) ->

@@ -2,6 +2,7 @@
 
 -hank([
     {unnecessary_function_arguments, [
+        pgo_advisory_lock_query_emitted,
         pgo_start_with_new_pool,
         pgo_multi_node_distribution,
         pgo_multi_node_ensure_queue,
@@ -37,8 +38,9 @@ gaffer_pgo_test_() ->
             fun pgo_migration_rollback/1,
             fun pgo_migrations_listing/1,
             fun pgo_migrations_rollback_round_trip/1,
-            fun pgo_migrations_history_records_rollback/1,
             fun pgo_rollback_unknown_migration_version/1,
+            fun pgo_migration_checksum_mismatch_detected/1,
+            fun pgo_advisory_lock_query_emitted/1,
             fun pgo_start_with_new_pool/1,
             fun pgo_multi_node_distribution/1,
             fun pgo_multi_node_ensure_queue/1,
@@ -85,25 +87,11 @@ pgo_migration_down_sql_idempotent(
 pgo_migration_rollback({gaffer_driver_pgo, #{pool := Pool} = State}) ->
     ?assert(table_exists(Pool, ~"gaffer_queues")),
     ?assert(table_exists(Pool, ~"gaffer_jobs")),
-    #{applied := PriorApplied} = gaffer_driver_pgo:migrations(State),
     ok = gaffer_driver_pgo:rollback(0, State),
     ?assertNot(table_exists(Pool, ~"gaffer_queues")),
     ?assertNot(table_exists(Pool, ~"gaffer_jobs")),
-    #{applied := Applied, history := History} =
-        gaffer_driver_pgo:migrations(State),
-    ?assertEqual([], Applied),
-    [
-        ?assert(
-            lists:any(
-                fun
-                    (#{version := V0, direction := down}) -> V0 =:= V;
-                    (_) -> false
-                end,
-                History
-            )
-        )
-     || V <:- PriorApplied
-    ].
+    #{applied := Applied} = gaffer_driver_pgo:migrations(State),
+    ?assertEqual([], Applied).
 
 pgo_migrations_listing({gaffer_driver_pgo, State}) ->
     Static = [V || {V, _, _} <:- gaffer_postgres:migrations(#{})],
@@ -118,28 +106,34 @@ pgo_migrations_rollback_round_trip({gaffer_driver_pgo, State}) ->
     #{applied := Applied2} = gaffer_driver_pgo:migrations(State),
     ?assertEqual(lists:droplast(Applied), Applied2).
 
-pgo_migrations_history_records_rollback(
-    {gaffer_driver_pgo, #{pool := Pool} = State}
-) ->
-    ok = gaffer_driver_pgo:rollback(0, State),
-    _ = gaffer_driver_pgo:start(#{pool => Pool}),
-    #{history := History} = gaffer_driver_pgo:migrations(State),
-    Directions = [D || #{direction := D} <:- History],
-    ?assertEqual([up, down, up], Directions),
-    Times = [T || #{created_at := T} <:- History],
-    ?assertEqual(Times, lists:sort(Times)).
-
 pgo_rollback_unknown_migration_version(
     {gaffer_driver_pgo, #{pool := Pool} = State}
 ) ->
     pgo:query(
-        ~"INSERT INTO gaffer_schema_migrations (version, direction) VALUES ($1, 'up')",
-        [9999],
+        ~"INSERT INTO gaffer_schema_migrations (version, sql_checksum) VALUES (9999, $1)",
+        [<<0:256>>],
         #{pool => Pool}
     ),
     ?assertError(
         {unknown_migration_version, 9999},
         gaffer_driver_pgo:rollback(0, State)
+    ).
+
+pgo_migration_checksum_mismatch_detected({gaffer_driver_pgo, #{pool := Pool}}) ->
+    pgo:query(
+        ~"UPDATE gaffer_schema_migrations SET sql_checksum = $1 WHERE version = 1",
+        [<<0:256>>],
+        #{pool => Pool}
+    ),
+    ?assertError(
+        {migration_checksum_mismatch, 1, _, _},
+        gaffer_driver_pgo:start(#{pool => Pool})
+    ).
+
+pgo_advisory_lock_query_emitted(_Driver) ->
+    ?assertMatch(
+        [{~"SELECT pg_advisory_xact_lock($1)::text", [_]}],
+        gaffer_postgres:advisory_lock()
     ).
 
 pgo_start_with_new_pool(_Driver) ->

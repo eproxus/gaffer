@@ -8,7 +8,9 @@
 -export([migrate_down/1]).
 -export([ensure_migrations_table/0]).
 -export([applied_versions/0]).
--export([history/0]).
+-export([applied_checksums/0]).
+-export([advisory_lock/0]).
+-export([checksum/1]).
 % Queues
 -export([queue_insert/1]).
 -export([queue_exists/1]).
@@ -98,39 +100,38 @@ migrations(#{}) ->
             ])}
     ].
 
--doc "Queries to apply a migration and record an `up` event.".
+-doc "Queries to apply a migration and record it as applied.".
 -spec migrate_up({pos_integer(), queries(), _}) -> queries().
 migrate_up({Version, UpQueries, _DownQueries}) ->
+    Checksum = checksum(UpQueries),
     UpQueries ++
         [
             {
-                ~"INSERT INTO gaffer_schema_migrations (version, direction) VALUES ($1, 'up')",
-                [Version]
+                ~"INSERT INTO gaffer_schema_migrations (version, sql_checksum) VALUES ($1, $2)",
+                [Version, Checksum]
             }
         ].
 
--doc "Queries to roll back a migration and record a `down` event.".
+-doc "Queries to roll back a migration and remove its applied record.".
 -spec migrate_down({pos_integer(), _, queries()}) -> queries().
 migrate_down({Version, _UpQueries, DownQueries}) ->
     DownQueries ++
         [
             {
-                ~"INSERT INTO gaffer_schema_migrations (version, direction) VALUES ($1, 'down')",
+                ~"DELETE FROM gaffer_schema_migrations WHERE version = $1",
                 [Version]
             }
         ].
 
--doc "Queries to create the migrations history table if it does not exist.".
+-doc "Queries to create the applied migrations table if it does not exist.".
 -spec ensure_migrations_table() -> queries().
 ensure_migrations_table() ->
     queries([
         ~"""
         CREATE TABLE IF NOT EXISTS gaffer_schema_migrations (
-            id         BIGSERIAL PRIMARY KEY,
-            version    BIGINT NOT NULL,
-            direction  TEXT NOT NULL
-                CHECK (direction IN ('up', 'down')),
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            version       BIGINT PRIMARY KEY,
+            sql_checksum  BYTEA NOT NULL,
+            applied_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """
     ]).
@@ -138,28 +139,40 @@ ensure_migrations_table() ->
 -doc "Query that fetches the currently applied migration versions.".
 -spec applied_versions() -> queries().
 applied_versions() ->
+    [{~"SELECT version FROM gaffer_schema_migrations ORDER BY version", []}].
+
+-doc "Query that fetches applied versions and their stored SQL checksums.".
+-spec applied_checksums() -> queries().
+applied_checksums() ->
     [
         {
-            ~"""
-            SELECT version FROM (
-                SELECT DISTINCT ON (version) version, direction
-                FROM gaffer_schema_migrations
-                ORDER BY version, id DESC
-            ) t WHERE direction = 'up' ORDER BY version
-            """,
+            ~"SELECT version, sql_checksum FROM gaffer_schema_migrations ORDER BY version",
             []
         }
     ].
 
--doc "Query that fetches the full migrations history, oldest first.".
--spec history() -> queries().
-history() ->
-    SQL = [
-        ~"SELECT version, direction, ",
-        ts_column(~"created_at", ~"created_at"),
-        ~" FROM gaffer_schema_migrations ORDER BY id"
-    ],
-    [{SQL, []}].
+-doc """
+Query that takes a transaction-scoped advisory lock on the migrations table.
+
+The lock is released automatically when the surrounding transaction commits or
+rolls back. Concurrent boots running this query inside their own migrate
+transaction will serialise on it.
+""".
+-spec advisory_lock() -> queries().
+advisory_lock() ->
+    % Cast away the void return type so pgo can decode the row.
+    [{~"SELECT pg_advisory_xact_lock($1)::text", [lock_key()]}].
+
+-doc """
+SHA-256 over the concatenated SQL strings of a query list.
+
+Used to detect post-deploy edits to a migration's up-queries: the value
+computed at apply time is stored in `gaffer_schema_migrations.sql_checksum`
+and compared against the recomputed value on every subsequent boot.
+""".
+-spec checksum(queries()) -> binary().
+checksum(Queries) ->
+    crypto:hash(sha256, iolist_to_binary([SQL || {SQL, _} <:- Queries])).
 
 % Queues
 
@@ -368,6 +381,13 @@ older_than(N) ->
     [~" < to_timestamp($", integer_to_binary(N), ~"::bigint / 1000000.0)"].
 
 %--- Internal ------------------------------------------------------------------
+
+% First 8 bytes of sha256("gaffer_schema_migrations") as a signed 64-bit
+% integer, the type accepted by pg_advisory_xact_lock.
+lock_key() ->
+    <<Key:64/signed-integer, _/binary>> =
+        crypto:hash(sha256, ~"gaffer_schema_migrations"),
+    Key.
 
 ts_case_for_state() ->
     ~"""
