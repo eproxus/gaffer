@@ -90,16 +90,6 @@ migrations(#{}) ->
                 ~"""
                 CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_queue_state
                     ON gaffer_jobs (queue, state)
-                """,
-                % Maintenance indexes
-                ~"""
-                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_state
-                    ON gaffer_jobs (state)
-                """,
-                ~"""
-                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_scheduled
-                    ON gaffer_jobs (scheduled_at)
-                    WHERE state = 'available' AND scheduled_at IS NOT NULL
                 """
             ]),
             queries([
