@@ -94,6 +94,7 @@ gaffer_test_() ->
         fun prune_wildcard/1,
         fun prune_wildcard_infinity_with_override/1,
         fun prune_wildcard_zero_with_override/1,
+        fun prune_user_max_age_replaces_default/1,
         fun pruner_process/1,
         fun pruner_manual_trigger/1,
         % Polling
@@ -901,6 +902,12 @@ prune_wildcard_zero_with_override(Driver) ->
         lists:sort([ID1, ID2]),
         lists:sort([ID || #{id := ID} <:- gaffer:list(?Q)])
     ).
+
+prune_user_max_age_replaces_default(Driver) ->
+    Prune = #{interval => infinity, max_age => #{'_' => infinity}},
+    ok = gaffer:create_queue(?CONF(Driver, #{prune => Prune})),
+    #{prune := #{max_age := MaxAge}} = gaffer:get_queue(?Q),
+    ?assertEqual(#{'_' => infinity}, MaxAge).
 
 %--- Polling tests ------------------------------------------------------------
 

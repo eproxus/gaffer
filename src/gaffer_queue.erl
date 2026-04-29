@@ -489,24 +489,26 @@ run_forward_hooks(_, _) ->
     ok.
 
 with_defaults(Conf) ->
-    resolve_driver(
-        mapz:deep_merge(
-            #{
-                hooks => [],
-                poll_interval => 10,
-                prune => #{
-                    interval => 100,
-                    max_age => #{
-                        '_' => infinity,
-                        completed => 0,
-                        failed => 0,
-                        cancelled => 0
-                    }
-                }
-            },
-            Conf
-        )
-    ).
+    Defaults = #{
+        hooks => [],
+        poll_interval => 10,
+        prune => #{
+            interval => 100,
+            max_age => #{
+                '_' => infinity,
+                completed => 0,
+                failed => 0,
+                cancelled => 0
+            }
+        }
+    },
+    Merged = mapz:deep_merge(Defaults, Conf),
+    resolve_driver(reapply_max_age(Conf, Merged)).
+
+reapply_max_age(#{prune := #{max_age := MaxAge}}, #{prune := P} = Merged) ->
+    Merged#{prune := P#{max_age := MaxAge}};
+reapply_max_age(_, Merged) ->
+    Merged.
 
 resolve_driver(#{driver := {_Mod, _DS}} = Conf) ->
     Conf;
