@@ -93,6 +93,21 @@ migrations(#{}) ->
                 ~"""
                 CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_queue_state
                     ON gaffer_jobs (queue, state)
+                """,
+                ~"""
+                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_completed
+                    ON gaffer_jobs (queue, completed_at)
+                    WHERE state = 'completed'
+                """,
+                ~"""
+                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_cancelled
+                    ON gaffer_jobs (queue, cancelled_at)
+                    WHERE state = 'cancelled'
+                """,
+                ~"""
+                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_failed
+                    ON gaffer_jobs (queue, failed_at)
+                    WHERE state = 'failed'
                 """
             ]),
             queries([
