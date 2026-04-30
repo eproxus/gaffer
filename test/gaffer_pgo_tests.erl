@@ -41,6 +41,8 @@ gaffer_pgo_test_() ->
             fun pgo_rollback_unknown_migration_version/1,
             fun pgo_migration_checksum_mismatch_detected/1,
             fun pgo_advisory_lock_query_emitted/1,
+            fun pgo_jobs_constraint_violations/1,
+            fun pgo_jobs_column_defaults/1,
             fun pgo_start_with_new_pool/1,
             fun pgo_multi_node_distribution/1,
             fun pgo_multi_node_ensure_queue/1,
@@ -153,6 +155,53 @@ pgo_idempotent_create({gaffer_driver_pgo, DS} = Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{max_workers => 3})),
     % Registering the same queue name again is idempotent
     ?assertEqual(ok, gaffer_driver_pgo:queue_insert(?Q, DS)).
+
+pgo_jobs_constraint_violations({gaffer_driver_pgo, #{pool := Pool}}) ->
+    Q = ensure_queue(~"constraints_q", Pool),
+    %% INSERTs that violate a CHECK constraint are rejected
+    [
+        ?assertMatch(
+            {error, {pgsql_error, #{code := ~"23514"}}},
+            insert_job(Q, Pool, A)
+        )
+     || A <:- [
+            #{attempt => -1},
+            #{attempt => 2, max_attempts => 1},
+            #{max_attempts => 0}
+        ]
+    ],
+    %% attempt = max_attempts is the terminal-write boundary
+    ?assertMatch(
+        #{command := insert},
+        insert_job(Q, Pool, #{attempt => 3, max_attempts => 3})
+    ),
+    %% UPDATE that pushes attempt past max_attempts is rejected
+    Id = uuid(),
+    insert_job(Q, Pool, #{id => Id}),
+    ?assertMatch(
+        {error, {pgsql_error, #{code := ~"23514"}}},
+        pgo:query(
+            ~"UPDATE gaffer_jobs SET attempt = 2 WHERE id = $1",
+            [Id],
+            #{pool => Pool}
+        )
+    ).
+
+pgo_jobs_column_defaults({gaffer_driver_pgo, #{pool := Pool}}) ->
+    Q = ensure_queue(~"defaults_q", Pool),
+    Id = uuid(),
+    insert_job(Q, Pool, #{id => Id}),
+    ?assertMatch(
+        #{rows := [{0, 1, 0}]},
+        pgo:query(
+            ~"""
+            SELECT attempt, max_attempts, priority
+            FROM gaffer_jobs WHERE id = $1
+            """,
+            [Id],
+            #{pool => Pool}
+        )
+    ).
 
 %--- Multi-node tests ---------------------------------------------------------
 
@@ -311,6 +360,39 @@ insert_and_collect(QueueName, JobCount) ->
         end
      || _ <:- lists:seq(1, JobCount)
     ].
+
+uuid() ->
+    keysmith:uuid(7, binary).
+
+ensure_queue(Name, Pool) ->
+    pgo:query(
+        ~"INSERT INTO gaffer_queues (name) VALUES ($1)",
+        [Name],
+        #{pool => Pool}
+    ),
+    Name.
+
+insert_job(QueueName, Pool, Attrs) ->
+    Defaults = #{
+        id => uuid(),
+        queue => QueueName,
+        state => ~"available",
+        payload => ~"{}",
+        errors => ~"[]",
+        created_at => {{2026, 1, 1}, {0, 0, 0}}
+    },
+    Pairs = maps:to_list(maps:merge(Defaults, Attrs)),
+    Cols = [atom_to_binary(K) || {K, _} <:- Pairs],
+    Vals = [V || {_, V} <:- Pairs],
+    Phs = [[~"$", integer_to_binary(I)] || I <:- lists:seq(1, length(Cols))],
+    SQL = iolist_to_binary([
+        ~"INSERT INTO gaffer_jobs (",
+        lists:join(~", ", Cols),
+        ~") VALUES (",
+        lists:join(~", ", Phs),
+        ~")"
+    ]),
+    pgo:query(SQL, Vals, #{pool => Pool}).
 
 table_exists(Pool, TableName) ->
     #{rows := Rows} = pgo:query(

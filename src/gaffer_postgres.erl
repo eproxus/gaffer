@@ -65,9 +65,12 @@ migrations(#{}) ->
                                                           'completed', 'cancelled',
                                                           'failed')),
                     payload          JSONB NOT NULL,
-                    attempt          INTEGER NOT NULL,
-                    max_attempts     INTEGER NOT NULL,
-                    priority         INTEGER NOT NULL,
+                    attempt          INTEGER NOT NULL DEFAULT 0
+                        CONSTRAINT attempt_non_negative CHECK (attempt >= 0)
+                        CONSTRAINT attempt_within_max   CHECK (attempt <= max_attempts),
+                    max_attempts     INTEGER NOT NULL DEFAULT 1
+                        CONSTRAINT max_attempts_at_least_one CHECK (max_attempts >= 1),
+                    priority         INTEGER NOT NULL DEFAULT 0,
                     timeout          INTEGER,
                     backoff          JSONB,
                     shutdown_timeout INTEGER,
