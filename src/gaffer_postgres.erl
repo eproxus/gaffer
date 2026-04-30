@@ -16,8 +16,6 @@
 -export([queue_exists/1]).
 -export([queue_list/0]).
 -export([queue_delete/1]).
-% Introspection
--export([info/1]).
 % Jobs
 -export([job_write/1]).
 -export([job_get/1]).
@@ -200,21 +198,6 @@ queue_list() -> [{~"SELECT name FROM gaffer_queues", []}].
 queue_delete(Name) ->
     [{~"DELETE FROM gaffer_queues WHERE name = $1", [atom_to_binary(Name)]}].
 
-% Introspection
-
--doc "Query that aggregates job counts and timestamps per state.".
--spec info(gaffer:queue()) -> queries().
-info(Queue) ->
-    TSCase = ts_case_for_state(),
-    SQL = [
-        ~"SELECT state, COUNT(*) AS count, ",
-        ts_column([~"MIN(", TSCase, ~")"], ~"oldest"),
-        ~", ",
-        ts_column([~"MAX(", TSCase, ~")"], ~"newest"),
-        ~" FROM gaffer_jobs WHERE queue = $1 GROUP BY state"
-    ],
-    [{SQL, [atom_to_binary(Queue)]}].
-
 % Jobs
 
 -doc "Returns upsert queries for a single encoded job.".
@@ -339,7 +322,6 @@ job_claim(
         """,
         LimitClause,
         ~"""
-
             FOR UPDATE SKIP LOCKED
         )
         UPDATE gaffer_jobs j
@@ -388,17 +370,6 @@ lock_key() ->
     <<Key:64/signed-integer, _/binary>> =
         crypto:hash(sha256, ~"gaffer_schema_migrations"),
     Key.
-
-ts_case_for_state() ->
-    ~"""
-    CASE state
-        WHEN 'available' THEN created_at
-        WHEN 'executing' THEN attempted_at
-        WHEN 'completed' THEN completed_at
-        WHEN 'cancelled' THEN cancelled_at
-        WHEN 'failed' THEN failed_at
-    END
-    """.
 
 state_timestamp_column(available) -> ~"created_at";
 state_timestamp_column(executing) -> ~"attempted_at";

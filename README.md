@@ -225,6 +225,10 @@ event.
 Hooks can be registered per queue via the `hooks` configuration option or
 globally via the `gaffer` application's `hooks` environment variable.
 
+Hooks are also the recommended way to collect queue metrics: per-state counters,
+timestamps, throughput, and latency can all be derived from the job lifecycle
+events.
+
 See [`gaffer_hooks`](https://hexdocs.pm/gaffer/gaffer_hooks.html) for the full
 list of events and their payload shapes.
 

@@ -10,7 +10,6 @@
 -export([queue_insert/2, queue_exists/2, queue_list/1, queue_delete/2]).
 -export([job_write/2, job_get/2, job_list/2, job_delete/2]).
 -export([job_claim/3, job_prune/3]).
--export([info/2]).
 
 %--- API ----------------------------------------------------------------------
 
@@ -32,7 +31,6 @@ job_list(Opts, S) -> dispatch(?FUNCTION_NAME, [Opts], S).
 job_delete(ID, S) -> dispatch(?FUNCTION_NAME, [ID], S).
 job_claim(Opts, Changes, S) -> dispatch(?FUNCTION_NAME, [Opts, Changes], S).
 job_prune(Queue, Opts, S) -> dispatch(?FUNCTION_NAME, [Queue, Opts], S).
-info(Queue, S) -> dispatch(?FUNCTION_NAME, [Queue], S).
 
 %--- Internal -----------------------------------------------------------------
 

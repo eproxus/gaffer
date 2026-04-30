@@ -179,23 +179,9 @@ states older than the configured `max_age` (in milliseconds).
     prune => prune_conf()
 }.
 
--doc "Information about a job state.".
--type state_info() :: #{
-    count := non_neg_integer(),
-    oldest => timestamp(),
-    newest => timestamp()
-}.
-
 -doc "Information about a queue.".
 -type queue_info() :: #{
     status := active | paused,
-    jobs := #{
-        available := state_info(),
-        executing := state_info(),
-        completed := state_info(),
-        cancelled := state_info(),
-        failed := state_info()
-    },
     workers := #{
         active := non_neg_integer(),
         max := #{local := max_workers(), global := max_workers()}
@@ -227,7 +213,6 @@ states older than the configured `max_age` (in milliseconds).
 -export_type([prune_conf/0]).
 -export_type([queue_conf/0]).
 -export_type([job_filter/0]).
--export_type([state_info/0]).
 -export_type([queue_info/0]).
 
 %--- Application Callbacks -----------------------------------------------------
@@ -395,7 +380,14 @@ prune(Queue) -> gaffer_queue_pruner:prune(Queue).
 % Queue Introspection
 
 -doc #{group => "Queue Management"}.
--doc "Returns current queue information.".
+-doc """
+Returns current queue runner information.
+
+Reports `status` (active or paused) and the `workers` local/global counts.
+
+For other metrics, observe lifecycle events via hooks. See `m:gaffer_hooks` for
+collecting metrics off the event stream, or `list/2` for ad-hoc inspection.
+""".
 -spec info(queue()) -> queue_info().
 info(Queue) ->
     gaffer_queue:info(Queue).
@@ -412,12 +404,27 @@ get(Queue, ID) ->
     end.
 
 -doc #{group => "Job Management"}.
--doc "Lists all jobs in the given queue.".
+-doc """
+Lists all jobs in the given queue.
+
+> #### Warning {: .warning}
+>
+> This is a slow operation potentially going through all jobs, which can
+> take a long time and block other queue operations.
+""".
+-doc #{equiv => list(Queue, #{})}.
 -spec list(queue()) -> [job()].
 list(Queue) -> list(Queue, #{}).
 
 -doc #{group => "Job Management"}.
--doc "Lists jobs in the given queue matching the filter options.".
+-doc """
+Lists jobs in the given queue matching the filter options.
+
+> #### Warning {: .warning}
+>
+> This is a slow operation potentially going through all jobs, which can
+> take a long time and block other queue operations.
+""".
 -spec list(queue(), job_filter()) -> [job()].
 list(Queue, Filters) ->
     gaffer_queue:list_jobs(Filters#{queue => Queue}).

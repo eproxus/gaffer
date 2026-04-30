@@ -18,8 +18,6 @@
 -export([job_delete/2]).
 -export([job_claim/3]).
 -export([job_prune/3]).
-% Introspection
--export([info/2]).
 
 -export_type([driver_state/0]).
 
@@ -153,52 +151,6 @@ job_prune(Queue, Opts, #{queued := Queued, locked := Locked}) ->
     [ets:delete(Queued, ID) || ID <:- QueuedIDs],
     [ets:delete(Locked, ID) || ID <:- LockedIDs],
     QueuedIDs ++ LockedIDs.
-
-% Introspection
-
--doc false.
-info(Queue, #{queued := Queued, locked := Locked}) ->
-    Empty = #{
-        available => #{count => 0},
-        executing => #{count => 0},
-        completed => #{count => 0},
-        cancelled => #{count => 0},
-        failed => #{count => 0}
-    },
-    AllJobs =
-        [Job || {_, #{queue := Q} = Job} <:- ets:tab2list(Queued), Q =:= Queue] ++
-            [
-                Job
-             || {_, #{queue := Q} = Job} <:- ets:tab2list(Locked), Q =:= Queue
-            ],
-    Jobs = lists:foldl(fun accumulate_info/2, Empty, AllJobs),
-    #{jobs => Jobs}.
-
-accumulate_info(#{state := State} = Job, Acc) ->
-    TS = info_timestamp(State, Job),
-    Entry = maps:get(State, Acc),
-    #{count := Count} = Entry,
-    Entry1 = Entry#{count := Count + 1},
-    Entry2 =
-        case {TS, maps:find(oldest, Entry1)} of
-            {undefined, _} ->
-                Entry1;
-            {T, error} ->
-                Entry1#{oldest => T, newest => T};
-            {T, {ok, O}} ->
-                Entry1#{
-                    oldest => min(T, O),
-                    newest => max(T, maps:get(newest, Entry1))
-                }
-        end,
-    Acc#{State := Entry2}.
-
-info_timestamp(available, #{created_at := T}) -> T;
-info_timestamp(executing, #{attempted_at := T}) -> T;
-info_timestamp(completed, #{completed_at := T}) -> T;
-info_timestamp(cancelled, #{cancelled_at := T}) -> T;
-info_timestamp(failed, #{failed_at := T}) -> T;
-info_timestamp(_, _) -> undefined.
 
 %--- Internal ------------------------------------------------------------------
 

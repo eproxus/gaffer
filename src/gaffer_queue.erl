@@ -181,17 +181,14 @@ set_state(Name, State) ->
 
 -spec info(gaffer:queue()) -> gaffer:queue_info().
 info(Queue) ->
-    #{driver := {Mod, DS}} = Conf = conf(Queue),
-    StorageInfo = Mod:info(Queue, DS),
+    #{max_workers := Max, global_max_workers := GlobalMax} = conf(Queue),
     #{active := Active, status := Status} = gaffer_queue_runner:info(Queue),
-    WorkerInfo = #{
-        active => Active,
-        max => #{
-            local => maps:get(max_workers, Conf),
-            global => maps:get(global_max_workers, Conf)
+    #{
+        status => Status,
+        workers => #{
+            active => Active, max => #{local => Max, global => GlobalMax}
         }
-    },
-    StorageInfo#{workers => WorkerInfo, status => Status}.
+    }.
 
 % Job (user)
 

@@ -136,9 +136,6 @@ gaffer_test_() ->
         fun forward_three_hop_cycle/1,
         % --- Info ---
         fun info_empty_queue/1,
-        fun info_after_inserts/1,
-        fun info_mixed_states/1,
-        fun info_timestamps_per_state/1,
         fun info_workers/1,
         % --- Pause / Resume ---
         fun pause_stops_claiming/1,
@@ -1450,59 +1447,13 @@ forward_three_hop_cycle(Driver) ->
 
 info_empty_queue(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
-    Info = gaffer:info(?Q),
-    #{jobs := Jobs, workers := Workers} = Info,
     ?assertMatch(
         #{
-            available := #{count := 0},
-            executing := #{count := 0},
-            completed := #{count := 0},
-            cancelled := #{count := 0},
-            failed := #{count := 0}
+            status := active,
+            workers := #{active := 0, max := #{local := 1, global := infinity}}
         },
-        Jobs
-    ),
-    % No oldest/newest when count is 0
-    ?assertNot(maps:is_key(oldest, maps:get(available, Jobs))),
-    ?assertNot(maps:is_key(newest, maps:get(available, Jobs))),
-    ?assertMatch(
-        #{active := 0, max := #{local := 1, global := infinity}},
-        Workers
+        gaffer:info(?Q)
     ).
-
-info_after_inserts(Driver) ->
-    ok = gaffer:create_queue(?CONF(Driver)),
-    _ = gaffer:insert(?Q, #{task => 1}),
-    _ = gaffer:insert(?Q, #{task => 2}),
-    _ = gaffer:insert(?Q, #{task => 3}),
-    #{jobs := #{available := Available}} = gaffer:info(?Q),
-    ?assertMatch(#{count := 3, oldest := _, newest := _}, Available).
-
-info_mixed_states(Driver) ->
-    ok = gaffer:create_queue(?CONF(Driver)),
-    #{id := ID1} = gaffer:insert(?Q, #{task => 1}),
-    _ = gaffer:insert(?Q, #{task => 2}),
-    _ = gaffer:insert(?Q, #{task => 3}),
-    {ok, _} = gaffer:cancel(?Q, ID1),
-    #{jobs := Jobs} = gaffer:info(?Q),
-    ?assertMatch(#{count := 2}, maps:get(available, Jobs)),
-    ?assertMatch(#{count := 1}, maps:get(cancelled, Jobs)).
-
-info_timestamps_per_state(Driver) ->
-    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
-    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
-    TestPid = gaffer_test_worker:encode_pid(self()),
-    #{id := ID} = gaffer:insert(?Q, #{
-        ~"action" => ~"complete", ~"test_pid" => TestPid
-    }),
-    ok = gaffer_queue_runner:poll(?Q),
-    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
-    #{jobs := Jobs} = gaffer:info(?Q),
-    % completed uses completed_at
-    #{completed := #{count := 1, oldest := Oldest, newest := Newest}} = Jobs,
-    ?assert(is_integer(Oldest)),
-    ?assert(is_integer(Newest)),
-    ?assertEqual(Oldest, Newest).
 
 info_workers(Driver) ->
     Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),

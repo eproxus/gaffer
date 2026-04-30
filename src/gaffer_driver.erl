@@ -109,11 +109,6 @@ Returns the written jobs in input order.
 -callback job_prune(gaffer:queue(), prune_opts(), driver_state()) ->
     [gaffer:job_id()].
 
-% Introspection
--doc "Returns aggregate job counts and timestamps per state for a queue.".
--callback info(gaffer:queue(), driver_state()) ->
-    #{jobs := #{gaffer:job_state() => gaffer:state_info()}}.
-
 %--- API -----------------------------------------------------------------------
 
 -doc false.

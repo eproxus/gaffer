@@ -22,8 +22,6 @@
 -export([job_delete/2]).
 -export([job_claim/3]).
 -export([job_prune/3]).
-% Introspection
--export([info/2]).
 
 -doc "PGO pool configuration passed to `pgo:start_pool/2`.".
 -type pool_config() :: map().
@@ -163,36 +161,6 @@ queue_delete(Name, #{pool := Pool}) ->
         error:{pgsql_error, #{code := ~"23503"}} ->
             {error, has_jobs}
     end.
-
-% Introspection
-
--doc false.
-info(Queue, #{pool := Pool}) ->
-    Empty = #{
-        available => #{count => 0},
-        executing => #{count => 0},
-        completed => #{count => 0},
-        cancelled => #{count => 0},
-        failed => #{count => 0}
-    },
-    Rows = query(Pool, gaffer_postgres:info(Queue)),
-    Jobs = lists:foldl(fun decode_info_row/2, Empty, Rows),
-    #{jobs => Jobs}.
-
-decode_info_row(#{state := State, count := Count} = Row, Acc) ->
-    StateAtom = binary_to_existing_atom(State),
-    Entry = #{count => Count},
-    Entry1 =
-        case Row of
-            #{oldest := null} ->
-                Entry;
-            #{oldest := Oldest, newest := Newest} ->
-                Entry#{
-                    oldest => decode_timestamp(Oldest),
-                    newest => decode_timestamp(Newest)
-                }
-        end,
-    Acc#{StateAtom := Entry1}.
 
 % Jobs
 
