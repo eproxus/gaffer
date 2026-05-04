@@ -179,6 +179,22 @@ states older than the configured `max_age` (in milliseconds).
     prune => prune_conf()
 }.
 
+-doc "Partial queue configuration for updates.".
+-type queue_updates() :: #{
+    worker => gaffer_worker:worker(),
+    global_max_workers => max_workers(),
+    max_workers => max_workers(),
+    poll_interval => interval(),
+    shutdown_timeout => shutdown_timeout(),
+    max_attempts => max_attempts(),
+    timeout => timeout_ms(),
+    backoff => backoff(),
+    priority => priority(),
+    forward => forward(),
+    hooks => [gaffer_hooks:hook()],
+    prune => prune_conf()
+}.
+
 -doc "Information about a queue.".
 -type queue_info() :: #{
     status := active | paused,
@@ -212,6 +228,7 @@ states older than the configured `max_age` (in milliseconds).
 -export_type([forward/0]).
 -export_type([prune_conf/0]).
 -export_type([queue_conf/0]).
+-export_type([queue_updates/0]).
 -export_type([job_filter/0]).
 -export_type([queue_info/0]).
 
@@ -252,8 +269,26 @@ get_queue(Name) ->
     gaffer_queue:get(Name).
 
 -doc #{group => "Queue Management"}.
--doc "Updates the configuration of a queue.".
--spec update_queue(queue(), map()) -> ok.
+-doc """
+Updates the configuration of a queue.
+
+Accepts any subset of `t:queue_conf/0` keys except `name` and `driver`. The
+update is deep-merged into the current configuration, so nested fields can be
+tweaked individually (e.g. `prune => #{interval => 1000}` keeps the existing
+`prune.max_age`).
+
+Deep-merge means a key cannot be removed from a nested map via update (e.g.
+dropping the `failed` entry from `forward`, or replacing `prune.max_age`
+wholesale). Use `ensure_queue/1` with the full configuration for that. Lists,
+including `hooks`, are replaced wholesale; passing `hooks => []` clears them.
+
+Swapping `worker` is not atomic: in-flight jobs finish under the previous
+module, the new module is picked up on the next poll. The `worker` and `hooks`
+values are not type-validated at update time.
+
+Passing `name` or `driver` raises `{invalid_queue_conf, #{not_updatable => [...]}}`.
+""".
+-spec update_queue(queue(), queue_updates()) -> ok.
 update_queue(Name, Updates) ->
     gaffer_queue:update(Name, Updates).
 

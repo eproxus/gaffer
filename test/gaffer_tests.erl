@@ -62,6 +62,12 @@ gaffer_test_() ->
         fun create_queue_extra_key/1,
         fun update_queue_extra_key/1,
         fun update_queue_empty/1,
+        fun update_queue_worker/1,
+        fun update_queue_poll_interval/1,
+        fun update_queue_hooks/1,
+        fun update_queue_prune_deep_merge/1,
+        fun update_queue_rejects_name/1,
+        fun update_queue_rejects_driver/1,
         % --- Lifecycle ---
         % Cancel
         fun cancel/1,
@@ -302,6 +308,7 @@ update_queue_forward_not_found(Driver) ->
     ),
     ?assertError(
         {invalid_forward_state, available},
+        % eqwalizer:ignore - intentionally invalid forward state
         gaffer:update_queue(?Q, #{forward => #{available => ?Q}})
     ).
 
@@ -309,6 +316,7 @@ update_queue_rejects_on_discard(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     ?assertError(
         {invalid_queue_conf, #{extra := [on_discard]}},
+        % eqwalizer:ignore - intentionally unknown key
         gaffer:update_queue(?Q, #{on_discard => some_queue})
     ).
 
@@ -333,7 +341,7 @@ delete_queue_after_forward_cleared(Driver) ->
             forward => #{failed => del_clear_target}
         })
     ),
-    ok = gaffer:update_queue(del_clear_source, #{forward => #{}}),
+    ok = gaffer:ensure_queue(?CONF(Driver, #{name => del_clear_source})),
     ?assertEqual(ok, gaffer:delete_queue(del_clear_target)).
 
 %--- Insert tests -------------------------------------------------------------
@@ -656,12 +664,76 @@ create_queue_extra_key(Driver) ->
 update_queue_extra_key(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     ?assertError(
-        {invalid_queue_conf, _}, gaffer:update_queue(?Q, #{bogus => 42})
+        {invalid_queue_conf, #{extra := [bogus]}},
+        % eqwalizer:ignore - intentionally unknown key
+        gaffer:update_queue(?Q, #{bogus => 42})
     ).
 
 update_queue_empty(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver)),
     ?assertError({invalid_queue_conf, _}, gaffer:update_queue(?Q, #{})).
+
+update_queue_worker(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    TestPid = self(),
+    NewWorker = fun(#{payload := Payload}) ->
+        TestPid ! {new_worker_executed, Payload},
+        complete
+    end,
+    ok = gaffer:update_queue(?Q, #{worker => NewWorker}),
+    ?assertMatch(#{worker := NewWorker}, gaffer:get_queue(?Q)),
+    #{id := ID} = gaffer:insert(?Q, #{~"hello" => ~"world"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
+    receive
+        {new_worker_executed, Payload} ->
+            ?assertEqual(#{~"hello" => ~"world"}, Payload)
+    after 1000 -> error(timeout)
+    end.
+
+update_queue_poll_interval(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    ok = gaffer:update_queue(?Q, #{poll_interval => 250}),
+    ?assertMatch(#{poll_interval := 250}, gaffer:get_queue(?Q)).
+
+update_queue_hooks(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    NewHook = gaffer_test_helpers:notify_hook(
+        self(), [[gaffer, job, complete]]
+    ),
+    ok = gaffer:update_queue(?Q, #{hooks => [NewHook]}),
+    #{id := ID} = gaffer:insert(?Q, #{
+        ~"action" => ~"complete",
+        ~"test_pid" => gaffer_test_worker:encode_pid(self())
+    }),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}).
+
+update_queue_prune_deep_merge(Driver) ->
+    PruneConf = #{interval => 100, max_age => #{cancelled => 5_000}},
+    ok = gaffer:create_queue(?CONF(Driver, #{prune => PruneConf})),
+    ok = gaffer:update_queue(?Q, #{prune => #{interval => 200}}),
+    ?assertMatch(
+        #{prune := #{interval := 200, max_age := #{cancelled := 5_000}}},
+        gaffer:get_queue(?Q)
+    ).
+
+update_queue_rejects_name(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    ?assertError(
+        {invalid_queue_conf, #{not_updatable := [name]}},
+        % eqwalizer:ignore - intentionally non-updatable key
+        gaffer:update_queue(?Q, #{name => other})
+    ).
+
+update_queue_rejects_driver(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    ?assertError(
+        {invalid_queue_conf, #{not_updatable := [driver]}},
+        % eqwalizer:ignore - intentionally non-updatable key
+        gaffer:update_queue(?Q, #{driver => Driver})
+    ).
 
 %--- Concurrency tests --------------------------------------------------------
 

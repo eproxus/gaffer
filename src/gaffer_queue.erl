@@ -140,11 +140,16 @@ queue_entry(_) ->
 get(Name) ->
     conf(Name).
 
--spec update(gaffer:queue(), map()) -> ok.
+-spec update(gaffer:queue(), gaffer:queue_updates()) -> ok.
+update(_Name, Updates) when
+    is_map_key(name, Updates); is_map_key(driver, Updates)
+->
+    Keys = maps:keys(maps:with([name, driver], Updates)),
+    error({invalid_queue_conf, #{not_updatable => Keys}});
 update(Name, Updates) ->
-    Validated = validate_updates(strip_runtime(Updates)),
+    _ = validate_updates(Updates),
     #{hooks := Hooks} = Conf = conf(Name),
-    MergedConf = maps:merge(Conf, Validated),
+    MergedConf = mapz:deep_merge(Conf, Updates),
     _ = validate_conf(strip_runtime(MergedConf)),
     validate_forward(MergedConf),
     persistent_term:put({gaffer_queue, Name}, MergedConf),
@@ -371,17 +376,22 @@ queue_conf_defaults() ->
     }.
 
 validate_conf(Conf) ->
-    check_extra_keys(Conf),
+    check_extra_keys(Conf, conf_allowed_keys()),
     maps:merge(queue_conf_defaults(), Conf).
 
 validate_updates(Updates) when map_size(Updates) =:= 0 ->
     error({invalid_queue_conf, #{extra => []}});
 validate_updates(Updates) ->
-    check_extra_keys(Updates),
+    check_extra_keys(Updates, update_allowed_keys()),
     Updates.
 
-check_extra_keys(Map) ->
-    Allowed = maps:keys(queue_conf_defaults()) ++ [forward],
+conf_allowed_keys() ->
+    maps:keys(queue_conf_defaults()) ++ [forward].
+
+update_allowed_keys() ->
+    conf_allowed_keys() ++ [worker, poll_interval, hooks, prune].
+
+check_extra_keys(Map, Allowed) ->
     case maps:keys(maps:without(Allowed, Map)) of
         [] -> ok;
         Extra -> error({invalid_queue_conf, #{extra => Extra}})
