@@ -144,7 +144,7 @@ Queues are configured via `gaffer:queue_conf()` maps:
 
   Max concurrent workers across all nodes.
 
-- `poll_interval` (`pos_integer() | infinity`, default = `1000`).
+- `poll_interval` (`pos_integer() | infinity`, default = `100`).
 
   Polling interval in ms.
 

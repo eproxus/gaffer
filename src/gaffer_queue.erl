@@ -498,7 +498,7 @@ run_forward_hooks(_, _) ->
 with_defaults(Conf) ->
     Defaults = #{
         hooks => [],
-        poll_interval => 10,
+        poll_interval => 100,
         prune => #{
             interval => 100,
             max_age => #{

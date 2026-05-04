@@ -62,9 +62,6 @@ active(state_timeout, poll, #{name := Name} = Data) ->
     Conf = gaffer_queue:conf(Name),
     {Data1, Actions} = do_poll(Conf, Data),
     {keep_state, Data1, poll_timeout(Conf) ++ Actions};
-active(info, {'DOWN', _Ref, process, Pid, Reason}, Data) ->
-    {Data1, Actions} = handle_worker_down(Pid, Reason, Data),
-    {keep_state, Data1, [{next_event, internal, poll} | Actions]};
 active({call, From}, reconfigure, #{name := Name}) ->
     {keep_state_and_data, [
         {reply, From, ok} | poll_timeout(gaffer_queue:conf(Name))
@@ -85,12 +82,12 @@ paused({call, From}, resume, #{name := Name} = Data) ->
     {next_state, active, Data, [
         {reply, From, ok}, {next_event, internal, poll} | poll_timeout(Conf)
     ]};
-paused(info, {'DOWN', _Ref, process, Pid, Reason}, Data) ->
-    {Data1, Actions} = handle_worker_down(Pid, Reason, Data),
-    {keep_state, Data1, Actions};
 paused(EventType, Event, Data) ->
     common(EventType, Event, paused, Data).
 
+common(info, {'DOWN', _Ref, process, Pid, Reason}, _State, Data) ->
+    {Data1, Actions} = handle_worker_down(Pid, Reason, Data),
+    {keep_state, Data1, Actions};
 common({call, From}, poll, _State, #{name := Name} = Data) ->
     {Data1, Actions} = do_poll(gaffer_queue:conf(Name), Data),
     {keep_state, Data1, [{reply, From, ok} | Actions]};
