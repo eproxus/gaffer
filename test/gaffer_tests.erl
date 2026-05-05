@@ -78,6 +78,7 @@ gaffer_test_() ->
         fun cancel_failed_error/1,
         % Complete
         fun complete_without_result/1,
+        fun complete_invalid_result/1,
         % Fail
         fun fail_retryable/1,
         fun fail_max_attempts/1,
@@ -516,6 +517,35 @@ complete_without_result(Driver) ->
     % Verify result key absent before completion
     #{id := ID2} = gaffer:insert(?Q, #{task => 2}),
     ?assertNot(maps:is_key(result, gaffer:get(?Q, ID2))).
+
+complete_invalid_result(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{hooks => [Hook], max_attempts => 1})
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    #{id := ID} = gaffer:insert(?Q, #{
+        ~"action" => ~"invalid_result", ~"test_pid" => TestPid
+    }),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, fail], #{
+        job := #{
+            id := ID,
+            errors := [#{error := ~"{invalid_worker_result,invalid_result}"}]
+        }
+    }),
+    ?assertMatch(
+        #{
+            state := failed,
+            errors := [
+                #{
+                    error := ~"{invalid_worker_result,invalid_result}",
+                    attempt := 1
+                }
+            ]
+        },
+        gaffer:get(?Q, ID)
+    ).
 
 %--- Fail tests ---------------------------------------------------------------
 

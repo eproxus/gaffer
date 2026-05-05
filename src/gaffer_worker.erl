@@ -22,5 +22,15 @@
 
 -doc false.
 -spec perform(worker(), gaffer:job()) -> result().
-perform(Worker, Job) when is_function(Worker, 1) -> Worker(Job);
-perform(Mod, Job) when is_atom(Mod) -> Mod:perform(Job).
+perform(Worker, Job) when is_function(Worker, 1) ->
+    validate_result(Worker(Job));
+perform(Mod, Job) when is_atom(Mod) ->
+    validate_result(Mod:perform(Job)).
+
+validate_result(complete) -> complete;
+validate_result({complete, _} = R) -> R;
+validate_result({fail, _} = R) -> R;
+validate_result({cancel, B} = R) when is_binary(B) -> R;
+validate_result({schedule, T} = R) when is_integer(T) -> R;
+validate_result({schedule, {TU, T}} = R) when is_integer(T), is_atom(TU) -> R;
+validate_result(R) -> {fail, {invalid_worker_result, R}}.
