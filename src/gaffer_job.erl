@@ -107,7 +107,9 @@ apply_result(Job, {cancel, _}, Actor) ->
 apply_result(Job, {schedule, At}, Actor) ->
     {ok, Available0} = transition(Job, available),
     Available = Available0#{scheduled_at => timestamp(At)},
-    {[gaffer, job, schedule], #{job => Available, actor => Actor}, Available}.
+    {[gaffer, job, schedule], #{job => Available, actor => Actor}, Available};
+apply_result(Job, Result, Actor) ->
+    apply_result(Job, {fail, {invalid_worker_result, Result}}, Actor).
 
 apply_failure(#{attempt := Attempt} = Job, Reason) ->
     case add_error(Job#{attempt := Attempt + 1}, Reason) of
