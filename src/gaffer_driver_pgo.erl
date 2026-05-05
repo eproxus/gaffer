@@ -140,7 +140,7 @@ migrations(#{pool := Pool}) ->
 
 -doc false.
 queue_insert(Name, #{pool := Pool}) ->
-    transaction(Pool, gaffer_postgres:queue_insert(Name)),
+    queries(Pool, gaffer_postgres:queue_insert(Name)),
     ok.
 
 -doc false.
@@ -154,7 +154,7 @@ queue_list(#{pool := Pool}) ->
 
 -doc false.
 queue_delete(Name, #{pool := Pool}) ->
-    try transaction(Pool, gaffer_postgres:queue_delete(Name)) of
+    try queries(Pool, gaffer_postgres:queue_delete(Name)) of
         [#{num_rows := 1}] -> ok;
         [#{num_rows := 0}] -> {error, not_found}
     catch
@@ -170,7 +170,7 @@ job_write(Jobs, #{pool := Pool}) ->
         fun(Job) -> gaffer_postgres:job_write(encode_job(Job)) end,
         Jobs
     ),
-    Results = transaction(Pool, Queries),
+    Results = queries(Pool, Queries),
     [decode_job(Row) || #{rows := [Row]} <:- Results].
 
 -doc false.
@@ -188,7 +188,7 @@ job_list(Opts, #{pool := Pool}) ->
 -doc false.
 job_delete(ID, #{pool := Pool}) ->
     [#{num_rows := N}] =
-        transaction(Pool, gaffer_postgres:job_delete(ID)),
+        queries(Pool, gaffer_postgres:job_delete(ID)),
     case N of
         1 -> ok;
         0 -> not_found
@@ -197,8 +197,12 @@ job_delete(ID, #{pool := Pool}) ->
 -doc false.
 job_claim(Opts, Changes, #{pool := Pool}) ->
     {EncodedOpts, EncodedChanges} = encode_claim(Opts, Changes),
-    Rows = query(Pool, gaffer_postgres:job_claim(EncodedOpts, EncodedChanges)),
-    [decode_job(R) || R <:- Rows].
+    decode_claim_rows(
+        pgo:transaction(
+            fun() -> claim_available(Opts, EncodedOpts, EncodedChanges) end,
+            #{pool => Pool}
+        )
+    ).
 
 -doc false.
 job_prune(Queue, Opts, #{pool := Pool}) ->
@@ -264,37 +268,58 @@ verify_checksum(Version, Stored, {_, UpQueries, _}) ->
     end.
 
 run_migrations(Pool, ToQueries, Migrations) ->
-    [transaction(Pool, ToQueries(M)) || M <:- Migrations],
+    [queries(Pool, ToQueries(M)) || M <:- Migrations],
     ok.
 
-% Runs a single query in a transaction, returning just the rows.
 query(Pool, Queries) ->
-    [#{rows := Rows}] = transaction(Pool, Queries),
+    [#{rows := Rows}] = queries(Pool, Queries),
     Rows.
 
-% Runs a list of queries in a single transaction, returning [pgo:result()].
-% pgo:query/3 inside a transaction uses the implicit connection from
-% the process dictionary, set by pgo:transaction/2.
-transaction(Pool, Queries) ->
+queries(Pool, Queries) when is_list(Queries) ->
+    pgo:transaction(fun() -> exec_queries(Queries) end, #{pool => Pool}).
+
+exec_queries(Queries) -> [exec_query(Query) || Query <:- Queries].
+
+exec_query({SQL, Params}) ->
     DecodeOpts = [return_rows_as_maps, column_name_as_atom],
-    pgo:transaction(
-        fun() ->
-            [
-                case pgo:query(SQL, Params, #{decode_opts => DecodeOpts}) of
-                    {error, {pgsql_error, Error}} ->
-                        error({pgsql_error, Error});
-                    {error, {pgo_error, Error}} ->
-                        error({pgo_error, Error});
-                    {error, Error} ->
-                        error(Error);
-                    #{command := _} = Result ->
-                        Result
-                end
-             || {SQL, Params} <:- Queries
-            ]
-        end,
-        #{pool => Pool}
-    ).
+    case pgo:query(SQL, Params, #{decode_opts => DecodeOpts}) of
+        {error, {pgsql_error, Error}} -> error({pgsql_error, Error});
+        {error, {pgo_error, Error}} -> error({pgo_error, Error});
+        {error, Error} -> error(Error);
+        #{command := _} = Result -> Result
+    end.
+
+claim_available(#{global_max_workers := infinity}, EncodedOpts, Changes) ->
+    claim_jobs(EncodedOpts, Changes);
+claim_available(
+    #{global_max_workers := GlobalMax, limit := Limit},
+    #{queue := Queue} = EncodedOpts,
+    Changes
+) ->
+    % Two-step claim: count executing under finite global_max_workers (skipped
+    % on infinity), compute the effective limit in Erlang, then run the claim
+    % with a static LIMIT. The split lets the planner use the partial
+    % available-jobs index instead of falling back to a sequential scan on
+    % large backlogs. See gaffer_postgres:job_claim/2 for the SQL queries.
+    Available = max(0, min(Limit, GlobalMax - count_executing(Queue))),
+    case Available of
+        0 -> [];
+        L -> claim_jobs(EncodedOpts#{limit := L}, Changes)
+    end.
+
+count_executing(Queue) ->
+    Query = gaffer_postgres:executing_count(Queue),
+    [#{rows := [#{n := Executing}]}] = exec_queries(Query),
+    Executing.
+
+claim_jobs(EncodedOpts, Changes) ->
+    [#{rows := Rows}] = exec_queries(
+        gaffer_postgres:job_claim(EncodedOpts, Changes)
+    ),
+    Rows.
+
+decode_claim_rows(Rows) when is_list(Rows) ->
+    [decode_job(R) || R <:- Rows].
 
 encode_job(Job) ->
     maps:map(
@@ -324,14 +349,10 @@ encode_error_entry(Entry) ->
     ).
 
 encode_claim(Opts, Changes) ->
-    #{queue := Queue, limit := Limit, global_max_workers := GlobalMax} = Opts,
+    #{queue := Queue, limit := Limit} = Opts,
     #{state := State, attempted_at := AttemptedAt} = Changes,
     {
-        #{
-            queue => atom_to_binary(Queue),
-            limit => Limit,
-            global_max_workers => GlobalMax
-        },
+        #{queue => atom_to_binary(Queue), limit => Limit},
         #{
             state => atom_to_binary(State),
             attempted_at => encode_timestamp(AttemptedAt)

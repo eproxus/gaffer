@@ -22,6 +22,7 @@
 -export([job_list/1]).
 -export([job_delete/1]).
 -export([job_claim/2]).
+-export([executing_count/1]).
 -export([job_prune/2]).
 
 -doc """
@@ -323,11 +324,11 @@ ts_column_names() ->
 -doc "Query to atomically claim available jobs for execution.".
 -spec job_claim(map(), map()) -> queries().
 job_claim(
-    #{queue := Queue, limit := Limit, global_max_workers := GlobalMax},
+    #{queue := Queue, limit := Limit},
     #{state := State, attempted_at := AttemptedAt}
 ) ->
     Now = AttemptedAt,
-    {LimitClause, LimitParams} = job_claim_effective_limit(Limit, GlobalMax),
+    {LimitClause, LimitParams} = job_claim_limit(Limit),
     SQL = [
         ~"""
         WITH candidates AS (
@@ -353,6 +354,20 @@ job_claim(
         job_columns(~"j.")
     ],
     [{SQL, [Queue, Now, State, Now | LimitParams]}].
+
+-doc """
+Query that counts jobs currently in the `executing` state for a queue.
+
+Used by the Postgres driver before claiming, to compute how many slots remain
+under `global_max_workers` without embedding the count in the claim query
+itself (which prevents the planner from using the partial available-jobs
+index).
+""".
+-spec executing_count(binary()) -> queries().
+executing_count(Queue) ->
+    SQL =
+        ~"SELECT count(*) AS n FROM gaffer_jobs WHERE queue = $1 AND state = 'executing'",
+    [{SQL, [Queue]}].
 
 -doc "Query to delete jobs older than per-state cutoffs for a queue.".
 -spec job_prune(gaffer:queue(), map()) -> queries().
@@ -397,22 +412,8 @@ state_timestamp_column(failed) -> ~"failed_at".
 
 immutable_columns() -> [~"id", ~"queue", ~"created_at"].
 
-job_claim_effective_limit(infinity, infinity) ->
-    {~"", []};
-job_claim_effective_limit(Limit, infinity) ->
-    {~"\n        LIMIT $5::bigint", [Limit]};
-job_claim_effective_limit(Limit, GlobalMax) ->
-    {
-        ~"""
-
-                LIMIT GREATEST(0, (
-                    SELECT LEAST($5::bigint, $6::bigint - count(*))
-                    FROM gaffer_jobs
-                    WHERE queue = $1 AND state = 'executing'
-                ))
-        """,
-        [Limit, GlobalMax]
-    }.
+job_claim_limit(infinity) -> {~"", []};
+job_claim_limit(Limit) -> {~"\n        LIMIT $5::bigint", [Limit]}.
 
 columns_and_values(Map) ->
     Pairs = maps:to_list(Map),
