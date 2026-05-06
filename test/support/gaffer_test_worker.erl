@@ -45,7 +45,10 @@ perform(~"block", Job, Pid) ->
             complete
     after 30000 ->
         error({test_timeout, metadata(Job)})
-    end.
+    end;
+perform(~"invalid_result", Job, Pid) ->
+    notify(Pid, job_executed, Job),
+    invalid_result.
 
 decode_pid(Bin) -> binary_to_term(base64:decode(Bin)).
 
