@@ -114,6 +114,19 @@ migrations(#{}) ->
             queries([
                 ~"DROP TABLE IF EXISTS gaffer_jobs",
                 ~"DROP TABLE IF EXISTS gaffer_queues"
+            ])},
+        {2,
+            queries([
+                ~"ALTER TABLE gaffer_jobs ADD COLUMN chain TEXT",
+                ~"""
+                CREATE INDEX IF NOT EXISTS idx_gaffer_jobs_chain_active
+                    ON gaffer_jobs (queue, chain, priority DESC, created_at ASC, id)
+                    WHERE state IN ('available', 'executing')
+                """
+            ]),
+            queries([
+                ~"DROP INDEX IF EXISTS idx_gaffer_jobs_chain_active",
+                ~"ALTER TABLE IF EXISTS gaffer_jobs DROP COLUMN IF EXISTS chain"
             ])}
     ].
 
@@ -292,7 +305,8 @@ job_columns(Prefix) ->
         [Prefix, ~"backoff"],
         [Prefix, ~"shutdown_timeout"],
         [Prefix, ~"result"],
-        [Prefix, ~"errors"]
+        [Prefix, ~"errors"],
+        [Prefix, ~"chain"]
         | [
             ts_column([Prefix, C], C)
          || C <:- ts_column_names()
@@ -332,12 +346,23 @@ job_claim(
     SQL = [
         ~"""
         WITH candidates AS (
-            SELECT id FROM gaffer_jobs
-            WHERE queue = $1
-              AND state = 'available'
-              AND (scheduled_at IS NULL
-                   OR scheduled_at <= to_timestamp($2::bigint / 1000000.0))
-            ORDER BY priority DESC, created_at ASC
+            SELECT j.id FROM gaffer_jobs j
+            WHERE j.queue = $1
+              AND j.state = 'available'
+              AND (j.scheduled_at IS NULL
+                   OR j.scheduled_at <= to_timestamp($2::bigint / 1000000.0))
+              AND (
+                j.chain IS NULL
+                OR NOT EXISTS (
+                  SELECT 1 FROM gaffer_jobs x
+                  WHERE x.queue = j.queue
+                    AND x.chain = j.chain
+                    AND x.state IN ('available', 'executing')
+                    AND (x.priority, j.created_at, j.id)
+                      > (j.priority, x.created_at, x.id)
+                )
+              )
+            ORDER BY j.priority DESC, j.created_at ASC, j.id ASC
         """,
         LimitClause,
         ~"""

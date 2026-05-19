@@ -97,6 +97,30 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
 -doc "Grace period for worker shutdown in milliseconds.".
 -type shutdown_timeout() :: pos_integer().
 
+-doc """
+Chain identifier scoping jobs within their queue.
+
+Jobs that share an identical `chain` value within a queue will execute in the
+normal queue order _within_ that chain (by priority first, then by insert time).
+In other words, jobs that share a `chain` are executed as if they were in their
+own unique queue in regards to order (they are still bound by other queue
+parameters such as max workers etc.).
+
+One consequence of this ordering is that later jobs in a chain can still be
+blocked by earlier jobs that have been rescheduled later than the subsequent
+jobs. A later job would only be claimable once the earlier jobs are finished,
+regardless of when they are scheduled.
+
+The same `chain` value used in two different queues has no relation. `chain`
+values are only considered within the same queue.
+
+> #### Warning {: .warning}
+>
+> Forwarding a job via `forward` does _not_ retain the `chain` value in the new
+> queue, however the value is available for inspection in the nested payload.
+""".
+-type chain() :: binary().
+
 -doc "A job.".
 -type job() :: #{
     id := job_id(),
@@ -109,6 +133,7 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     timeout := timeout_ms(),
     backoff := backoff(),
     shutdown_timeout := shutdown_timeout(),
+    chain => chain(),
     result => term(),
     scheduled_at => timestamp(),
     created_at := timestamp(),
@@ -127,7 +152,8 @@ An `erlang:system_time/0` integer or a `{Unit, Value}` pair.
     timeout => timeout_ms(),
     backoff => backoff(),
     shutdown_timeout => shutdown_timeout(),
-    scheduled_at => timestamp()
+    scheduled_at => timestamp(),
+    chain => chain() | undefined
 }.
 
 -doc "A recorded execution error.".
@@ -219,6 +245,7 @@ states older than the configured `max_age` (in milliseconds).
 -export_type([timeout_ms/0]).
 -export_type([backoff/0]).
 -export_type([shutdown_timeout/0]).
+-export_type([chain/0]).
 -export_type([job/0]).
 -export_type([job_opts/0]).
 -export_type([job_error/0]).

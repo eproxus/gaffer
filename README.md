@@ -16,17 +16,21 @@ A reliable job queue implemented in Erlang.
 
 ## Features
 
-- [x] Priority-based execution
-- [x] Per-queue concurrency limits (local and global)
-- [x] Pluggable storage drivers (ETS for dev/test, Postgres for production)
-- [x] Hooks for queue and job events
-- [x] Per-terminal-state job forwarding (`forward`)
-- [x] Queue introspection and automatic/manual job pruning
-- [x] Delayed job scheduling
-- [x] Automatic retries with backoff
+- Priority-based execution
+- Per-queue concurrency limits (local and global)
+- Pluggable storage drivers (ETS for dev/test, Postgres for production)
+- Hooks for queue and job events
+- Per-terminal-state job forwarding (`forward`)
+- Queue introspection and automatic/manual job pruning
+- Delayed job scheduling
+- Automatic retries with backoff
+- Job execution timeouts
+- Worker shutdown timeouts
+- Job chaining
+
+## Road Map
+
 - [ ] Drain and flush (graceful shutdown)
-- [x] Job execution timeouts
-- [ ] Worker shutdown timeouts
 
 ## Usage
 
@@ -118,6 +122,27 @@ stateDiagram-v2
     completed --> [*]
     failed --> [*]
     cancelled --> [*]
+```
+
+## Chains
+
+Jobs can be tagged with a `chain` to serialize their execution within a queue.
+Jobs sharing a `chain` value run in normal queue order (by priority, then by
+insert time) as if they were the only jobs in the queue, while other jobs in the
+queue keep executing concurrently.
+
+Ordering is strict: an earlier job that is retried or rescheduled still blocks
+later jobs in its chain until it reaches a terminal state. Once a job is in a
+final state (`completed`, `failed`, or `cancelled`), the next job in the same
+chain becomes eligible to run.
+
+Chains are scoped to a single queue. The same value used in two queues forms two
+independent chains, and `forward` does not carry the `chain` value into the
+destination queue (the value stays in the forwarded payload for inspection).
+
+```erlang
+gaffer:insert(emails, #{~"to" => ~"a@example.com"}, #{chain => ~"user-42"}),
+gaffer:insert(emails, #{~"to" => ~"b@example.com"}, #{chain => ~"user-42"}).
 ```
 
 ## Configuration

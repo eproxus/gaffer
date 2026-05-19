@@ -59,6 +59,7 @@ gaffer_test_() ->
         fun list_filter_state/1,
         % Validation
         fun insert_invalid_max_attempts/1,
+        fun chain_invalid/1,
         fun create_queue_extra_key/1,
         fun update_queue_extra_key/1,
         fun update_queue_empty/1,
@@ -93,6 +94,16 @@ gaffer_test_() ->
         fun claim_max_workers_infinity/1,
         % Priority
         fun claim_priority_order/1,
+        % Chains
+        fun chain_order/1,
+        fun chain_blocks_retry/1,
+        fun chain_completed_unblocks/1,
+        fun chain_cancelled_unblocks/1,
+        fun chain_failed_unblocks/1,
+        fun chain_independent/1,
+        fun chain_per_queue_scope/1,
+        fun chain_forward_preserves_in_payload/1,
+        fun chain_id_tiebreaker/1,
         % Prune
         fun prune_max_age/1,
         fun prune_per_state_cutoffs/1,
@@ -132,7 +143,7 @@ gaffer_test_() ->
         fun backoff_is_array/1,
         % --- Forwarding ---
         fun forward_failed/1,
-        fun forward_failed_chain/1,
+        fun chain_forward_failed/1,
         fun forward_failed_retryable/1,
         fun forward_failed_fresh/1,
         fun forward_completed/1,
@@ -687,6 +698,19 @@ insert_invalid_max_attempts(Driver) ->
         gaffer:insert(?Q, #{task => 1}, #{max_attempts => 0})
     ).
 
+chain_invalid(Driver) ->
+    ok = gaffer:create_queue(?CONF(Driver)),
+    Payload = #{task => 1},
+    ?assertError(
+        {invalid_job, invalid_chain},
+        gaffer:insert(?Q, Payload, #{chain => ~""})
+    ),
+    ?assertError(
+        {invalid_job, invalid_chain},
+        % eqwalizer:ignore - intentionally invalid chain type
+        gaffer:insert(?Q, Payload, #{chain => not_a_binary})
+    ).
+
 create_queue_extra_key(Driver) ->
     ?assertError(
         {invalid_queue_conf, #{extra := [bogus]}},
@@ -840,6 +864,256 @@ claim_priority_order(Driver) ->
         end
     end,
     ?assertEqual([ID1, ID3, ID4, ID2], [Claim(), Claim(), Claim(), Claim()]).
+
+%--- Chain tests --------------------------------------------------------------
+
+chain_order(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{max_workers => 1, hooks => [Hook]})
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"block", ~"test_pid" => TestPid},
+    % Within a chain, claim order follows priority DESC then created_at ASC:
+    % ID2 (priority 100) first, then ID1 and ID3 by insert order.
+    #{id := ID1} = gaffer:insert(?Q, Payload, #{priority => 0, chain => ~"a"}),
+    #{id := ID2} = gaffer:insert(?Q, Payload, #{priority => 100, chain => ~"a"}),
+    #{id := ID3} = gaffer:insert(?Q, Payload, #{priority => 0, chain => ~"a"}),
+    Claim = fun() ->
+        ok = gaffer_queue_runner:poll(?Q),
+        receive
+            {job_started, #{id := ID, worker := W}} ->
+                W ! continue,
+                ?assertHook([gaffer, job, complete], #{
+                    job := #{id := ID}, actor := worker
+                }),
+                ID
+        after 5000 -> error(timeout)
+        end
+    end,
+    ?assertEqual([ID2, ID1, ID3], [Claim(), Claim(), Claim()]).
+
+chain_blocks_retry(Driver) ->
+    ClaimHook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, claim]]),
+    FailHook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            max_attempts => 2,
+            backoff => 60_000,
+            hooks => [ClaimHook, FailHook]
+        })
+    ),
+    Payload = #{~"action" => ~"crash"},
+    #{id := ID1} = gaffer:insert(?Q, Payload, #{chain => ~"b"}),
+    #{id := ID2} = gaffer:insert(?Q, Payload, #{chain => ~"b"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    % J1 fails and reschedules into the future with backoff 60s
+    ?assertHook([gaffer, job, fail], #{
+        job := #{id := ID1, state := available, scheduled_at := _},
+        actor := worker
+    }),
+    drain_gaffer_hooks([gaffer, job, claim], 100),
+    % J2 must NOT be claimed even after polling because J1 is still ahead
+    ok = gaffer_queue_runner:poll(?Q),
+    receive
+        {gaffer_hook, [gaffer, job, claim], #{jobs := Jobs}} ->
+            case [I || #{id := I} <:- Jobs, I =:= ID2] of
+                [] -> ok;
+                _ -> error(claimed_blocked_chain_job)
+            end
+    after 200 -> ok
+    end,
+    ?assertMatch(#{state := available}, gaffer:get(?Q, ID2)).
+
+chain_completed_unblocks(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"complete", ~"test_pid" => TestPid},
+    #{id := ID1} = gaffer:insert(?Q, Payload, #{chain => ~"c"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID1}, actor := worker}),
+    #{id := ID2} = gaffer:insert(?Q, Payload, #{chain => ~"c"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID2}, actor := worker}),
+    ?assertMatch(#{state := completed}, gaffer:get(?Q, ID2)).
+
+chain_cancelled_unblocks(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(?CONF(Driver, #{hooks => [Hook]})),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"complete", ~"test_pid" => TestPid},
+    #{id := ID1} = gaffer:insert(?Q, Payload, #{chain => ~"d"}),
+    {ok, _} = gaffer:cancel(?Q, ID1),
+    #{id := ID2} = gaffer:insert(?Q, Payload, #{chain => ~"d"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID2}, actor := worker}),
+    ?assertMatch(#{state := completed}, gaffer:get(?Q, ID2)).
+
+chain_failed_unblocks(Driver) ->
+    FailHook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, fail]]),
+    DoneHook = gaffer_test_helpers:notify_hook(
+        self(), [[gaffer, job, complete]]
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{max_attempts => 1, hooks => [FailHook, DoneHook]})
+    ),
+    #{id := ID1} = gaffer:insert(?Q, #{~"action" => ~"crash"}, #{chain => ~"e"}),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, fail], #{
+        job := #{id := ID1, state := failed}, actor := worker
+    }),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    #{id := ID2} = gaffer:insert(
+        ?Q,
+        #{~"action" => ~"complete", ~"test_pid" => TestPid},
+        #{chain => ~"e"}
+    ),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID2}, actor := worker}),
+    ?assertMatch(#{state := completed}, gaffer:get(?Q, ID2)).
+
+chain_independent(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{max_workers => 1, hooks => [Hook]})
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"block", ~"test_pid" => TestPid},
+    % Interleave: X, Y, unchained, X, Y (insert order)
+    #{id := X1} = gaffer:insert(?Q, Payload, #{chain => ~"x"}),
+    #{id := Y1} = gaffer:insert(?Q, Payload, #{chain => ~"y"}),
+    #{id := U} = gaffer:insert(?Q, Payload),
+    #{id := X2} = gaffer:insert(?Q, Payload, #{chain => ~"x"}),
+    #{id := Y2} = gaffer:insert(?Q, Payload, #{chain => ~"y"}),
+    Claim = fun() ->
+        ok = gaffer_queue_runner:poll(?Q),
+        receive
+            {job_started, #{id := ID, worker := W}} ->
+                W ! continue,
+                ?assertHook([gaffer, job, complete], #{
+                    job := #{id := ID}, actor := worker
+                }),
+                ID
+        after 5000 -> error(timeout)
+        end
+    end,
+    Order = [Claim() || _ <:- lists:seq(1, 5)],
+    % Each chain claims in insert order; unchained appears somewhere
+    ?assertEqual([X1, X2], [I || I <:- Order, lists:member(I, [X1, X2])]),
+    ?assertEqual([Y1, Y2], [I || I <:- Order, lists:member(I, [Y1, Y2])]),
+    ?assert(lists:member(U, Order)).
+
+chain_per_queue_scope(Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    Conf = ?CONF(Driver, #{max_workers => 1, hooks => [Hook]}),
+    ok = gaffer:create_queue(Conf#{name => chain_scope_q1}),
+    ok = gaffer:create_queue(Conf#{name => chain_scope_q2}),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"block", ~"test_pid" => TestPid},
+    #{id := Q1J1} = gaffer:insert(chain_scope_q1, Payload, #{chain => ~"a"}),
+    #{id := _Q1J2} = gaffer:insert(chain_scope_q1, Payload, #{chain => ~"a"}),
+    #{id := Q2J1} = gaffer:insert(chain_scope_q2, Payload, #{chain => ~"a"}),
+    % Q2 claims its job independently
+    ok = gaffer_queue_runner:poll(chain_scope_q2),
+    Q2Pid =
+        receive
+            {job_started, #{id := Q2J1, worker := W2}} -> W2
+        after 5000 -> error(timeout_q2)
+        end,
+    % Q1 only claims Q1J1
+    ok = gaffer_queue_runner:poll(chain_scope_q1),
+    Q1Pid =
+        receive
+            {job_started, #{id := Q1J1, worker := W1}} -> W1
+        after 5000 -> error(timeout_q1)
+        end,
+    Q1Pid ! continue,
+    Q2Pid ! continue,
+    ?assertHook([gaffer, job, complete], #{
+        job := #{id := Q1J1}, actor := worker
+    }),
+    ?assertHook([gaffer, job, complete], #{
+        job := #{id := Q2J1}, actor := worker
+    }).
+
+chain_forward_preserves_in_payload(Driver) ->
+    TargetHook = gaffer_test_helpers:notify_hook(
+        self(), [[gaffer, job, insert]]
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => fwd_chain_target, hooks => [TargetHook]})
+    ),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{
+            forward => #{completed => fwd_chain_target}
+        })
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    _ = gaffer:insert(
+        ?Q,
+        #{~"action" => ~"complete", ~"test_pid" => TestPid},
+        #{chain => ~"a"}
+    ),
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, insert], #{
+        job := #{queue := fwd_chain_target}, actor := worker
+    }),
+    [Forwarded] = gaffer:list(fwd_chain_target),
+    ?assertNot(maps:is_key(chain, Forwarded)),
+    Wrapped = normalize(maps:get(payload, Forwarded)),
+    ?assertMatch(#{chain := a}, Wrapped).
+
+chain_id_tiebreaker({DriverMod, DS} = Driver) ->
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{max_workers => 1, hooks => [Hook]})
+    ),
+    TestPid = gaffer_test_worker:encode_pid(self()),
+    Payload = #{~"action" => ~"block", ~"test_pid" => TestPid},
+    Now = erlang:system_time(),
+    Base = #{
+        queue => ?Q,
+        payload => Payload,
+        state => available,
+        attempt => 0,
+        max_attempts => 1,
+        priority => 0,
+        timeout => 5000,
+        backoff => 0,
+        shutdown_timeout => 5000,
+        created_at => Now,
+        errors => []
+    },
+    % All jobs share priority and created_at, so ordering falls back entirely
+    % to the job ID tiebreaker. IDs are chosen so X1 < Y1 < X2 < Y2 lexically,
+    % giving the expected claim order.
+    X1 = <<1, 0:120>>,
+    X2 = <<3, 0:120>>,
+    Y1 = <<2, 0:120>>,
+    Y2 = <<4, 0:120>>,
+    [_, _, _, _] = DriverMod:job_write(
+        [
+            Base#{id => X2, chain => ~"x"},
+            Base#{id => X1, chain => ~"x"},
+            Base#{id => Y2, chain => ~"y"},
+            Base#{id => Y1, chain => ~"y"}
+        ],
+        DS
+    ),
+    Claim = fun() ->
+        ok = gaffer_queue_runner:poll(?Q),
+        receive
+            {job_started, #{id := ID, worker := W}} ->
+                W ! continue,
+                ?assertHook([gaffer, job, complete], #{
+                    job := #{id := ID}, actor := worker
+                }),
+                ID
+        after 5000 -> error(timeout)
+        end
+    end,
+    ?assertEqual([X1, Y1, X2, Y2], [Claim(), Claim(), Claim(), Claim()]).
 
 %--- Prune tests --------------------------------------------------------------
 
@@ -1363,7 +1637,7 @@ forward_failed(Driver) ->
     ),
     ?assertEqual(forward_failed, maps:get(queue, Wrapped)).
 
-forward_failed_chain(Driver) ->
+chain_forward_failed(Driver) ->
     Q3Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, insert]]),
     ok = gaffer:create_queue(
         ?CONF(Driver, #{name => fwd_chain_q3, hooks => [Q3Hook]})
@@ -1407,7 +1681,7 @@ forward_failed_chain(Driver) ->
         },
         Inner
     ),
-    ?assertEqual(forward_failed_chain, maps:get(queue, Inner)).
+    ?assertEqual(chain_forward_failed, maps:get(queue, Inner)).
 
 forward_failed_retryable(Driver) ->
     ok = gaffer:create_queue(?CONF(Driver, #{name => fwd_retry_dlq})),

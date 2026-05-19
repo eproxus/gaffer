@@ -45,6 +45,7 @@ forward_payload(Job) ->
             state,
             attempt,
             errors,
+            chain,
             completed_at,
             failed_at,
             cancelled_at
@@ -60,22 +61,20 @@ handle_crash(Job, Reason, Actor) -> apply_result(Job, {fail, Reason}, Actor).
 -doc false.
 -spec create(gaffer:queue_conf(), term(), gaffer:job_opts()) -> gaffer:job().
 create(#{name := Queue} = Conf, Payload, Opts) ->
-    Now = erlang:system_time(),
-    ScheduledAt = maybe_scheduled_at(Opts),
-    JobKeys = [max_attempts, priority, timeout, backoff, shutdown_timeout],
-    Defaults = maps:with(JobKeys, Conf),
-    JobOpts = maps:merge(Defaults, maps:without([scheduled_at], Opts)),
-    Job = maps:merge(JobOpts, #{
+    Defaults = maps:with(
+        [max_attempts, priority, timeout, backoff, shutdown_timeout], Conf
+    ),
+    Job = maps:merge(maps:merge(Defaults, normalize_opts(Opts)), #{
         id => keysmith:uuid(7, binary),
         queue => Queue,
         payload => Payload,
         state => available,
         attempt => 0,
-        created_at => Now,
+        created_at => erlang:system_time(),
         errors => []
     }),
     validate(Job),
-    maybe_put(scheduled_at, ScheduledAt, Job).
+    Job.
 
 -doc false.
 -spec transition(gaffer:job(), gaffer:job_state()) ->
@@ -188,15 +187,22 @@ validate(#{queue := Queue} = Job) ->
         {
             fun() -> is_integer(maps:get(priority, Job, 0)) end,
             invalid_priority
+        },
+        {
+            fun() -> valid_chain(Job) end,
+            invalid_chain
         }
     ],
     run_checks(Checks).
 
-maybe_scheduled_at(#{scheduled_at := At}) -> timestamp(At);
-maybe_scheduled_at(#{}) -> undefined.
+valid_chain(#{chain := C}) -> is_binary(C) andalso C =/= ~"";
+valid_chain(_Job) -> true.
 
-maybe_put(_Key, undefined, Map) -> Map;
-maybe_put(Key, Value, Map) -> Map#{Key => Value}.
+normalize_opts(Opts) -> maps:filtermap(fun normalize_opt/2, Opts).
+
+normalize_opt(scheduled_at, At) -> {true, timestamp(At)};
+normalize_opt(chain, undefined) -> false;
+normalize_opt(_K, V) -> {true, V}.
 
 run_checks([]) ->
     ok;

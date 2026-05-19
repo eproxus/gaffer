@@ -88,6 +88,10 @@ job_write(Jobs, #{queued := Queued, locked := Locked}) ->
     {QueuedJobs, LockedJobs} = lists:partition(
         fun(#{state := S}) -> S =/= executing end, Jobs
     ),
+    % We insert in all tables before cross-deleting, so if a row is being moved
+    % it can be briefly visible in both tables. When claiming jobs in
+    % job_claim/3 the claim algorithm will always see an active job for a chain,
+    % preventing subsequent jobs in a chain from executing prematurely.
     ets:insert(Queued, [{ID, J} || #{id := ID} = J <:- QueuedJobs]),
     ets:insert(Locked, [{ID, J} || #{id := ID} = J <:- LockedJobs]),
     [ets:delete(Locked, ID) || #{id := ID} <:- QueuedJobs],
@@ -125,23 +129,23 @@ job_delete(ID, #{queued := Queued, locked := Locked}) ->
 
 -doc false.
 job_claim(
-    #{queue := Queue, limit := Limit0, global_max_workers := GlobalMax},
+    #{queue := Queue, limit := Limit, global_max_workers := GlobalMax},
     Changes,
-    #{queued := Queued, locked := Locked}
+    #{queued := Queued, locked := Locked} = State
 ) ->
-    Limit = apply_global_max(Queue, Limit0, GlobalMax, Locked),
     Now = erlang:system_time(),
-    All = [Job || {_, Job} <:- ets:tab2list(Queued)],
-    Available = [
-        Job
-     || #{state := St, queue := Q} = Job <:- All,
-        St =:= available,
-        Q =:= Queue,
-        not is_scheduled_future(Job, Now)
+    Active = active_jobs(Queue, State),
+    Heads = chain_heads(Active),
+    Eligible = [
+        J
+     || #{state := S} = J <:- Active,
+        S =:= available,
+        not is_scheduled_future(J, Now),
+        is_chain_head(J, Heads)
     ],
-    Sorted = lists:sort(fun compare_priority/2, Available),
-    ToFetch = take(Sorted, Limit),
-    claim_jobs(ToFetch, Changes, Queued, Locked, []).
+    Sorted = lists:sort(fun earlier/2, Eligible),
+    Max = available_slots(Limit, GlobalMax, Active),
+    claim_jobs(take(Sorted, Max), Changes, Queued, Locked, []).
 
 -doc false.
 job_prune(Queue, Opts, #{queued := Queued, locked := Locked}) ->
@@ -175,14 +179,46 @@ state_timestamp_key(completed) -> completed_at;
 state_timestamp_key(cancelled) -> cancelled_at;
 state_timestamp_key(failed) -> failed_at.
 
-apply_global_max(_Queue, Limit, infinity, _Locked) ->
-    Limit;
-apply_global_max(Queue, Limit, Max, Locked) ->
-    Executing = length([
+% Jobs in this queue that participate in claim and chain decisions.
+active_jobs(Queue, #{queued := Queued, locked := Locked}) ->
+    [
         J
-     || {_, #{queue := Q} = J} <:- ets:tab2list(Locked),
-        Q =:= Queue
-    ]),
+     || Tab <:- [Queued, Locked],
+        {_, #{queue := Q, state := S} = J} <:- ets:tab2list(Tab),
+        Q =:= Queue,
+        S =:= available orelse S =:= executing
+    ].
+
+% Heads = #{Chain => earliest active job in that chain}. Only the head of a
+% chain is claimable; later same-chain jobs must wait for it to terminate.
+chain_heads(Active) -> lists:foldl(fun update_head/2, #{}, Active).
+
+update_head(#{chain := C} = J, Heads) when is_binary(C), is_map_key(C, Heads) ->
+    #{C := Prev} = Heads,
+    Heads#{C := earliest(J, Prev)};
+update_head(#{chain := C} = J, Heads) when is_binary(C) ->
+    Heads#{C => J};
+update_head(_J, Heads) ->
+    Heads.
+
+earliest(J1, J2) ->
+    case earlier(J1, J2) of
+        true -> J1;
+        false -> J2
+    end.
+
+is_chain_head(#{chain := C, id := ID}, Heads) when is_binary(C) ->
+    case Heads of
+        #{C := #{id := ID}} -> true;
+        _ -> false
+    end;
+is_chain_head(_J, _Heads) ->
+    true.
+
+available_slots(Limit, infinity, _Active) ->
+    Limit;
+available_slots(Limit, Max, Active) ->
+    Executing = length([J || #{state := S} = J <:- Active, S =:= executing]),
     min(Limit, Max - Executing).
 
 take(List, infinity) -> List;
@@ -191,10 +227,9 @@ take(List, N) -> lists:sublist(List, max(0, N)).
 is_scheduled_future(#{scheduled_at := At}, Now) -> At > Now;
 is_scheduled_future(_, _Now) -> false.
 
-compare_priority(#{priority := P1}, #{priority := P2}) when P1 =/= P2 ->
-    P1 > P2;
-compare_priority(A, B) ->
-    maps:get(created_at, A, undefined) =< maps:get(created_at, B, undefined).
+earlier(#{priority := P1}, #{priority := P2}) when P1 =/= P2 -> P1 > P2;
+earlier(#{created_at := C1}, #{created_at := C2}) when C1 =/= C2 -> C1 < C2;
+earlier(#{id := I1}, #{id := I2}) -> I1 =< I2.
 
 claim_jobs([], _Changes, _Queued, _Locked, Acc) ->
     lists:reverse(Acc);
