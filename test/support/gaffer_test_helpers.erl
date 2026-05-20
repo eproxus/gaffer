@@ -4,6 +4,7 @@
 -export([notify_hook/2]).
 -export([pgo_pool_config/0, reset_database/1, stop_pool/1]).
 -export([normalize/1]).
+-export([sequence/1]).
 -export([wait_for/2, wait_for/3]).
 
 %--- API ----------------------------------------------------------------------
@@ -67,6 +68,14 @@ wait_loop(Fun, State, Interval, Deadline) ->
                 false ->
                     error(timeout)
             end
+    end.
+
+sequence(Steps) ->
+    A = atomics:new(1, [{signed, false}]),
+    Last = length(Steps),
+    fun(Fun) ->
+        Step = lists:nth(min(atomics:add_get(A, 1, 1), Last), Steps),
+        Step(Fun)
     end.
 
 normalize(Map) when is_map(Map) ->

@@ -44,6 +44,7 @@ gaffer_pgo_test_() ->
             fun pgo_jobs_constraint_violations/1,
             fun pgo_jobs_column_defaults/1,
             fun pgo_concurrent_prune_disjoint/1,
+            fun pgo_class_40_returns_transient/1,
             fun pgo_start_with_new_pool/1,
             fun pgo_multi_node_distribution/1,
             fun pgo_multi_node_ensure_queue/1,
@@ -203,6 +204,87 @@ pgo_jobs_column_defaults({gaffer_driver_pgo, #{pool := Pool}}) ->
             #{pool => Pool}
         )
     ).
+
+%% Drives a real Postgres 40P01 deadlock via reentrant pgo:transaction calls
+%% and asserts that the driver catches it as a transient error rather than
+%% letting a pgsql_error exception escape. Each process locks one row, then
+%% calls into the driver to write the OTHER row — the driver's pgo:transaction
+%% reuses the outer connection, so the second lock attempt completes the
+%% deadlock cycle.
+pgo_class_40_returns_transient(
+    {gaffer_driver_pgo, #{pool := Pool} = DS} = Driver
+) ->
+    QName = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => QName, prune => #{interval => infinity}})
+    ),
+    JobA = gaffer:insert(QName, #{n => 1}),
+    JobB = gaffer:insert(QName, #{n => 2}),
+    #{id := IdA} = JobA,
+    #{id := IdB} = JobB,
+    deadlock_race(Pool, DS, IdA, JobB, IdB, JobA).
+
+deadlock_race(Pool, DS, IdA, JobB, IdB, JobA) ->
+    Parent = self(),
+    spawn_locker(Parent, Pool, DS, IdA, JobB, p1),
+    spawn_locker(Parent, Pool, DS, IdB, JobA, p2),
+    P1Worker = await_locked(p1),
+    P2Worker = await_locked(p2),
+    P1Worker ! go,
+    P2Worker ! go,
+    R1 = await_done(p1),
+    R2 = await_done(p2),
+    ?assert(
+        lists:any(fun is_transient_deadlock/1, [R1, R2]),
+        lists:flatten(io_lib:format("R1=~p R2=~p", [R1, R2]))
+    ).
+
+spawn_locker(Parent, Pool, DS, LockId, OtherJob, MyTag) ->
+    spawn(fun() ->
+        Result =
+            try
+                pgo:transaction(
+                    fun() ->
+                        locker_tx(Parent, DS, LockId, OtherJob, MyTag)
+                    end,
+                    #{pool => Pool}
+                )
+            catch
+                Class:Reason -> {Class, Reason}
+            end,
+        Parent ! {done, MyTag, Result}
+    end).
+
+locker_tx(Parent, DS, LockId, OtherJob, MyTag) ->
+    pgo:query(
+        ~"SELECT id FROM gaffer_jobs WHERE id = $1 FOR UPDATE",
+        [LockId]
+    ),
+    Parent ! {locked, MyTag, self()},
+    receive
+        go -> ok
+    after 10000 -> error({go_timeout, MyTag})
+    end,
+    gaffer_driver_pgo:job_write([OtherJob], DS).
+
+await_locked(Tag) ->
+    receive
+        {locked, Tag, W} -> W
+    after 5000 -> error({lock_timeout, Tag})
+    end.
+
+await_done(Tag) ->
+    receive
+        {done, Tag, X} -> X
+    after 10000 -> error({done_timeout, Tag})
+    end.
+
+is_transient_deadlock(
+    {error, {transient, {pgsql_error, #{code := <<"40", _/binary>>}}}}
+) ->
+    true;
+is_transient_deadlock(_) ->
+    false.
 
 %% Verifies the new SKIP LOCKED prune CTE: with multiple concurrent prunes
 %% against the same eligible rows, every row is deleted exactly once and

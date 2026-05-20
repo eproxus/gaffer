@@ -116,11 +116,16 @@ do_poll(
         0 ->
             {Data, []};
         Limit ->
-            Jobs = gaffer_queue:claim_jobs(Name, #{
-                queue => Name, limit => Limit
-            }),
+            Jobs = poll_queue(Name, Limit),
             {NewWorkers, Actions} = spawn_workers(Worker, Jobs, Workers, []),
             {Data#{workers := NewWorkers}, Actions}
+    end.
+
+poll_queue(Name, Limit) ->
+    try
+        gaffer_queue:claim_jobs(Name, #{queue => Name, limit => Limit})
+    catch
+        error:{transient, _} -> []
     end.
 
 poll_limit(infinity, _Active) -> infinity;

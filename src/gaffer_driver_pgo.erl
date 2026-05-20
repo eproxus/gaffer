@@ -3,6 +3,8 @@
 
 -behaviour(gaffer_driver).
 
+-include_lib("kernel/include/logger.hrl").
+
 % Lifecycle
 -export([start/1]).
 -export([stop/1]).
@@ -283,10 +285,18 @@ exec_queries(Queries) -> [exec_query(Query) || Query <:- Queries].
 exec_query({SQL, Params}) ->
     DecodeOpts = [return_rows_as_maps, column_name_as_atom],
     case pgo:query(SQL, Params, #{decode_opts => DecodeOpts}) of
-        {error, {pgsql_error, Error}} -> error({pgsql_error, Error});
-        {error, {pgo_error, Error}} -> error({pgo_error, Error});
-        {error, Error} -> error(Error);
-        #{command := _} = Result -> Result
+        {error, {pgsql_error, #{code := <<"40", _/binary>>} = Err} = Original} ->
+            ?LOG_WARNING(#{
+                event => transient_pgsql_error,
+                sql => iolist_to_binary(SQL),
+                code => maps:get(code, Err),
+                message => maps:get(message, Err, undefined)
+            }),
+            error({transient, Original});
+        {error, Error} ->
+            error(Error);
+        #{command := _} = Result ->
+            Result
     end.
 
 claim_available(#{global_max_workers := infinity}, EncodedOpts, Changes) ->

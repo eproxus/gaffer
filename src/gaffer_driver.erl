@@ -87,8 +87,12 @@ Returns `{error, not_found}` if the queue name is not registered, or
 -doc """
 Writes a list of jobs to storage atomically.
 
-The driver determines insert-vs-update per job internally.
-Returns the written jobs in input order.
+The driver determines insert-vs-update per job internally. Returns the written
+jobs in input order.
+
+A driver should raise `error({transient, Reason})` if a retryable storage error
+occurred. This is used by the runner and pruner to continue operating in the
+presence of intermittent faults.
 """.
 -callback job_write([gaffer:job()], driver_state()) -> [gaffer:job()].
 
@@ -101,11 +105,23 @@ Returns the written jobs in input order.
 -doc "Deletes a job by ID.".
 -callback job_delete(gaffer:job_id(), driver_state()) -> ok | not_found.
 
--doc "Atomically claims available jobs for execution.".
+-doc """
+Atomically claims available jobs for execution.
+
+A driver should raise `error({transient, Reason})` if a retryable storage error
+occurred. This is used by the runner and pruner to continue operating in the
+presence of intermittent faults.
+""".
 -callback job_claim(claim_opts(), job_changes(), driver_state()) ->
     [gaffer:job()].
 
--doc "Prunes jobs in terminal states for a queue and returns the pruned IDs.".
+-doc """
+Prunes jobs in terminal states for a queue and returns the pruned IDs.
+
+A driver should raise `error({transient, Reason})` if a retryable storage error
+occurred. This is used by the runner and pruner to continue operating in the
+presence of intermittent faults.
+""".
 -callback job_prune(gaffer:queue(), prune_opts(), driver_state()) ->
     [gaffer:job_id()].
 

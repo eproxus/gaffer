@@ -104,6 +104,8 @@ gaffer_test_() ->
         fun prune_user_max_age_replaces_default/1,
         fun pruner_process/1,
         fun pruner_manual_trigger/1,
+        fun prune_transient_keeps_pruner_alive/1,
+        fun claim_transient_keeps_runner_alive/1,
         % Polling
         fun poll_worker_lifecycle/1,
         fun poll_worker_crash_fails_job/1,
@@ -896,6 +898,57 @@ pruner_process(Driver) ->
     {ok, _} = gaffer:cancel(?Q, ID2),
     ?assertHook([gaffer, job, delete], #{job_id := ID2, actor := pruner}),
     ?assertEqual([], gaffer:list(?Q)).
+
+prune_transient_keeps_pruner_alive(Driver) ->
+    % First call raises transient, subsequent calls pass through
+    Next = gaffer_test_helpers:sequence([
+        fun(_) -> error({transient, simulated}) end,
+        fun(Fun) -> Fun() end
+    ]),
+    Wrapped = gaffer_test_driver:wrap(Driver, #{
+        job_prune => fun(Inner, Q, O) -> Next(fun() -> Inner(Q, O) end) end
+    }),
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, delete]]),
+    PruneConf = #{interval => 10, max_age => #{cancelled => 0}},
+    ok = gaffer:create_queue(
+        ?CONF(Wrapped, #{prune => PruneConf, hooks => [Hook]})
+    ),
+    PrunerPid = registered_pid(
+        binary_to_atom(<<"gaffer_queue_pruner_", (atom_to_binary(?Q))/binary>>)
+    ),
+    #{id := ID} = gaffer:insert(?Q, #{task => 1}),
+    {ok, _} = gaffer:cancel(?Q, ID),
+    % First tick raises transient (caught); next tick succeeds and emits hook
+    ?assertHook([gaffer, job, delete], #{job_id := ID, actor := pruner}),
+    ?assertEqual([], gaffer:list(?Q)),
+    ?assert(is_process_alive(PrunerPid)).
+
+claim_transient_keeps_runner_alive(Driver) ->
+    Next = gaffer_test_helpers:sequence([
+        fun(_) -> error({transient, simulated}) end,
+        fun(Fun) -> Fun() end
+    ]),
+    Wrapped = gaffer_test_driver:wrap(Driver, #{
+        job_claim => fun(Inner, O, C) -> Next(fun() -> Inner(O, C) end) end
+    }),
+    Hook = gaffer_test_helpers:notify_hook(self(), [[gaffer, job, complete]]),
+    ok = gaffer:create_queue(?CONF(Wrapped, #{hooks => [Hook]})),
+    RunnerPid = registered_pid(
+        binary_to_atom(<<"gaffer_queue_runner_", (atom_to_binary(?Q))/binary>>)
+    ),
+    #{id := ID} = gaffer:insert(?Q, #{
+        ~"action" => ~"complete",
+        ~"test_pid" => gaffer_test_worker:encode_pid(self())
+    }),
+    % First poll raises transient (caught, no claim, no crash)
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assert(is_process_alive(RunnerPid)),
+    ?assertMatch(#{state := available}, gaffer:get(?Q, ID)),
+    % Second poll succeeds: worker runs and completes the job
+    ok = gaffer_queue_runner:poll(?Q),
+    ?assertHook([gaffer, job, complete], #{job := #{id := ID}, actor := worker}),
+    ?assertMatch(#{state := completed}, gaffer:get(?Q, ID)),
+    ?assert(is_process_alive(RunnerPid)).
 
 pruner_manual_trigger(Driver) ->
     PruneConf = #{interval => infinity, max_age => #{cancelled => 0}},
@@ -1930,6 +1983,12 @@ await_errors(Queue, ID, ErrorCount) ->
         end,
         undefined
     ).
+
+registered_pid(Name) ->
+    case whereis(Name) of
+        Pid when is_pid(Pid) -> Pid;
+        Other -> error({not_a_pid, Name, Other})
+    end.
 
 % gaffer_hooks behaviour callback
 gaffer_hook(Event, Data) ->

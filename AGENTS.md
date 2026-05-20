@@ -107,6 +107,15 @@ priority order is authoritative: the top `Todo` is the next task.
   switch(_Opts) -> ok.
   ```
 
+## Tests
+
+* Tests should be written and run before any code is modified
+* Strive to make tests as black box as possible, by sticking to the public API
+  and user observable side effects, such as:
+    * Public job data or state changes
+    * Observed hooks
+    * Modified test state side effects
+
 ## Changes
 
 Before making changes:

@@ -76,12 +76,16 @@ common({call, From}, prune, #{name := Name} = Data) ->
 call(Name, Msg) -> gen_statem:call(proc_name(Name), Msg).
 
 do_prune(Name, Actor) ->
-    #{prune := #{max_age := MaxAge, interval := Interval}} = gaffer_queue:conf(
-        Name
-    ),
-    {gaffer_queue:prune_jobs(Name, MaxAge, Actor), [
-        {state_timeout, Interval, prune}
-    ]}.
+    #{prune := Prune} = gaffer_queue:conf(Name),
+    #{max_age := MaxAge, interval := Interval} = Prune,
+    {prune_queue(Name, MaxAge, Actor), [{state_timeout, Interval, prune}]}.
+
+prune_queue(Name, MaxAge, Actor) ->
+    try
+        gaffer_queue:prune_jobs(Name, MaxAge, Actor)
+    catch
+        error:{transient, _} -> []
+    end.
 
 proc_name(Name) ->
     % elp:ignore W0023 - bounded by queue count, not user input
