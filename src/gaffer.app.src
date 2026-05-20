@@ -8,7 +8,7 @@
         keysmith,
         mapz
     ]},
-    {optional_applications, [pgo]},
+    {optional_applications, [pgo, prometheus]},
     {licenses, ["MIT"]},
     {links, [
         {"Changelog",
