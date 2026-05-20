@@ -43,6 +43,7 @@ gaffer_pgo_test_() ->
             fun pgo_advisory_lock_query_emitted/1,
             fun pgo_jobs_constraint_violations/1,
             fun pgo_jobs_column_defaults/1,
+            fun pgo_concurrent_prune_disjoint/1,
             fun pgo_start_with_new_pool/1,
             fun pgo_multi_node_distribution/1,
             fun pgo_multi_node_ensure_queue/1,
@@ -202,6 +203,48 @@ pgo_jobs_column_defaults({gaffer_driver_pgo, #{pool := Pool}}) ->
             #{pool => Pool}
         )
     ).
+
+%% Verifies the new SKIP LOCKED prune CTE: with multiple concurrent prunes
+%% against the same eligible rows, every row is deleted exactly once and
+%% no transaction errors out. The pool size is small but each transaction
+%% gets its own connection.
+pgo_concurrent_prune_disjoint({gaffer_driver_pgo, _DS} = Driver) ->
+    QName = ?FUNCTION_NAME,
+    ok = gaffer:create_queue(
+        ?CONF(Driver, #{name => QName, prune => #{interval => infinity}})
+    ),
+    IDs = seed_cancelled_jobs(QName, 30),
+    Returned = race_prunes(QName, 2),
+    %% No transient errors expected with the new CTE
+    [?assert(is_list(R)) || R <:- Returned],
+    All = lists:append(Returned),
+    ?assertEqual(lists:sort(IDs), lists:sort(All)),
+    ?assertEqual(length(All), length(lists:usort(All))).
+
+seed_cancelled_jobs(QName, Total) ->
+    lists:sort([seed_cancelled(QName, N) || N <:- lists:seq(1, Total)]).
+
+seed_cancelled(QName, N) ->
+    #{id := Id} = gaffer:insert(QName, #{n => N}),
+    {ok, _} = gaffer:cancel(QName, Id),
+    Id.
+
+race_prunes(QName, Workers) ->
+    Parent = self(),
+    [
+        spawn_link(fun() ->
+            R = gaffer_queue:prune_jobs(QName, #{cancelled => 0}, user),
+            Parent ! {prune_result, self(), R}
+        end)
+     || _ <:- lists:seq(1, Workers)
+    ],
+    [
+        receive
+            {prune_result, _, R} -> R
+        after 10000 -> error(prune_timeout)
+        end
+     || _ <:- lists:seq(1, Workers)
+    ].
 
 %--- Multi-node tests ---------------------------------------------------------
 

@@ -369,18 +369,26 @@ executing_count(Queue) ->
         ~"SELECT count(*) AS n FROM gaffer_jobs WHERE queue = $1 AND state = 'executing'",
     [{SQL, [Queue]}].
 
--doc "Query to delete jobs older than per-state cutoffs for a queue.".
+-doc """
+Query to delete jobs older than per-state cutoffs from a queue.
+
+The candidate rows are selected and locked in `id` order with `SKIP LOCKED`,
+then deleted via a CTE. The stable lock order makes concurrent pruners safe
+against deadlocks, and `SKIP LOCKED` lets pruners skip rows currently locked
+by another pruner or worker upsert. Skipped rows are caught on the next run.
+""".
 -spec job_prune(gaffer:queue(), map()) -> queries().
 job_prune(Queue, Opts) ->
     {Clauses, Params, N} = maps:fold(fun prune_clause/3, {[], [], 1}, Opts),
     QueueParam = [~"$", integer_to_binary(N)],
     SQL = [
-        ~"DELETE FROM gaffer_jobs WHERE queue = ",
+        ~"WITH d AS (SELECT id FROM gaffer_jobs WHERE queue = ",
         QueueParam,
         ~" AND (",
         lists:join(~" OR ", lists:reverse(Clauses)),
-        ~")",
-        ~" RETURNING id"
+        ~") ORDER BY id FOR UPDATE SKIP LOCKED)",
+        ~" DELETE FROM gaffer_jobs j USING d WHERE j.id = d.id",
+        ~" RETURNING j.id"
     ],
     [{SQL, lists:reverse(Params, [atom_to_binary(Queue)])}].
 
