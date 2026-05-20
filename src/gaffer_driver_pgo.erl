@@ -283,6 +283,10 @@ transaction(Pool, Queries) ->
                 case pgo:query(SQL, Params, #{decode_opts => DecodeOpts}) of
                     {error, {pgsql_error, Error}} ->
                         error({pgsql_error, Error});
+                    {error, {pgo_error, Error}} ->
+                        error({pgo_error, Error});
+                    {error, Error} ->
+                        error(Error);
                     #{command := _} = Result ->
                         Result
                 end
