@@ -76,6 +76,9 @@ the current version of this library.
 
 Raises `error({migration_checksum_mismatch, Version, Stored, Expected})` if a
 stored migration's SQL has changed since it was applied.
+
+Raises `error({invalid_driver_opts, #{missing => [pool]}})` if `Opts` has no
+`pool`.
 """.
 start(Opts) ->
     State = start_pool(Opts),
@@ -218,7 +221,9 @@ start_pool(#{pool := Pool, start := PgoConfig}) ->
     {ok, _} = pgo:start_pool(Pool, PgoConfig),
     #{pool => Pool, pool_owner => driver};
 start_pool(#{pool := Pool}) ->
-    #{pool => Pool, pool_owner => user}.
+    #{pool => Pool, pool_owner => user};
+start_pool(_Opts) ->
+    error({invalid_driver_opts, #{missing => [pool]}}).
 
 % pgo does not expose a public stop_pool API, so we reach into its
 % internal supervisor. If pgo changes its supervision tree, update here.
