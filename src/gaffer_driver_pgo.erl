@@ -78,7 +78,8 @@ Raises `error({migration_checksum_mismatch, Version, Stored, Expected})` if a
 stored migration's SQL has changed since it was applied.
 
 Raises `error({invalid_driver_opts, #{missing => [pool]}})` if `Opts` has no
-`pool`.
+`pool`, and `error(Reason)` if pgo cannot run the migration transaction (for
+example `none_available` when no connection can authenticate).
 """.
 start(Opts) ->
     State = start_pool(Opts),
@@ -250,14 +251,19 @@ find_migration(V, All) ->
 % reentrant). The lock and any partial schema changes are released on commit
 % or rollback.
 migrate_transaction(Pool, Fun) ->
-    pgo:transaction(
-        fun() ->
-            query(Pool, gaffer_postgres:advisory_lock()),
-            query(Pool, gaffer_postgres:ensure_migrations_table()),
-            Fun()
-        end,
-        #{pool => Pool}
+    raise_error(
+        pgo:transaction(
+            fun() ->
+                query(Pool, gaffer_postgres:advisory_lock()),
+                query(Pool, gaffer_postgres:ensure_migrations_table()),
+                Fun()
+            end,
+            #{pool => Pool}
+        )
     ).
+
+raise_error({error, Reason}) -> error(Reason);
+raise_error(Result) -> Result.
 
 applied_checksums(Pool) ->
     Rows = query(Pool, gaffer_postgres:applied_checksums()),

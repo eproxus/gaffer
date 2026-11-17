@@ -5,6 +5,7 @@
         pgo_advisory_lock_query_emitted,
         pgo_start_with_new_pool,
         pgo_start_without_pool_hides_password,
+        pgo_start_with_wrong_password,
         pgo_multi_node_distribution,
         pgo_multi_node_ensure_queue,
         pgo_multi_node_ensure_queue_rolling_upgrade
@@ -48,6 +49,7 @@ gaffer_pgo_test_() ->
             fun pgo_class_40_returns_transient/1,
             fun pgo_start_with_new_pool/1,
             fun pgo_start_without_pool_hides_password/1,
+            fun pgo_start_with_wrong_password/1,
             fun pgo_multi_node_distribution/1,
             fun pgo_multi_node_ensure_queue/1,
             fun pgo_multi_node_ensure_queue_rolling_upgrade/1
@@ -164,6 +166,17 @@ pgo_start_without_pool_hides_password(_Driver) ->
             ?assertMatch({invalid_driver_opts, #{missing := [pool]}}, Reason),
             Report = iolist_to_binary(io_lib:format("~p", [{Reason, Stack}])),
             ?assertEqual(nomatch, binary:match(Report, ~"pgo_test_secret"))
+    end.
+
+pgo_start_with_wrong_password(_Driver) ->
+    PoolConfig = gaffer_test_helpers:pgo_pool_config(),
+    Opts = #{
+        pool => wrong_password_pool, start => PoolConfig#{password => ~"x"}
+    },
+    try
+        ?assertError(none_available, gaffer_driver_pgo:start(Opts))
+    after
+        gaffer_test_helpers:stop_pool(wrong_password_pool)
     end.
 
 pgo_idempotent_create({gaffer_driver_pgo, DS} = Driver) ->
